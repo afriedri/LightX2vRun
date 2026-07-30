@@ -32,6 +32,9 @@ LightX2V GFX1201 BF16 and FP8 configurations.
 The default image is `lightx2v-rocm:gfx1201-hvat-scratch`. Generated videos
 are written to `/disk/ssd/lightx2v-runtime/outputs`.
 
+The launcher fixes AITER dispatch to `GPU_ARCHS=gfx1201` and `CU_NUM=24`,
+matching the rowwise CK tuning CSV embedded in the image.
+
 Use environment variables to override the defaults when needed:
 
 ```bash
