@@ -1,6 +1,7 @@
 # LightX2VRun
 
-Docker launchers for the single-GPU AMD ROCm GFX1201 LightX2V image.
+Docker launchers for the AMD ROCm GFX1201 LightX2V image. Scaled FP8 inference
+uses two GPUs with Wan Ulysses sequence parallelism (SP=2).
 
 ## Model layout
 
@@ -19,7 +20,7 @@ LightX2V GFX1201 BF16 and FP8 configurations.
 ## Run
 
 ```bash
-# Scaled FP8 4-step I2V
+# Scaled FP8 4-step I2V on GPUs 0 and 1
 ./lightx2vModelrun --infer-fp8
 
 # BF16 4-step I2V
@@ -38,7 +39,7 @@ matching the rowwise CK tuning CSV embedded in the image.
 Use environment variables to override the defaults when needed:
 
 ```bash
-GPU_DEVICES=1 IMAGE=custom-lightx2v:latest ./lightx2vModelrun --infer-fp8
+GPU_DEVICES=2,3 IMAGE=custom-lightx2v:latest ./lightx2vModelrun --infer-fp8
 ```
 
 Run `./lightx2vModelrun --help` for all supported overrides.

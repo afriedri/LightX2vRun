@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 IMAGE="${IMAGE:-lightx2v-rocm:gfx1201-hvat-scratch}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
-GPU_DEVICES="${GPU_DEVICES:-0}"
+GPU_DEVICES="${GPU_DEVICES:-0,1}"
 
 # Host model layout from /disk/ssd/difumodels-Dis. The container maps these
 # directories into the lowercase layout expected by the GFX1201 configs.
@@ -28,7 +28,7 @@ usage() {
     cat <<'EOF'
 Usage:
   ./lightx2vModelrun                 Open an interactive shell
-  ./lightx2vModelrun --infer-fp8     Run the GFX1201 FP8 4-step I2V example
+  ./lightx2vModelrun --infer-fp8     Run the two-GPU GFX1201 FP8 4-step I2V example
   ./lightx2vModelrun --infer-bf16    Run the GFX1201 BF16 4-step I2V example
   ./lightx2vModelrun --infer         Alias for --infer-fp8
   ./lightx2vModelrun COMMAND [ARG...] Run a command in the container
@@ -39,7 +39,7 @@ Important environment overrides:
   OUTPUT_DIR           Generated video directory
   INPUT_DIR            Custom input directory, available as /inputs
   CACHE_DIR            Persistent Aiter, Triton, Torch, and HF cache directory
-  GPU_DEVICES          One physical HIP GPU id (default: 0)
+  GPU_DEVICES          Physical HIP GPU ids (FP8 requires two; default: 0,1)
   IMAGE                Docker image (default: lightx2v-rocm:gfx1201-hvat-scratch)
   CONTAINER_NAME       Docker container name
   AUTO_REMOVE=0        Keep the stopped container
@@ -72,8 +72,14 @@ case "${1:-}" in
     --infer-bf16) inference_mode=bf16 ;;
 esac
 
-if [[ ! "${GPU_DEVICES}" =~ ^[0-9]+$ ]]; then
-    die "GPU_DEVICES must be one physical GPU id; this GFX1201 configuration is single-GPU"
+if [[ ! "${GPU_DEVICES}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+    die "GPU_DEVICES must be comma-separated physical HIP GPU ids, for example 0,1"
+fi
+if [[ "${inference_mode}" == "fp8" ]]; then
+    IFS=',' read -r -a fp8_gpu_devices <<<"${GPU_DEVICES}"
+    if [[ "${#fp8_gpu_devices[@]}" -ne 2 || "${fp8_gpu_devices[0]}" == "${fp8_gpu_devices[1]}" ]]; then
+        die "GFX1201 FP8 SP=2 requires exactly two different GPU_DEVICES, for example 0,1"
+    fi
 fi
 
 encoder_mount_source="${ENCODERS_DIR}"
