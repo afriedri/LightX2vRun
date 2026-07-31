@@ -4,6 +4,8 @@ set -Eeuo pipefail
 IMAGE="${IMAGE:-lightx2v-rocm:gfx1201-hvat-scratch}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 
 # Host model layout from /disk/ssd/difumodels-Dis. The container maps these
 # directories into the lowercase layout expected by the GFX1201 configs.
@@ -19,7 +21,8 @@ CACHE_DIR="${CACHE_DIR:-${RUNTIME_ROOT}/cache}"
 
 readonly CONTAINER_MODELS_ROOT=/models
 readonly CONTAINER_BASE_MODEL=/models/Wan-AI/Wan2.2-I2V-A14B
-readonly FP8_RUN_SCRIPT=/workspace/LightX2V/scripts/platforms/amd_rocm/run_wan22_moe_i2v_distill_fp8_4step_gfx1201.sh
+readonly CONTAINER_RUN_ROOT=/workspace/LightX2VRun
+readonly FP8_RUN_SCRIPT_DIR=${CONTAINER_RUN_ROOT}/scripts
 readonly BF16_RUN_SCRIPT=/workspace/LightX2V/scripts/platforms/amd_rocm/run_wan22_moe_i2v_distill_bf16_4step_gfx1201.sh
 readonly T5_FP8_FILENAME=models_t5_umt5-xxl-enc-fp8.pth
 readonly T5_BF16_FILENAME=models_t5_umt5-xxl-enc-bf16.pth
@@ -28,7 +31,7 @@ usage() {
     cat <<'EOF'
 Usage:
   ./lightx2vModelrun                 Open an interactive shell
-  ./lightx2vModelrun --infer-fp8     Run the two-GPU GFX1201 FP8 4-step I2V example
+  ./lightx2vModelrun --infer-fp8     Run GFX1201 FP8 4-step I2V on 2/4/8/16 GPUs
   ./lightx2vModelrun --infer-bf16    Run the GFX1201 BF16 4-step I2V example
   ./lightx2vModelrun --infer         Alias for --infer-fp8
   ./lightx2vModelrun COMMAND [ARG...] Run a command in the container
@@ -39,12 +42,18 @@ Important environment overrides:
   OUTPUT_DIR           Generated video directory
   INPUT_DIR            Custom input directory, available as /inputs
   CACHE_DIR            Persistent Aiter, Triton, Torch, and HF cache directory
-  GPU_DEVICES          Physical HIP GPU ids (FP8 requires two; default: 0,1)
+  GPU_DEVICES          Physical HIP GPU ids (FP8 supports 2/4/8/16; default: 0,1)
+  RUN_REPO_DIR          LightX2VRun checkout mounted read-only into the container
   IMAGE                Docker image (default: lightx2v-rocm:gfx1201-hvat-scratch)
   CONTAINER_NAME       Docker container name
   AUTO_REMOVE=0        Keep the stopped container
   SKIP_MODEL_CHECKS=1  Skip required model-file checks
   DRY_RUN=1            Print the docker command without starting it
+
+FP8 inference overrides:
+  PROMPT, NEGATIVE_PROMPT, IMAGE_PATH, SAVE_RESULT_PATH, SEED
+  MASTER_ADDR, MASTER_PORT, TARGET_VIDEO_LENGTH, TARGET_HEIGHT, TARGET_WIDTH
+  INFER_STEPS, BASE_CONFIG_JSON, LIGHTX2V_EXTRA_ARGS
 EOF
 }
 
@@ -75,11 +84,26 @@ esac
 if [[ ! "${GPU_DEVICES}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
     die "GPU_DEVICES must be comma-separated physical HIP GPU ids, for example 0,1"
 fi
+IFS=',' read -r -a gpu_devices <<<"${GPU_DEVICES}"
+declare -A seen_gpu_devices=()
+for gpu_device in "${gpu_devices[@]}"; do
+    [[ -z "${seen_gpu_devices[${gpu_device}]:-}" ]] || die "GPU_DEVICES contains duplicate id ${gpu_device}"
+    seen_gpu_devices["${gpu_device}"]=1
+done
+gpu_count="${#gpu_devices[@]}"
+fp8_run_script=
 if [[ "${inference_mode}" == "fp8" ]]; then
-    IFS=',' read -r -a fp8_gpu_devices <<<"${GPU_DEVICES}"
-    if [[ "${#fp8_gpu_devices[@]}" -ne 2 || "${fp8_gpu_devices[0]}" == "${fp8_gpu_devices[1]}" ]]; then
-        die "GFX1201 FP8 SP=2 requires exactly two different GPU_DEVICES, for example 0,1"
-    fi
+    case "${gpu_count}" in
+        2 | 4 | 8 | 16) ;;
+        *) die "GFX1201 FP8 supports exactly 2, 4, 8, or 16 GPU_DEVICES" ;;
+    esac
+    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_${gpu_count}gpu.sh"
+fi
+
+require_dir "${RUN_REPO_DIR}"
+if [[ "${inference_mode}" == "fp8" ]]; then
+    require_file "${RUN_REPO_DIR}/scripts/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_${gpu_count}gpu.sh"
+    require_file "${RUN_REPO_DIR}/scripts/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_common.sh"
 fi
 
 encoder_mount_source="${ENCODERS_DIR}"
@@ -168,6 +192,7 @@ docker_args=(
     --mount "type=bind,source=${WAN22_BASE_DIR},target=${CONTAINER_BASE_MODEL},readonly"
     --mount "type=bind,source=${encoder_mount_source},target=${encoder_mount_target},readonly"
     --mount "type=bind,source=${DISTILL_MODELS_DIR},target=${CONTAINER_MODELS_ROOT}/lightx2v/Wan2.2-Distill-Models,readonly"
+    --mount "type=bind,source=${RUN_REPO_DIR},target=${CONTAINER_RUN_ROOT},readonly"
     --mount "type=bind,source=${INPUT_DIR},target=/inputs"
     --mount "type=bind,source=${OUTPUT_DIR},target=/workspace/LightX2V/save_results"
     --mount "type=bind,source=${CACHE_DIR}/aiter,target=/workspace/.cache/aiter"
@@ -198,13 +223,22 @@ for passthrough_env in HF_TOKEN HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https
     fi
 done
 
+for inference_env in \
+    PROMPT NEGATIVE_PROMPT IMAGE_PATH SAVE_RESULT_PATH SEED \
+    MASTER_ADDR MASTER_PORT TARGET_VIDEO_LENGTH TARGET_HEIGHT TARGET_WIDTH \
+    INFER_STEPS BASE_CONFIG_JSON LIGHTX2V_EXTRA_ARGS; do
+    if [[ -n "${!inference_env:-}" ]]; then
+        docker_args+=(--env "${inference_env}=${!inference_env}")
+    fi
+done
+
 if [[ -e /etc/localtime ]]; then
     docker_args+=(--mount type=bind,source=/etc/localtime,target=/etc/localtime,readonly)
 fi
 
 container_command=(/bin/bash)
 if [[ "${inference_mode}" == "fp8" ]]; then
-    container_command=(/bin/bash "${FP8_RUN_SCRIPT}")
+    container_command=(/bin/bash "${fp8_run_script}")
 elif [[ "${inference_mode}" == "bf16" ]]; then
     container_command=(/bin/bash "${BF16_RUN_SCRIPT}")
 elif (( $# > 0 )); then
@@ -221,6 +255,10 @@ printf 'Distill models: %s\n' "${DISTILL_MODELS_DIR}"
 printf 'Inputs:         %s\n' "${INPUT_DIR}"
 printf 'Outputs:        %s\n' "${OUTPUT_DIR}"
 printf 'Cache:          %s\n' "${CACHE_DIR}"
+printf 'Run scripts:    %s -> %s\n' "${RUN_REPO_DIR}" "${CONTAINER_RUN_ROOT}"
+if [[ "${inference_mode}" == "fp8" ]]; then
+    printf 'FP8 launcher:   %s\n' "${fp8_run_script}"
+fi
 
 docker_command=(docker "${docker_args[@]}" "${IMAGE}" "${container_command[@]}")
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
