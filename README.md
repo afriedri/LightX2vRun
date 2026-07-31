@@ -100,6 +100,10 @@ GPU_DEVICES=0,1 \
   ./lightx2vModelrun --infer-lora-fp8
 ```
 
+The `*_1217.safetensors` files in the documented model layout are named
+`wan2.2_t2v_*`; they are T2V LoRAs, not newer revisions of the I2V 1022 pair,
+and must not be merged into the Wan2.2 I2V base.
+
 Useful conversion controls:
 
 ```bash
@@ -116,10 +120,14 @@ GPU_DEVICES=0,1 \
   ./lightx2vModelrun --infer-lora-fp8
 ```
 
-Each conversion is accepted only when all discovered LoRA adjustments were
-applied and the output contains E4M3 tensors with matching scale tensors. LoRA
-merging does not change GEMM shapes, so the existing GFX1201 Aiter rowwise CK
-tuning remains applicable.
+Each conversion is accepted only when every adjustment applicable to the
+official Wan2.2 I2V base was applied and the output contains E4M3 tensors with
+matching scale tensors. The 1022 LoRAs also contain adjustments for a legacy
+CLIP image-attention branch that is absent from the official latent-conditioned
+I2V base and disabled by the runtime configuration; only those precisely
+matched keys may be skipped. Any other missing key still stops conversion.
+LoRA merging does not change GEMM shapes, so the existing GFX1201 Aiter rowwise
+CK tuning remains applicable.
 
 The default image is `lightx2v-rocm:gfx1201-hvat-scratch`. Generated videos
 are written to `/disk/ssd/lightx2v-runtime/outputs`.

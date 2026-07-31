@@ -85,6 +85,81 @@ print(f"Validated {path}: {len(fp8_keys)} E4M3 tensors with scales")
 PY
 }
 
+validate_lora_application() {
+    local log_path=$1
+    local noise=$2
+    python3 - "${log_path}" "${noise}" <<'PY'
+import re
+import sys
+
+log_path, noise = sys.argv[1:]
+with open(log_path, encoding="utf-8") as log_file:
+    log = log_file.read()
+
+summaries = re.findall(
+    r"Applied (\d+) LoRA weight adjustments out of (\d+) possible", log
+)
+if not summaries:
+    raise SystemExit(f"{noise} conversion did not report a LoRA application summary")
+
+applied, possible = map(int, summaries[-1])
+if applied == 0:
+    raise SystemExit(f"{noise} conversion did not apply any LoRA adjustments")
+if applied == possible:
+    print(f"Validated {noise} LoRA application: {applied}/{possible}")
+    raise SystemExit(0)
+
+missing_pairs = re.findall(r"Model key not found: ([^\r\n]+)", log)
+missing_diffs = re.findall(r"Model key not found for diff: ([^\r\n]+)", log)
+
+# Wan2.2 official I2V conditions on the input latent and has no separate CLIP
+# image-attention branch. The 1022 distill LoRAs retain adjustments for that
+# legacy branch; LightX2V also disables it with use_image_encoder=false.
+optional_pair_patterns = (
+    re.compile(r"blocks\.\d+\.cross_attn\.(?:k_img|v_img)\.weight"),
+    re.compile(r"img_emb\.proj\.(?:1|3)\.weight"),
+)
+optional_diff_patterns = (
+    re.compile(
+        r"blocks\.\d+\.cross_attn\."
+        r"(?:k_img\.bias|v_img\.bias|norm_k_img\.weight)"
+    ),
+    re.compile(
+        r"img_emb\.proj\."
+        r"(?:0\.(?:weight|bias)|1\.bias|3\.bias|4\.(?:weight|bias))"
+    ),
+)
+
+unexpected = [
+    f"pair:{key}"
+    for key in missing_pairs
+    if not any(pattern.fullmatch(key) for pattern in optional_pair_patterns)
+]
+unexpected.extend(
+    f"diff:{key}"
+    for key in missing_diffs
+    if not any(pattern.fullmatch(key) for pattern in optional_diff_patterns)
+)
+if unexpected:
+    preview = ", ".join(unexpected[:5])
+    raise SystemExit(
+        f"{noise} LoRA has unexpected missing model keys: {preview}"
+    )
+
+missing_count = len(missing_pairs) + len(missing_diffs)
+if applied + missing_count != possible:
+    raise SystemExit(
+        f"{noise} LoRA application was incomplete: {applied}/{possible}; "
+        f"only {missing_count} missing optional image-branch adjustments were identified"
+    )
+
+print(
+    f"Validated {noise} LoRA application: {applied}/{possible} applied; "
+    f"ignored {missing_count} optional image-branch adjustments"
+)
+PY
+}
+
 metadata_matches() {
     local metadata_path=$1
     local source_path=$2
@@ -182,16 +257,8 @@ convert_one() {
         --device "${convert_device}" \
         --single_file 2>&1 | tee "${log_path}"
 
-    local summary
-    summary="$(grep -E 'Applied [0-9]+ LoRA weight adjustments out of [0-9]+ possible' "${log_path}" | tail -n 1 || true)"
-    if [[ ! "${summary}" =~ Applied\ ([0-9]+)\ LoRA\ weight\ adjustments\ out\ of\ ([0-9]+)\ possible ]]; then
-        die "${noise} conversion did not report a LoRA application summary"
-    fi
-    local applied_count="${BASH_REMATCH[1]}"
-    local possible_count="${BASH_REMATCH[2]}"
-    if (( applied_count == 0 || applied_count != possible_count )); then
-        die "${noise} LoRA application was incomplete: ${applied_count}/${possible_count}"
-    fi
+    validate_lora_application "${log_path}" "${noise}" || \
+        die "${noise} LoRA application validation failed"
     [[ -f "${candidate_path}" ]] || die "${noise} converter output not found: ${candidate_path}"
     validate_checkpoint "${candidate_path}"
 
