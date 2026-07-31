@@ -43,6 +43,11 @@ for gpu_device in "${gpu_devices[@]}"; do
 done
 
 case "${expected_gpu_count}" in
+    1)
+        seq_p_size=1
+        seq_p_attn_type=ulysses
+        self_attn_type=aiter_flydsl_bf16_flash_attn
+        ;;
     2 | 4 | 8)
         seq_p_size="${expected_gpu_count}"
         seq_p_attn_type=ulysses
@@ -54,7 +59,7 @@ case "${expected_gpu_count}" in
         self_attn_type=aiter_triton_bf16_flash_attn
         ;;
     *)
-        echo "ERROR: supported GPU counts are 2, 4, 8, and 16" >&2
+        echo "ERROR: supported GPU counts are 1, 2, 4, 8, and 16" >&2
         exit 1
         ;;
 esac
@@ -97,6 +102,15 @@ for environment_name, config_name in integer_overrides.items():
     value = os.environ.get(environment_name)
     if value:
         config[config_name] = int(value)
+
+checkpoint_overrides = {
+    "HIGH_NOISE_QUANTIZED_CKPT": "high_noise_quantized_ckpt",
+    "LOW_NOISE_QUANTIZED_CKPT": "low_noise_quantized_ckpt",
+}
+for environment_name, config_name in checkpoint_overrides.items():
+    value = os.environ.get(environment_name)
+    if value:
+        config[config_name] = value
 
 with open(output_path, "w", encoding="utf-8") as output_file:
     json.dump(config, output_file, indent=4, ensure_ascii=False)
