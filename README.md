@@ -70,6 +70,78 @@ GPU_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 \
 ./lightx2vModelrun
 ```
 
+## Reproduce the RTX 4090 171-second workload
+
+The upstream `171s` result is a single RTX 4090 running Wan2.1 I2V 14B at
+720p for 81 frames with the 4-step distilled model and CFG disabled. The
+published benchmark script uses `img_2.jpg`, the cooking prompt, block-level
+CPU offload, FP8 DiT weights, and profiling output; the 720p table specifies
+seed 1234. It is not a Wan2.2 MoE result.
+
+The historical JSON kept 480p defaults with `720`/`1280` comments, so using the
+current `configs/bench/lightx2v_6_distill.json` unchanged does not reproduce the
+720p row. This launcher creates an explicit 720p runtime config and substitutes
+the ROCm attention/GEMM backends while preserving the benchmark workload:
+
+```bash
+GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
+```
+
+Expected host model layout:
+
+```text
+/disk/ssd/difumodels-Dis/
+`-- Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v/
+    `-- distill_fp8/
+        |-- google/umt5-xxl/*
+        |-- block_0.safetensors ... block_39.safetensors
+        |-- non_block.safetensors
+        |-- diffusion_pytorch_model.safetensors.index.json
+        |-- config.json
+        |-- models_t5_umt5-xxl-enc-fp8.pth
+        |-- clip-fp8.pth
+        `-- Wan2.1_VAE.pth
+```
+
+The benchmark table links the ordinary
+`lightx2v/Wan2.1-I2V-14B-720P-Lightx2v` base repository, but the historical
+`run_lightx2v_6_distill.sh` explicitly uses the 4-step
+`lightx2v/Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v` repository.
+Only its `distill_fp8/` subtree is required. Those tensors use the same
+per-channel FP8 weight layout required by `fp8-sgl`; the launcher changes the
+runtime kernel from the CUDA-only Q8F implementation to GFX1201 Aiter rowwise
+GEMM without requantizing the checkpoint.
+
+One historical implementation detail cannot be reproduced by config alone.
+The 2025 runner used `offload_ratio=0.8`, streaming 32 of 40 DiT blocks while
+leaving the final eight resident after their first transfer. The current Wan
+offload manager no longer implements fractional block residency and streams
+all 40 blocks. The launcher retains `offload_ratio=0.8` as benchmark provenance
+and reports the current behavior explicitly; comparing the result still
+includes host-to-device offload effects, but it is not an identical offload
+schedule.
+
+Download just that subtree with ModelScope:
+
+```bash
+modelscope download \
+  --model 'lightx2v/Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v' \
+  --include \
+    'distill_fp8/*.safetensors' \
+    'distill_fp8/*.json' \
+    'distill_fp8/*.pth' \
+    'distill_fp8/google/umt5-xxl/*' \
+    'distill_fp8/xlm-roberta-large/*' \
+  --local_dir './Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v'
+```
+
+The progress reporter compares DiT denoising time, excluding warmup, model
+loading, encoders, VAE decoding, and video saving. The upstream number divided
+by four is `42.75s/it`; a local `42.49s/it` is about `169.96s` for four steps,
+already within 0.6% of that reference. Hardware, Wan2.1 versus Wan2.2, CUDA
+SageAttention versus ROCm Aiter, host offload bandwidth, and software versions
+still prevent this from being a strict hardware-only comparison.
+
 ## Merge LoRA, quantize, and infer
 
 The first command performs the high-noise conversion and then the low-noise

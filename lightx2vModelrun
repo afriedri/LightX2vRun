@@ -15,6 +15,7 @@ DISTILL_MODELS_DIR="${DISTILL_MODELS_DIR:-${MODEL_STORE}/Wan2.2-Distill-Models}"
 DISTILL_LORAS_DIR="${DISTILL_LORAS_DIR:-${MODEL_STORE}/Wan2.2-Distill-Loras}"
 WAN22_BASE_DIR="${WAN22_BASE_DIR:-${MODEL_STORE}/Wan2.2-I2V-A14B}"
 LORA_FP8_OUTPUT_DIR="${LORA_FP8_OUTPUT_DIR:-${DISTILL_MODELS_DIR}/lora-fp8-strength1}"
+WAN21_DISTILL_DIR="${WAN21_DISTILL_DIR:-${MODEL_STORE}/Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v/distill_fp8}"
 
 RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd/lightx2v-runtime}"
 INPUT_DIR="${INPUT_DIR:-${RUNTIME_ROOT}/inputs}"
@@ -25,6 +26,7 @@ readonly CONTAINER_MODELS_ROOT=/models
 readonly CONTAINER_BASE_MODEL=/models/Wan-AI/Wan2.2-I2V-A14B
 readonly CONTAINER_DISTILL_LORAS=/models/lightx2v/Wan2.2-Distill-Loras
 readonly CONTAINER_LORA_FP8_OUTPUT=/models/lightx2v/Wan2.2-Lora-FP8
+readonly CONTAINER_WAN21_DISTILL_MODEL=/models/lightx2v/Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v/distill_fp8
 readonly CONTAINER_RUN_ROOT=/workspace/LightX2VRun
 readonly FP8_RUN_SCRIPT_DIR=${CONTAINER_RUN_ROOT}/scripts
 readonly BF16_RUN_SCRIPT=/workspace/LightX2V/scripts/platforms/amd_rocm/run_wan22_moe_i2v_distill_bf16_4step_gfx1201.sh
@@ -39,11 +41,14 @@ Usage:
   ./lightx2vModelrun --infer-lora-fp8
                                       Merge LoRAs, quantize to FP8, then infer on 1/2/4/8/16 GPUs
   ./lightx2vModelrun --infer-bf16    Run the GFX1201 BF16 4-step I2V example
+  GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
+                                      Run the Wan2.1 720p workload behind the published 4090 171s result
   ./lightx2vModelrun --infer         Alias for --infer-fp8
   ./lightx2vModelrun COMMAND [ARG...] Run a command in the container
 
 Important environment overrides:
   WAN22_BASE_DIR       Wan2.2-I2V-A14B support-model directory
+  WAN21_DISTILL_DIR    The 4-step repository's distill_fp8 directory
   MODEL_STORE          Parent of Encoders and Wan2.2-Distill-Models
   DISTILL_LORAS_DIR    Host directory containing the high/low Wan2.2 distill LoRAs
   LORA_FP8_OUTPUT_DIR  Writable host directory for merged FP8 checkpoints
@@ -105,6 +110,7 @@ case "${1:-}" in
     --infer | --infer-fp8) inference_mode=fp8 ;;
     --infer-lora-fp8) inference_mode=lora_fp8 ;;
     --infer-bf16) inference_mode=bf16 ;;
+    --benchmark-wan21-4090) inference_mode=wan21_4090 ;;
 esac
 
 if [[ ! "${GPU_DEVICES}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
@@ -129,12 +135,18 @@ if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "lora_fp8" ]]; then
         fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_${gpu_count}gpu.sh"
     fi
 fi
+if [[ "${inference_mode}" == "wan21_4090" ]]; then
+    [[ "${gpu_count}" -eq 1 ]] || die "the RTX 4090 comparison is a single-GPU workload; set GPU_DEVICES to one id"
+    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_i2v_distill_fp8_4step_gfx1201_1gpu_benchmark_4090.sh"
+fi
 
 require_dir "${RUN_REPO_DIR}"
-if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "lora_fp8" ]]; then
+if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "lora_fp8" || "${inference_mode}" == "wan21_4090" ]]; then
     require_file "${RUN_REPO_DIR}/${fp8_run_script#${CONTAINER_RUN_ROOT}/}"
-    require_file "${RUN_REPO_DIR}/scripts/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_common.sh"
     require_file "${RUN_REPO_DIR}/scripts/report_dit_progress.py"
+fi
+if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "lora_fp8" ]]; then
+    require_file "${RUN_REPO_DIR}/scripts/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_common.sh"
 fi
 if [[ "${inference_mode}" == "lora_fp8" ]]; then
     require_file "${RUN_REPO_DIR}/scripts/run_wan22_moe_i2v_distill_lora_fp8_4step_gfx1201_common.sh"
@@ -153,18 +165,39 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     [[ -c /dev/kfd ]] || die "ROCm device /dev/kfd is unavailable"
     [[ -d /dev/dri ]] || die "DRM device directory /dev/dri is unavailable"
 
-    require_dir "${ENCODERS_DIR}"
-    require_dir "${DISTILL_MODELS_DIR}"
-    require_dir "${WAN22_BASE_DIR}"
+    if [[ "${inference_mode}" == "wan21_4090" ]]; then
+        require_dir "${WAN21_DISTILL_DIR}"
+    else
+        require_dir "${ENCODERS_DIR}"
+        require_dir "${DISTILL_MODELS_DIR}"
+        require_dir "${WAN22_BASE_DIR}"
+    fi
     if [[ "${SKIP_MODEL_CHECKS:-0}" != "1" ]]; then
-        require_dir "${WAN22_BASE_DIR}/google/umt5-xxl"
-        require_file "${WAN22_BASE_DIR}/google/umt5-xxl/special_tokens_map.json"
-        require_file "${WAN22_BASE_DIR}/google/umt5-xxl/spiece.model"
-        require_file "${WAN22_BASE_DIR}/google/umt5-xxl/tokenizer_config.json"
-        require_file "${WAN22_BASE_DIR}/google/umt5-xxl/tokenizer.json"
-        require_file "${WAN22_BASE_DIR}/high_noise_model/config.json"
-        require_file "${WAN22_BASE_DIR}/low_noise_model/config.json"
-        require_file "${WAN22_BASE_DIR}/Wan2.1_VAE.pth"
+        if [[ "${inference_mode}" == "wan21_4090" ]]; then
+            require_dir "${WAN21_DISTILL_DIR}/google/umt5-xxl"
+            require_file "${WAN21_DISTILL_DIR}/google/umt5-xxl/special_tokens_map.json"
+            require_file "${WAN21_DISTILL_DIR}/google/umt5-xxl/spiece.model"
+            require_file "${WAN21_DISTILL_DIR}/google/umt5-xxl/tokenizer_config.json"
+            require_file "${WAN21_DISTILL_DIR}/google/umt5-xxl/tokenizer.json"
+            require_file "${WAN21_DISTILL_DIR}/Wan2.1_VAE.pth"
+            require_file "${WAN21_DISTILL_DIR}/config.json"
+            require_file "${WAN21_DISTILL_DIR}/diffusion_pytorch_model.safetensors.index.json"
+            require_file "${WAN21_DISTILL_DIR}/non_block.safetensors"
+            require_file "${WAN21_DISTILL_DIR}/models_t5_umt5-xxl-enc-fp8.pth"
+            require_file "${WAN21_DISTILL_DIR}/clip-fp8.pth"
+            for block_index in {0..39}; do
+                require_file "${WAN21_DISTILL_DIR}/block_${block_index}.safetensors"
+            done
+        else
+            require_dir "${WAN22_BASE_DIR}/google/umt5-xxl"
+            require_file "${WAN22_BASE_DIR}/google/umt5-xxl/special_tokens_map.json"
+            require_file "${WAN22_BASE_DIR}/google/umt5-xxl/spiece.model"
+            require_file "${WAN22_BASE_DIR}/google/umt5-xxl/tokenizer_config.json"
+            require_file "${WAN22_BASE_DIR}/google/umt5-xxl/tokenizer.json"
+            require_file "${WAN22_BASE_DIR}/high_noise_model/config.json"
+            require_file "${WAN22_BASE_DIR}/low_noise_model/config.json"
+            require_file "${WAN22_BASE_DIR}/Wan2.1_VAE.pth"
+        fi
         if [[ "${inference_mode}" == "fp8" ]]; then
             require_file "${t5_fp8_path}"
             require_file "${DISTILL_MODELS_DIR}/wan2.2_i2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"
@@ -195,6 +228,11 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     docker image inspect "${IMAGE}" >/dev/null 2>&1 || die "Docker image is unavailable: ${IMAGE}"
 fi
 
+container_model_path="${CONTAINER_BASE_MODEL}"
+if [[ "${inference_mode}" == "wan21_4090" ]]; then
+    container_model_path="${CONTAINER_WAN21_DISTILL_MODEL}"
+fi
+
 docker_args=(
     run
     --name "${CONTAINER_NAME}"
@@ -215,7 +253,7 @@ docker_args=(
     --env DTYPE=BF16
     --env TOKENIZERS_PARALLELISM=false
     --env "MODELS_ROOT=${CONTAINER_MODELS_ROOT}"
-    --env "MODEL_PATH=${CONTAINER_BASE_MODEL}"
+    --env "MODEL_PATH=${container_model_path}"
     --env LIGHTX2V_PATH=/workspace/LightX2V
     --env AITER_JIT_DIR=/workspace/.cache/aiter
     --env TRITON_CACHE_DIR=/workspace/.cache/triton
@@ -230,9 +268,6 @@ docker_args=(
     --env HIP_FORCE_DEV_KERNARG=1
     --env SAFETENSORS_FAST_GPU=1
     --mount "type=bind,source=${MODEL_STORE},target=/data,readonly"
-    --mount "type=bind,source=${WAN22_BASE_DIR},target=${CONTAINER_BASE_MODEL},readonly"
-    --mount "type=bind,source=${encoder_mount_source},target=${encoder_mount_target},readonly"
-    --mount "type=bind,source=${DISTILL_MODELS_DIR},target=${CONTAINER_MODELS_ROOT}/lightx2v/Wan2.2-Distill-Models,readonly"
     --mount "type=bind,source=${RUN_REPO_DIR},target=${CONTAINER_RUN_ROOT},readonly"
     --mount "type=bind,source=${INPUT_DIR},target=/inputs"
     --mount "type=bind,source=${OUTPUT_DIR},target=/workspace/LightX2V/save_results"
@@ -241,6 +276,18 @@ docker_args=(
     --mount "type=bind,source=${CACHE_DIR}/torch_extensions,target=/workspace/.cache/torch_extensions"
     --mount "type=bind,source=${CACHE_DIR}/triton,target=/workspace/.cache/triton"
 )
+
+if [[ "${inference_mode}" == "wan21_4090" ]]; then
+    docker_args+=(
+        --mount "type=bind,source=${WAN21_DISTILL_DIR},target=${CONTAINER_WAN21_DISTILL_MODEL},readonly"
+    )
+else
+    docker_args+=(
+        --mount "type=bind,source=${WAN22_BASE_DIR},target=${CONTAINER_BASE_MODEL},readonly"
+        --mount "type=bind,source=${encoder_mount_source},target=${encoder_mount_target},readonly"
+        --mount "type=bind,source=${DISTILL_MODELS_DIR},target=${CONTAINER_MODELS_ROOT}/lightx2v/Wan2.2-Distill-Models,readonly"
+    )
+fi
 
 if [[ "${inference_mode}" == "lora_fp8" ]]; then
     docker_args+=(
@@ -298,7 +345,7 @@ if [[ -e /etc/localtime ]]; then
 fi
 
 container_command=(/bin/bash)
-if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "lora_fp8" ]]; then
+if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "lora_fp8" || "${inference_mode}" == "wan21_4090" ]]; then
     container_command=(/bin/bash "${fp8_run_script}")
 elif [[ "${inference_mode}" == "bf16" ]]; then
     container_command=(/bin/bash "${BF16_RUN_SCRIPT}")
@@ -310,9 +357,13 @@ printf 'Image:          %s\n' "${IMAGE}"
 printf 'Container:      %s\n' "${CONTAINER_NAME}"
 printf 'GPU devices:    %s\n' "${GPU_DEVICES}"
 printf 'Mode:           %s\n' "${inference_mode}"
-printf 'Base model:     %s\n' "${WAN22_BASE_DIR}"
-printf 'Encoders:       %s -> %s\n' "${encoder_mount_source}" "${encoder_mount_target}"
-printf 'Distill models: %s\n' "${DISTILL_MODELS_DIR}"
+if [[ "${inference_mode}" == "wan21_4090" ]]; then
+    printf 'Wan2.1 Distill: %s\n' "${WAN21_DISTILL_DIR}"
+else
+    printf 'Base model:     %s\n' "${WAN22_BASE_DIR}"
+    printf 'Encoders:       %s -> %s\n' "${encoder_mount_source}" "${encoder_mount_target}"
+    printf 'Distill models: %s\n' "${DISTILL_MODELS_DIR}"
+fi
 if [[ "${inference_mode}" == "lora_fp8" ]]; then
     printf 'Distill LoRAs:  %s\n' "${DISTILL_LORAS_DIR}"
     printf 'LoRA FP8 out:   %s\n' "${LORA_FP8_OUTPUT_DIR}"
@@ -321,7 +372,7 @@ printf 'Inputs:         %s\n' "${INPUT_DIR}"
 printf 'Outputs:        %s\n' "${OUTPUT_DIR}"
 printf 'Cache:          %s\n' "${CACHE_DIR}"
 printf 'Run scripts:    %s -> %s\n' "${RUN_REPO_DIR}" "${CONTAINER_RUN_ROOT}"
-if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "lora_fp8" ]]; then
+if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "lora_fp8" || "${inference_mode}" == "wan21_4090" ]]; then
     printf 'FP8 launcher:   %s\n' "${fp8_run_script}"
 fi
 
