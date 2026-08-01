@@ -15,6 +15,13 @@ for a publishable benchmark, warm up with one complete generation and measure a
 second identical generation. Set `LIGHTX2V_DIT_PROGRESS=0` to restore raw
 torchrun output without this report.
 
+GFX1201 images can bundle a committed fallback snapshot of these launchers at
+`/opt/LightX2VRun`. The two in-image compatibility entries (Distill and LoRA,
+both two-GPU) prefer the host checkout mounted at `/workspace/LightX2VRun` and
+warn before falling back to the bundled snapshot. The bind mount used by
+`lightx2vModelrun` therefore makes launcher-only updates available without an
+image rebuild.
+
 ## Model layout
 
 The default model root is `/disk/ssd/difumodels-Dis`:
