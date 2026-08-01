@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 lightx2v_path="${LIGHTX2V_PATH:-/workspace/LightX2V}"
 models_root="${MODELS_ROOT:-/models}"
 model_path="${MODEL_PATH:-${models_root}/Wan-AI/Wan2.2-I2V-A14B}"
@@ -126,6 +127,14 @@ echo "GPUs: ${HIP_VISIBLE_DEVICES} (${expected_gpu_count} ranks)"
 echo "Parallel: SP=${seq_p_size}, attention=${seq_p_attn_type}, CFG=disabled"
 echo "Config: ${runtime_config_json}"
 echo "Output: ${save_result_path}"
+dit_progress="${LIGHTX2V_DIT_PROGRESS:-1}"
+case "${dit_progress}" in
+    0 | 1) ;;
+    *)
+        echo "ERROR: LIGHTX2V_DIT_PROGRESS must be 0 or 1" >&2
+        exit 1
+        ;;
+esac
 if [[ "${CONFIG_ONLY:-0}" == "1" ]]; then
     cat "${runtime_config_json}"
     exit 0
@@ -153,10 +162,22 @@ if [[ -n "${LIGHTX2V_EXTRA_ARGS:-}" ]]; then
 fi
 
 cd "${models_root}"
-torchrun \
-    --nnodes=1 \
-    --nproc_per_node="${expected_gpu_count}" \
-    --master_addr="${MASTER_ADDR:-127.0.0.1}" \
-    --master_port="${MASTER_PORT:-29500}" \
-    -m lightx2v.infer \
+torchrun_args=(
+    --nnodes=1
+    --nproc_per_node="${expected_gpu_count}"
+    --master_addr="${MASTER_ADDR:-127.0.0.1}"
+    --master_port="${MASTER_PORT:-29500}"
+    -m lightx2v.infer
     "${infer_args[@]}"
+)
+if [[ "${dit_progress}" == 1 ]]; then
+    progress_reporter="${script_dir}/report_dit_progress.py"
+    if [[ ! -f "${progress_reporter}" ]]; then
+        echo "ERROR: DiT progress reporter not found: ${progress_reporter}" >&2
+        exit 1
+    fi
+    torchrun "${torchrun_args[@]}" 2>&1 | \
+        python3 "${progress_reporter}" --ranks "${expected_gpu_count}"
+else
+    torchrun "${torchrun_args[@]}"
+fi

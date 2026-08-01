@@ -6,6 +6,15 @@ The LoRA-FP8 launchers can merge the Wan2.2 high/low distill LoRAs into the
 official DiT weights, quantize both models to scaled E4M3 FP8, and immediately
 start inference.
 
+Both the prebuilt scaled-FP8 and merged LoRA-FP8 launchers report synchronized
+DiT progress. Each completed step uses the slowest rank's profiler duration,
+which represents the distributed critical path. The final line reports DiT
+total time, average `s/it`, and throughput in `it/s`; model loading, T5, and VAE
+time are intentionally excluded. This is the average for the current generation;
+for a publishable benchmark, warm up with one complete generation and measure a
+second identical generation. Set `LIGHTX2V_DIT_PROGRESS=0` to restore raw
+torchrun output without this report.
+
 ## Model layout
 
 The default model root is `/disk/ssd/difumodels-Dis`:
