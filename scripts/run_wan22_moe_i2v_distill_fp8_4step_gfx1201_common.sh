@@ -127,6 +127,19 @@ echo "GPUs: ${HIP_VISIBLE_DEVICES} (${expected_gpu_count} ranks)"
 echo "Parallel: SP=${seq_p_size}, attention=${seq_p_attn_type}, CFG=disabled"
 echo "Config: ${runtime_config_json}"
 echo "Output: ${save_result_path}"
+warmup="${LIGHTX2V_WARMUP:-1}"
+case "${warmup}" in
+    0 | 1) ;;
+    *)
+        echo "ERROR: LIGHTX2V_WARMUP must be 0 or 1" >&2
+        exit 1
+        ;;
+esac
+if [[ "${warmup}" == 1 ]]; then
+    echo "Warmup: enabled"
+else
+    echo "Warmup: disabled"
+fi
 dit_progress="${LIGHTX2V_DIT_PROGRESS:-1}"
 case "${dit_progress}" in
     0 | 1) ;;
@@ -153,6 +166,9 @@ infer_args=(
     --image_path "${image_path}"
     --save_result_path "${save_result_path}"
 )
+if [[ "${warmup}" == 1 ]]; then
+    infer_args+=(--warmup)
+fi
 if [[ -n "${SEED:-}" ]]; then
     infer_args+=(--seed "${SEED}")
 fi

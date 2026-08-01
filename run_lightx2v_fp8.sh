@@ -12,6 +12,7 @@ Environment overrides:
   HOST_OUTPUT_DIR   Host directory for generated videos
   GPU_ID            Physical ROCm GPU id (default: 0)
   SHM_SIZE          Container shared memory size (default: 32g)
+  LIGHTX2V_WARMUP   Set to 0 to disable the default upstream Wan warmup
   USE_SUDO          Set to 1 to run Docker through sudo
   DRY_RUN           Set to 1 to print the Docker command only
 
@@ -95,14 +96,16 @@ docker_args=(
     --device /dev/dri
     -v "${host_models_dir}:/models:ro"
     -v "${host_output_dir}:/workspace/LightX2V/save_results"
+    -v "${script_dir}:/workspace/LightX2VRun:ro"
     -e "ROCR_VISIBLE_DEVICES=${gpu_id}"
     -e "HIP_VISIBLE_DEVICES=0"
     -e "LIGHTX2V_PATH=/workspace/LightX2V"
     -e "MODELS_ROOT=/models"
     -e "MODEL_PATH=/models/Wan-AI/Wan2.2-I2V-A14B"
     -e "TOKENIZERS_PARALLELISM=false"
+    -e "LIGHTX2V_WARMUP=${LIGHTX2V_WARMUP:-1}"
     "${docker_image}"
-    bash /workspace/LightX2V/scripts/platforms/amd_rocm/run_wan22_moe_i2v_distill_fp8_4step_gfx1201.sh
+    bash /workspace/LightX2VRun/scripts/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_1gpu.sh
 )
 
 full_command=("${docker_command[@]}" "${docker_args[@]}")
@@ -120,4 +123,4 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
 fi
 
 "${full_command[@]}"
-echo "Generated video: ${host_output_dir}/output_lightx2v_wan22_moe_i2v_distill_fp8_4step_gfx1201.mp4"
+echo "Generated video: ${host_output_dir}/output_lightx2v_wan22_moe_i2v_distill_fp8_4step_gfx1201_1gpu.mp4"
