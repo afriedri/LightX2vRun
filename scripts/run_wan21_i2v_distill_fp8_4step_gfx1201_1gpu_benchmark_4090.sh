@@ -39,12 +39,20 @@ runtime_config_dir="${RUNTIME_CONFIG_DIR:-/tmp/lightx2v-run}"
 mkdir -p "${runtime_config_dir}"
 runtime_config_json="${runtime_config_dir}/wan21-i2v-4090-comparison-$$.json"
 trap 'rm -f "${runtime_config_json}"' EXIT
+offload_ratio="${OFFLOAD_RATIO:-0.8}"
 
-python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" <<'PY'
+python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" <<'PY'
 import json
 import sys
 
-source_path, output_path, model_path, distill_checkpoint = sys.argv[1:]
+source_path, output_path, model_path, distill_checkpoint, offload_ratio_text = sys.argv[1:]
+try:
+    offload_ratio = float(offload_ratio_text)
+except ValueError as exc:
+    raise SystemExit(f"OFFLOAD_RATIO must be a number in [0, 1], got {offload_ratio_text!r}") from exc
+if not 0.0 <= offload_ratio <= 1.0:
+    raise SystemExit(f"OFFLOAD_RATIO must be in [0, 1], got {offload_ratio_text!r}")
+
 with open(source_path, encoding="utf-8") as source_file:
     config = json.load(source_file)
 
@@ -65,7 +73,7 @@ config.update(
         "enable_cfg": False,
         "cpu_offload": True,
         "offload_granularity": "block",
-        "offload_ratio": 0.8,
+        "offload_ratio": offload_ratio,
         "t5_cpu_offload": True,
         "clip_cpu_offload": True,
         "vae_cpu_offload": True,
@@ -108,7 +116,9 @@ echo "Benchmark: Wan2.1 I2V 14B 720p, 81 frames, 4 steps, CFG disabled"
 echo "Reference: upstream RTX 4090 LightX2V_6-Distill = 171s"
 echo "GPU: ${HIP_VISIBLE_DEVICES} (single rank, SP=1)"
 echo "Weights: ${distill_checkpoint} (4-step Distill per-channel FP8, Aiter fp8-sgl runtime)"
-echo "Offload: block; upstream requested ratio=0.8, current Wan runtime streams all blocks"
+resident_blocks="$(python3 -c 'import math, sys; ratio=float(sys.argv[1]); print(40-math.ceil(40*ratio))' "${offload_ratio}")"
+streamed_blocks="$((40 - resident_blocks))"
+echo "Offload: block; ratio=${offload_ratio} (${streamed_blocks} streamed, ${resident_blocks} GPU-resident)"
 echo "Encoder offload: T5/CLIP/VAE CPU offload enabled"
 echo "Seed: ${seed}"
 echo "Config: ${runtime_config_json}"

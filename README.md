@@ -87,6 +87,15 @@ the ROCm attention/GEMM backends while preserving the benchmark workload:
 GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
 ```
 
+The default `OFFLOAD_RATIO=0.8` streams the first 32 DiT blocks and keeps the
+last eight resident on the GPU, matching the historical schedule. To test
+more residency on a 32 GB card, reduce it gradually; `OFFLOAD_RATIO=0` keeps
+all 40 blocks resident but may run out of memory at 720p:
+
+```bash
+GPU_DEVICES=0 OFFLOAD_RATIO=0.8 ./lightx2vModelrun --benchmark-wan21-4090
+```
+
 Expected host model layout:
 
 ```text
@@ -112,14 +121,9 @@ per-channel FP8 weight layout required by `fp8-sgl`; the launcher changes the
 runtime kernel from the CUDA-only Q8F implementation to GFX1201 Aiter rowwise
 GEMM without requantizing the checkpoint.
 
-One historical implementation detail cannot be reproduced by config alone.
 The 2025 runner used `offload_ratio=0.8`, streaming 32 of 40 DiT blocks while
-leaving the final eight resident after their first transfer. The current Wan
-offload manager no longer implements fractional block residency and streams
-all 40 blocks. The launcher retains `offload_ratio=0.8` as benchmark provenance
-and reports the current behavior explicitly; comparing the result still
-includes host-to-device offload effects, but it is not an identical offload
-schedule.
+leaving the final eight resident. This GFX1201 branch restores that fractional
+block residency while retaining the ROCm Aiter GEMM and attention backends.
 
 Download just that subtree with ModelScope:
 
@@ -137,10 +141,11 @@ modelscope download \
 
 The progress reporter compares DiT denoising time, excluding warmup, model
 loading, encoders, VAE decoding, and video saving. The upstream number divided
-by four is `42.75s/it`; a local `42.49s/it` is about `169.96s` for four steps,
-already within 0.6% of that reference. Hardware, Wan2.1 versus Wan2.2, CUDA
-SageAttention versus ROCm Aiter, host offload bandwidth, and software versions
-still prevent this from being a strict hardware-only comparison.
+by four is `42.75s/it`. Do not compare it with the earlier local `42.49s/it`
+measurement: that was a four-GPU Wan2.2 run, not this single-GPU Wan2.1
+workload. CUDA SageAttention versus ROCm Aiter, host offload bandwidth, and
+software versions also prevent this from being a strict hardware-only
+comparison.
 
 ## Merge LoRA, quantize, and infer
 
