@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-IMAGE="${IMAGE:-lightx2v-rocm:gfx1201-hvat-scratch}"
+IMAGE="${IMAGE:-ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260801-v2}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,7 +52,7 @@ Important environment overrides:
   CACHE_DIR            Persistent Aiter, Triton, Torch, and HF cache directory
   GPU_DEVICES          Physical HIP GPU ids (FP8 supports 1/2/4/8/16; default: 0,1)
   RUN_REPO_DIR          LightX2VRun checkout mounted read-only into the container
-  IMAGE                Docker image (default: lightx2v-rocm:gfx1201-hvat-scratch)
+  IMAGE                Docker image (default: ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260801-v2)
   CONTAINER_NAME       Docker container name
   AUTO_REMOVE=0        Keep the stopped container
   SKIP_MODEL_CHECKS=1  Skip required model-file checks

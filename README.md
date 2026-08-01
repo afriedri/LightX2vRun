@@ -145,7 +145,7 @@ matched keys may be skipped. Any other missing key still stops conversion.
 LoRA merging does not change GEMM shapes, so the existing GFX1201 Aiter rowwise
 CK tuning remains applicable.
 
-The default image is `lightx2v-rocm:gfx1201-hvat-scratch`. Generated videos
+The default image is `ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260801-v2`. Generated videos
 are written to `/disk/ssd/lightx2v-runtime/outputs`.
 
 `lightx2vModelrun` mounts this checkout read-only at `/workspace/LightX2VRun`
