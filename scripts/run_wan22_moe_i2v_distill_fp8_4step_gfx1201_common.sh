@@ -65,6 +65,18 @@ case "${expected_gpu_count}" in
         ;;
 esac
 
+if [[ -n "${SELF_ATTN_TYPE:-}" ]]; then
+    case "${SELF_ATTN_TYPE}" in
+        aiter_flydsl_bf16_flash_attn | aiter_triton_bf16_flash_attn | aiter_fav3_sage_bf16_attn)
+            self_attn_type="${SELF_ATTN_TYPE}"
+            ;;
+        *)
+            echo "ERROR: unsupported SELF_ATTN_TYPE=${SELF_ATTN_TYPE}" >&2
+            exit 1
+            ;;
+    esac
+fi
+
 [[ -f "${base_config_json}" ]] || {
     echo "ERROR: base config not found: ${base_config_json}" >&2
     exit 1

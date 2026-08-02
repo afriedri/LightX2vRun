@@ -7,6 +7,14 @@ models_root="${MODELS_ROOT:-/models}"
 model_path="${MODEL_PATH:-${models_root}/lightx2v/Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v/distill_fp8}"
 distill_checkpoint="${DIT_QUANTIZED_CKPT:-${model_path}}"
 base_config_json="${BASE_CONFIG_JSON:-${lightx2v_path}/configs/distill/wan21/wan_i2v_distill_fp8_4step_cfg.json}"
+self_attn_type="${SELF_ATTN_TYPE:-aiter_flydsl_bf16_flash_attn}"
+case "${self_attn_type}" in
+    aiter_flydsl_bf16_flash_attn | aiter_fav3_sage_bf16_attn) ;;
+    *)
+        echo "ERROR: unsupported SELF_ATTN_TYPE=${self_attn_type}" >&2
+        exit 1
+        ;;
+esac
 
 export PLATFORM=amd_rocm
 export DTYPE=BF16
@@ -41,11 +49,11 @@ runtime_config_json="${runtime_config_dir}/wan21-i2v-4090-comparison-$$.json"
 trap 'rm -f "${runtime_config_json}"' EXIT
 offload_ratio="${OFFLOAD_RATIO:-0.8}"
 
-python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" <<'PY'
+python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" "${self_attn_type}" <<'PY'
 import json
 import sys
 
-source_path, output_path, model_path, distill_checkpoint, offload_ratio_text = sys.argv[1:]
+source_path, output_path, model_path, distill_checkpoint, offload_ratio_text, self_attn_type = sys.argv[1:]
 try:
     offload_ratio = float(offload_ratio_text)
 except ValueError as exc:
@@ -65,7 +73,7 @@ config.update(
         "text_len": 512,
         "target_height": 720,
         "target_width": 1280,
-        "self_attn_1_type": "aiter_flydsl_bf16_flash_attn",
+        "self_attn_1_type": self_attn_type,
         "cross_attn_1_type": "aiter_triton_bf16_flash_attn",
         "cross_attn_2_type": "aiter_triton_bf16_flash_attn",
         "sample_guide_scale": 5,
@@ -115,6 +123,7 @@ seed="${SEED:-1234}"
 echo "Benchmark: Wan2.1 I2V 14B 720p, 81 frames, 4 steps, CFG disabled"
 echo "Reference: upstream RTX 4090 LightX2V_6-Distill = 171s"
 echo "GPU: ${HIP_VISIBLE_DEVICES} (single rank, SP=1)"
+echo "Self attention: ${self_attn_type}"
 echo "Weights: ${distill_checkpoint} (4-step Distill per-channel FP8, Aiter fp8-sgl runtime)"
 resident_blocks="$(python3 -c 'import math, sys; ratio=float(sys.argv[1]); print(40-math.ceil(40*ratio))' "${offload_ratio}")"
 streamed_blocks="$((40 - resident_blocks))"

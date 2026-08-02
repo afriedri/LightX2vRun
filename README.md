@@ -63,6 +63,10 @@ GPU_DEVICES=0,1,2,3,4,5,6,7 ./lightx2vModelrun --infer-fp8
 GPU_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 \
   ./lightx2vModelrun --infer-fp8
 
+# Native SageAttention2; the same topology rule selects Ring on 16 GPUs
+GPU_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 \
+  ./lightx2vModelrun --infer-sage-fp8
+
 # BF16 4-step I2V
 ./lightx2vModelrun --infer-bf16
 
@@ -86,6 +90,18 @@ the ROCm attention/GEMM backends while preserving the benchmark workload:
 ```bash
 GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
 ```
+
+使用完全相同的 Wan2.1 单卡 720P/81 帧/4 步 workload 测原生 gfx1201
+SageAttention2：
+
+```bash
+GPU_DEVICES=0 IMAGE=<包含-Aiter-630e9c1081-的镜像> \
+  ./lightx2vModelrun --benchmark-wan21-4090-sage
+```
+
+这个入口只把 self-attention 从 FlyDSL BF16 改为
+`aiter_fav3_sage_bf16_attn`；cross-attention、FP8 DiT 权重、seed、offload
+比例和输入图均与原来的 4090 对标入口一致。
 
 The default `OFFLOAD_RATIO=0.8` streams the first 32 DiT blocks and keeps the
 last eight resident on the GPU, matching the historical schedule. To test
@@ -232,9 +248,15 @@ overrides, or the 2/4/8/16 GPU launch scripts therefore do not require an image
 rebuild. The image remains the fallback owner of the LightX2V Python package
 and kernels.
 
-The first 16-GPU Ring run requires an image built from the LightX2V ROCm branch
-that includes Aiter Triton `apply_with_lse()` support. After that one core image
-update, launcher-only changes remain bind-mounted and need no rebuild.
+The BF16-attention 16-GPU Ring path requires an image built from the LightX2V
+ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
+`--infer-sage-fp8` path additionally requires Aiter revision
+`630e9c108106dbf2e21125d687ea9fcc142d264c`, where native gfx1201
+SageAttention2 returns K-smoothing-corrected natural-log LSE, and LightX2V
+revision `f8b7ed73819ad379d8c87a1e198111e1adacb64b`, where the ROCm adapter exposes
+that LSE to Ring. The launcher checks both image labels before starting any
+rank. Those Aiter and LightX2V updates require one image rebuild;
+launcher-only changes remain bind-mounted afterward.
 
 The FP8 topology is:
 
@@ -251,6 +273,12 @@ Wan2.2 A14B has 40 attention heads. SP=1 keeps the same Ulysses configuration
 without splitting the sequence; Ulysses also works for SP=2/4/8, but not SP=16
 because 40 is not divisible by 16. The 16-GPU launcher uses LightX2V Ring
 attention instead and does not create a second CFG replica group.
+
+`--infer-fp8` remains the BF16 attention baseline. `--infer-sage-fp8` keeps
+text/image cross-attention on the tuned Aiter Triton BF16 kernel and changes
+only self-attention to `aiter_fav3_sage_bf16_attn`; on SP16, each Ring step
+gets native Sage output plus natural-log LSE and merges all 16 K/V shards with
+`logaddexp` weights.
 
 The launcher fixes AITER dispatch to `GPU_ARCHS=gfx1201` and `CU_NUM=24`,
 matching the rowwise CK tuning CSV embedded in the image.
