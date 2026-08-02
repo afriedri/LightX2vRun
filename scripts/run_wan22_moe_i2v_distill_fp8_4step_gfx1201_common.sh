@@ -86,18 +86,35 @@ runtime_config_dir="${RUNTIME_CONFIG_DIR:-/tmp/lightx2v-run}"
 mkdir -p "${runtime_config_dir}"
 runtime_config_json="${runtime_config_dir}/wan22-i2v-fp8-${expected_gpu_count}gpu-$$.json"
 trap 'rm -f "${runtime_config_json}"' EXIT
+if [[ -n "${ROPE_CHUNK_SIZE:-}" ]]; then
+    rope_chunk_size="${ROPE_CHUNK_SIZE}"
+elif [[ "${self_attn_type}" == "aiter_fav3_sage_bf16_attn" ]]; then
+    rope_chunk_size=8192
+else
+    rope_chunk_size=0
+fi
+if [[ ! "${rope_chunk_size}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: ROPE_CHUNK_SIZE must be a non-negative integer, got ${rope_chunk_size}" >&2
+    exit 1
+fi
 
-python3 - "${base_config_json}" "${runtime_config_json}" "${seq_p_size}" "${seq_p_attn_type}" "${self_attn_type}" <<'PY'
+python3 - "${base_config_json}" "${runtime_config_json}" "${seq_p_size}" "${seq_p_attn_type}" "${self_attn_type}" "${rope_chunk_size}" <<'PY'
 import json
 import os
 import sys
 
-source_path, output_path, seq_p_size, seq_p_attn_type, self_attn_type = sys.argv[1:]
+source_path, output_path, seq_p_size, seq_p_attn_type, self_attn_type, rope_chunk_size_text = sys.argv[1:]
 with open(source_path, encoding="utf-8") as source_file:
     config = json.load(source_file)
 
+rope_chunk_size = int(rope_chunk_size_text)
 config["enable_cfg"] = False
 config["self_attn_1_type"] = self_attn_type
+config["rope_chunk"] = rope_chunk_size > 0
+if rope_chunk_size > 0:
+    config["rope_chunk_size"] = rope_chunk_size
+else:
+    config.pop("rope_chunk_size", None)
 config["parallel"] = {
     "seq_p_size": int(seq_p_size),
     "seq_p_attn_type": seq_p_attn_type,
@@ -137,6 +154,11 @@ save_result_path="${SAVE_RESULT_PATH:-${lightx2v_path}/save_results/output_light
 
 echo "GPUs: ${HIP_VISIBLE_DEVICES} (${expected_gpu_count} ranks)"
 echo "Parallel: SP=${seq_p_size}, attention=${seq_p_attn_type}, CFG=disabled"
+if (( rope_chunk_size > 0 )); then
+    echo "RoPE: chunked at ${rope_chunk_size} sequence rows"
+else
+    echo "RoPE: unchunked"
+fi
 echo "Config: ${runtime_config_json}"
 echo "Output: ${save_result_path}"
 warmup="${LIGHTX2V_WARMUP:-1}"

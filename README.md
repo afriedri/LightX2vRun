@@ -103,13 +103,18 @@ GPU_DEVICES=0 IMAGE=<包含-Aiter-ac27b0b26e-的镜像> \
 `aiter_fav3_sage_bf16_attn`；cross-attention、FP8 DiT 权重、seed、offload
 比例和输入图均与原来的 4090 对标入口一致。
 
-The default `OFFLOAD_RATIO=0.8` streams the first 32 DiT blocks and keeps the
-last eight resident on the GPU, matching the historical schedule. To test
-more residency on a 32 GB card, reduce it gradually; `OFFLOAD_RATIO=0` keeps
-all 40 blocks resident but may run out of memory at 720p:
+Sage 入口默认将 FP32 `torch_real_rope` 按 8192 个序列位置分块，避免 720P
+完整 Q/K RoPE 产生约 1.42 GiB 的单个 FP32 临时张量。可以用
+`ROPE_CHUNK_SIZE=4096` 进一步降低峰值，或用 `ROPE_CHUNK_SIZE=0` 回退到
+非分块实现；普通 BF16 对标入口默认不启用分块。
+
+The default `OFFLOAD_RATIO=1.0` streams all 40 DiT blocks. This matches the
+historical benchmark config's annotated 720p setting; its `0.8` value was the
+480p setting. To test more residency, reduce it gradually; `OFFLOAD_RATIO=0`
+keeps all 40 blocks resident and is not expected to fit this 720p workload:
 
 ```bash
-GPU_DEVICES=0 OFFLOAD_RATIO=0.8 ./lightx2vModelrun --benchmark-wan21-4090
+GPU_DEVICES=0 OFFLOAD_RATIO=1.0 ./lightx2vModelrun --benchmark-wan21-4090
 ```
 
 Expected host model layout:
@@ -137,9 +142,9 @@ per-channel FP8 weight layout required by `fp8-sgl`; the launcher changes the
 runtime kernel from the CUDA-only Q8F implementation to GFX1201 Aiter rowwise
 GEMM without requantizing the checkpoint.
 
-The 2025 runner used `offload_ratio=0.8`, streaming 32 of 40 DiT blocks while
-leaving the final eight resident. This GFX1201 branch restores that fractional
-block residency while retaining the ROCm Aiter GEMM and attention backends.
+The 2025 benchmark config annotated `offload_ratio=1` for its 720p variant, so
+the GFX1201 launcher fully streams all 40 blocks while retaining the ROCm Aiter
+GEMM and attention backends.
 
 Download just that subtree with ModelScope:
 

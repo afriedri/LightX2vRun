@@ -47,19 +47,31 @@ runtime_config_dir="${RUNTIME_CONFIG_DIR:-/tmp/lightx2v-run}"
 mkdir -p "${runtime_config_dir}"
 runtime_config_json="${runtime_config_dir}/wan21-i2v-4090-comparison-$$.json"
 trap 'rm -f "${runtime_config_json}"' EXIT
-offload_ratio="${OFFLOAD_RATIO:-0.8}"
+offload_ratio="${OFFLOAD_RATIO:-1.0}"
+if [[ -n "${ROPE_CHUNK_SIZE:-}" ]]; then
+    rope_chunk_size="${ROPE_CHUNK_SIZE}"
+elif [[ "${self_attn_type}" == "aiter_fav3_sage_bf16_attn" ]]; then
+    rope_chunk_size=8192
+else
+    rope_chunk_size=0
+fi
+if [[ ! "${rope_chunk_size}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: ROPE_CHUNK_SIZE must be a non-negative integer, got ${rope_chunk_size}" >&2
+    exit 1
+fi
 
-python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" "${self_attn_type}" <<'PY'
+python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" "${self_attn_type}" "${rope_chunk_size}" <<'PY'
 import json
 import sys
 
-source_path, output_path, model_path, distill_checkpoint, offload_ratio_text, self_attn_type = sys.argv[1:]
+source_path, output_path, model_path, distill_checkpoint, offload_ratio_text, self_attn_type, rope_chunk_size_text = sys.argv[1:]
 try:
     offload_ratio = float(offload_ratio_text)
 except ValueError as exc:
     raise SystemExit(f"OFFLOAD_RATIO must be a number in [0, 1], got {offload_ratio_text!r}") from exc
 if not 0.0 <= offload_ratio <= 1.0:
     raise SystemExit(f"OFFLOAD_RATIO must be in [0, 1], got {offload_ratio_text!r}")
+rope_chunk_size = int(rope_chunk_size_text)
 
 with open(source_path, encoding="utf-8") as source_file:
     config = json.load(source_file)
@@ -98,6 +110,7 @@ config.update(
         "use_tiling_vae": True,
         "rms_norm_type": "sgl-kernel",
         "rope_type": "torch_real_rope",
+        "rope_chunk": rope_chunk_size > 0,
         "modulate_type": "torch",
         "feature_caching": "NoCaching",
         "parallel": {
@@ -108,6 +121,10 @@ config.update(
         },
     }
 )
+if rope_chunk_size > 0:
+    config["rope_chunk_size"] = rope_chunk_size
+else:
+    config.pop("rope_chunk_size", None)
 
 with open(output_path, "w", encoding="utf-8") as output_file:
     json.dump(config, output_file, indent=4, ensure_ascii=False)
@@ -124,6 +141,11 @@ echo "Benchmark: Wan2.1 I2V 14B 720p, 81 frames, 4 steps, CFG disabled"
 echo "Reference: upstream RTX 4090 LightX2V_6-Distill = 171s"
 echo "GPU: ${HIP_VISIBLE_DEVICES} (single rank, SP=1)"
 echo "Self attention: ${self_attn_type}"
+if (( rope_chunk_size > 0 )); then
+    echo "RoPE: torch_real_rope, chunked at ${rope_chunk_size} sequence rows"
+else
+    echo "RoPE: torch_real_rope, unchunked"
+fi
 echo "Weights: ${distill_checkpoint} (4-step Distill per-channel FP8, Aiter fp8-sgl runtime)"
 resident_blocks="$(python3 -c 'import math, sys; ratio=float(sys.argv[1]); print(40-math.ceil(40*ratio))' "${offload_ratio}")"
 streamed_blocks="$((40 - resident_blocks))"
