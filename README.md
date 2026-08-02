@@ -95,7 +95,7 @@ GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
 SageAttention2：
 
 ```bash
-GPU_DEVICES=0 IMAGE=<包含-Aiter-84a12a2cdb-的镜像> \
+GPU_DEVICES=0 IMAGE=<包含-Aiter-ac27b0b26e-的镜像> \
   ./lightx2vModelrun --benchmark-wan21-4090-sage
 ```
 
@@ -251,7 +251,7 @@ and kernels.
 The BF16-attention 16-GPU Ring path requires an image built from the LightX2V
 ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
 `--infer-sage-fp8` path additionally requires Aiter revision
-`84a12a2cdbe6d6a224be7e2605d45d217d3b1b57`, where native gfx1201
+`ac27b0b26e78c864b5d771ea83daa37ce284d9f8`, where native gfx1201
 SageAttention2 returns K-smoothing-corrected natural-log LSE, and LightX2V
 revision `f8b7ed73819ad379d8c87a1e198111e1adacb64b`, where the ROCm adapter exposes
 that LSE to Ring. The launcher checks both image labels before starting any
