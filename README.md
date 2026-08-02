@@ -253,10 +253,10 @@ ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
 `--infer-sage-fp8` path additionally requires Aiter revision
 `ac27b0b26e78c864b5d771ea83daa37ce284d9f8`, where native gfx1201
 SageAttention2 returns K-smoothing-corrected natural-log LSE, and LightX2V
-revision `f8b7ed73819ad379d8c87a1e198111e1adacb64b`, where the ROCm adapter exposes
-that LSE to Ring. The launcher checks both image labels before starting any
-rank. Those Aiter and LightX2V updates require one image rebuild;
-launcher-only changes remain bind-mounted afterward.
+revision `e761bd1f0596b2161f4ebeaf1c691d045d892bac`, where the ROCm adapter exposes
+that LSE to Ring and Wan warmup releases its device cache. The launcher checks
+both image labels before starting any rank. Those Aiter and LightX2V updates
+require one image rebuild; launcher-only changes remain bind-mounted afterward.
 
 The FP8 topology is:
 
