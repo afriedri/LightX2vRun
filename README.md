@@ -95,7 +95,7 @@ GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
 SageAttention2：
 
 ```bash
-GPU_DEVICES=0 IMAGE=<包含-Aiter-6cf375c871-的镜像> \
+GPU_DEVICES=0 IMAGE=<包含-Aiter-b200d768d1-的镜像> \
   ./lightx2vModelrun --benchmark-wan21-4090-sage
 ```
 
@@ -285,7 +285,7 @@ matched keys may be skipped. Any other missing key still stops conversion.
 LoRA merging does not change GEMM shapes, so the existing GFX1201 Aiter rowwise
 CK tuning remains applicable.
 
-The default image is `ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260801-v2`. Generated videos
+The default image is `ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260803-SageMemBreak`. Generated videos
 are written to `/disk/ssd/lightx2v-runtime/outputs`.
 
 `lightx2vModelrun` mounts this checkout read-only at `/workspace/LightX2VRun`
@@ -297,13 +297,15 @@ and kernels.
 The BF16-attention 16-GPU Ring path requires an image built from the LightX2V
 ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
 `--infer-sage-fp8` path additionally requires Aiter revision
-`6cf375c871ab24a621cf187c76594f315d0b3b9b`, whose native gfx1201
-SageAttention2 returns K-smoothing-corrected natural-log LSE, and LightX2V
-revision `cf581854389737fb0adb32afad3fd7b54f903ffb`, where the ROCm adapter
-exposes that LSE to Ring and the Wan FP8 path uses direct-output activation
-quantization with self-attention Q/K/V reuse. The launcher checks both image
-labels before starting any rank. Those Aiter and LightX2V updates require one
-image rebuild; launcher-only changes remain bind-mounted afterward.
+`b200d768d1ab2a2aa16ae200dcd2f914880b2d49`, whose native gfx1201
+SageAttention2 returns K-smoothing-corrected natural-log LSE and exposes
+prepare/core stage profiling, and LightX2V revision
+`c7c0cae3a32f79339df2824b38ee03c7f2a397f9`, where the ROCm adapter exposes
+that LSE to Ring, uses direct-output activation quantization with self-attention
+Q/K/V reuse, and connects the Sage stage profiler to WanRunTune. The launcher
+checks both image labels before starting any rank. Those Aiter and LightX2V
+updates require one image rebuild; launcher-only changes remain bind-mounted
+afterward.
 
 The FP8 topology is:
 

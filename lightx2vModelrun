@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-IMAGE="${IMAGE:-ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260801-v2}"
+IMAGE="${IMAGE:-ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260803-SageMemBreak}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
-EXPECTED_SAGE_AITER_REV="${EXPECTED_SAGE_AITER_REV:-6cf375c871ab24a621cf187c76594f315d0b3b9b}"
-EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-cf581854389737fb0adb32afad3fd7b54f903ffb}"
+EXPECTED_SAGE_AITER_REV="${EXPECTED_SAGE_AITER_REV:-b200d768d1ab2a2aa16ae200dcd2f914880b2d49}"
+EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-c7c0cae3a32f79339df2824b38ee03c7f2a397f9}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 
@@ -67,7 +67,7 @@ Important environment overrides:
   EXPECTED_SAGE_AITER_REV, EXPECTED_SAGE_LIGHTX2V_REV
                        Exact image source revisions required by --infer-sage-fp8
   RUN_REPO_DIR          LightX2VRun checkout mounted read-only into the container
-  IMAGE                Docker image (default: ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260801-v2)
+  IMAGE                Docker image (default: ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260803-SageMemBreak)
   CONTAINER_NAME       Docker container name
   AUTO_REMOVE=0        Keep the stopped container
   SKIP_MODEL_CHECKS=1  Skip required model-file checks
