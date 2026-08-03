@@ -25,6 +25,17 @@ METRICS = (
     ("offload_device_wait", "cpu", "offload.device_wait"),
 )
 
+SAGE_BREAKDOWN_METRICS = (
+    ("sage_prepare", "attention.sage_v2.prepare"),
+    ("sage_prepare_layout", "attention.sage_v2.prepare.layout"),
+    ("sage_k_mean", "attention.sage_v2.prepare.k_mean"),
+    ("sage_v_amax", "attention.sage_v2.prepare.v_amax"),
+    ("sage_qkv_quant", "attention.sage_v2.prepare.qkv_quant"),
+    ("sage_prepare_padding", "attention.sage_v2.prepare.padding"),
+    ("sage_core", "attention.sage_v2.core"),
+    ("sage_output", "attention.sage_v2.output"),
+)
+
 SELF_ATTENTION_CATEGORY = {
     "flydsl": "attention.flydsl_bf16",
     "sage": "attention.sage_v2",
@@ -93,22 +104,58 @@ def validate_target_shape(report, backend):
 def collect_scope(flydsl, sage, steady):
     rows = []
     for name, sample_kind, category in METRICS:
-        flydsl_ms, flydsl_steps = metric_total(
-            flydsl, "flydsl", sample_kind, category, steady
+        flydsl_ms, flydsl_steps = (None, 0)
+        sage_ms, sage_steps = (None, 0)
+        if flydsl is not None:
+            flydsl_ms, flydsl_steps = metric_total(
+                flydsl, "flydsl", sample_kind, category, steady
+            )
+        if sage is not None:
+            sage_ms, sage_steps = metric_total(
+                sage, "sage", sample_kind, category, steady
+            )
+        step_count = (
+            min(flydsl_steps, sage_steps)
+            if flydsl is not None and sage is not None
+            else max(flydsl_steps, sage_steps)
         )
-        sage_ms, sage_steps = metric_total(sage, "sage", sample_kind, category, steady)
-        step_count = min(flydsl_steps, sage_steps)
         rows.append(
             {
                 "metric": name,
                 "steps": step_count,
                 "flydsl_total_ms": flydsl_ms,
                 "sage_total_ms": sage_ms,
-                "flydsl_mean_per_step_ms": flydsl_ms / flydsl_steps if flydsl_steps else 0.0,
-                "sage_mean_per_step_ms": sage_ms / sage_steps if sage_steps else 0.0,
-                "sage_speedup": flydsl_ms / sage_ms if sage_ms else None,
+                "flydsl_mean_per_step_ms": (
+                    flydsl_ms / flydsl_steps if flydsl_steps else None
+                ),
+                "sage_mean_per_step_ms": (
+                    sage_ms / sage_steps if sage_steps else None
+                ),
+                "sage_speedup": (
+                    flydsl_ms / sage_ms
+                    if flydsl_ms is not None and sage_ms
+                    else None
+                ),
             }
         )
+    if sage is not None:
+        for name, category in SAGE_BREAKDOWN_METRICS:
+            sage_ms, sage_steps = metric_total(
+                sage, "sage", "gpu", category, steady
+            )
+            rows.append(
+                {
+                    "metric": name,
+                    "steps": sage_steps,
+                    "flydsl_total_ms": None,
+                    "sage_total_ms": sage_ms,
+                    "flydsl_mean_per_step_ms": None,
+                    "sage_mean_per_step_ms": (
+                        sage_ms / sage_steps if sage_steps else None
+                    ),
+                    "sage_speedup": None,
+                }
+            )
     return rows
 
 
@@ -177,27 +224,34 @@ def print_scope(name, rows):
     for row in rows:
         speedup = row["sage_speedup"]
         speedup_text = f"{speedup:.4f}x" if speedup is not None else "n/a"
+        flydsl_ms = row["flydsl_mean_per_step_ms"]
+        sage_ms = row["sage_mean_per_step_ms"]
+        flydsl_text = f"{flydsl_ms:.3f}" if flydsl_ms is not None else "n/a"
+        sage_text = f"{sage_ms:.3f}" if sage_ms is not None else "n/a"
         print(
             f"{row['metric']:24} "
-            f"{row['flydsl_mean_per_step_ms']:16.3f} "
-            f"{row['sage_mean_per_step_ms']:14.3f} "
+            f"{flydsl_text:>16} "
+            f"{sage_text:>14} "
             f"{speedup_text:>10}"
         )
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--flydsl", required=True)
-    parser.add_argument("--sage", required=True)
+    parser.add_argument("--flydsl")
+    parser.add_argument("--sage")
     parser.add_argument("--output-dir", required=True)
     args = parser.parse_args()
+    if not args.flydsl and not args.sage:
+        parser.error("at least one of --flydsl or --sage is required")
 
-    flydsl = load_report(args.flydsl)
-    sage = load_report(args.sage)
-    target_shapes = {
-        "flydsl": validate_target_shape(flydsl, "flydsl"),
-        "sage": validate_target_shape(sage, "sage"),
-    }
+    flydsl = load_report(args.flydsl) if args.flydsl else None
+    sage = load_report(args.sage) if args.sage else None
+    target_shapes = {}
+    if flydsl is not None:
+        target_shapes["flydsl"] = validate_target_shape(flydsl, "flydsl")
+    if sage is not None:
+        target_shapes["sage"] = validate_target_shape(sage, "sage")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -207,16 +261,15 @@ def main():
     }
     summary = {
         "schema_version": 1,
-        "flydsl_environment": flydsl.get("environment", {}),
-        "sage_environment": sage.get("environment", {}),
+        "flydsl_environment": flydsl.get("environment", {}) if flydsl else None,
+        "sage_environment": sage.get("environment", {}) if sage else None,
         "target_self_attention": {
             "expected_q": TARGET_SELF_SHAPE,
-            "flydsl": target_shapes["flydsl"],
-            "sage": target_shapes["sage"],
+            **target_shapes,
         },
         "breakdown": {
-            "flydsl": flydsl.get("summary", {}),
-            "sage": sage.get("summary", {}),
+            **({"flydsl": flydsl.get("summary", {})} if flydsl else {}),
+            **({"sage": sage.get("summary", {})} if sage else {}),
         },
         "scopes": scopes,
     }
@@ -226,7 +279,8 @@ def main():
     write_csv(output_dir / "summary.csv", scopes)
     write_details_csv(
         output_dir / "details.csv",
-        detail_rows(flydsl, "flydsl") + detail_rows(sage, "sage"),
+        (detail_rows(flydsl, "flydsl") if flydsl else [])
+        + (detail_rows(sage, "sage") if sage else []),
     )
 
     print_scope("All steps", scopes["all_steps"])

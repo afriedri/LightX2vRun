@@ -114,6 +114,21 @@ GPU_DEVICES=0,1 IMAGE=<包含本次-LightX2V-runtune-插桩的镜像> \
 
 传一个 GPU id 时保持旧行为，两组都在同一张卡上顺序运行。
 
+只采集新的 Sage prepare/core 子计时时，不需要重跑 FlyDSL：
+
+```bash
+GPU_DEVICES=0 RUNTUNE_BACKENDS=sage \
+  RUNTUNE_NAME=wan21_sage_breakdown_<name> \
+  IMAGE=<包含本次-Aiter-LightX2V-插桩的镜像> \
+  ./lightx2vModelrun --runtune-wan21
+```
+
+单 backend 模式仍生成原始 JSON、`summary.json`、`summary.csv` 和
+`details.csv`；缺失 backend 的 A/B 列显示为 `n/a`。终端表和 `summary.csv`
+会直接列出 `sage_prepare`、`sage_k_mean`、`sage_v_amax`、`sage_qkv_quant`、
+`sage_core` 等子计时。Q/K/V quant 在生产实现中属于同一个 fused task grid，故这里
+保留为一项，避免为了计时改变 kernel launch 结构。
+
 默认 workload 是相同的 720P/81 帧/4 步、seed 1234、全 block offload，
 并关闭 warmup。结果写入
 `/disk/ssd/lightx2v-runtime/outputs/wan21_runtune_<timestamp>/`，包含两个

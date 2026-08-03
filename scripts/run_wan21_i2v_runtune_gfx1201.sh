@@ -42,8 +42,8 @@ mkdir -p "${host_results}"
 
 backend_list="${RUNTUNE_BACKENDS:-flydsl,sage}"
 IFS=',' read -r -a backends <<<"${backend_list}"
-if [[ "${#backends[@]}" -ne 2 ]]; then
-    echo "ERROR: RUNTUNE_BACKENDS must contain flydsl,sage in either order" >&2
+if [[ "${#backends[@]}" -lt 1 || "${#backends[@]}" -gt 2 ]]; then
+    echo "ERROR: RUNTUNE_BACKENDS must contain sage, flydsl, or both" >&2
     exit 1
 fi
 declare -A seen=()
@@ -61,10 +61,6 @@ for backend in "${backends[@]}"; do
     }
     seen["${backend}"]=1
 done
-[[ -n "${seen[flydsl]:-}" && -n "${seen[sage]:-}" ]] || {
-    echo "ERROR: RUNTUNE_BACKENDS must include both flydsl and sage" >&2
-    exit 1
-}
 
 warmup="${LIGHTX2V_WARMUP:-0}"
 rope_chunk_size="${ROPE_CHUNK_SIZE:-8192}"
@@ -115,13 +111,14 @@ for backend in "${backends[@]}"; do
 done
 
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
-    echo "RunTune dry-run complete: both backend commands validated"
+    echo "RunTune dry-run complete: selected backend commands validated"
     exit 0
 fi
 
-python3 "${script_dir}/summarize_wan21_runtune.py" \
-    --flydsl "${host_results}/flydsl.json" \
-    --sage "${host_results}/sage.json" \
-    --output-dir "${host_results}"
+summary_args=(--output-dir "${host_results}")
+for backend in "${backends[@]}"; do
+    summary_args+=("--${backend}" "${host_results}/${backend}.json")
+done
+python3 "${script_dir}/summarize_wan21_runtune.py" "${summary_args[@]}"
 
 echo "RunTune complete: ${host_results}"
