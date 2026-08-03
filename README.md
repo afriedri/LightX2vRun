@@ -95,7 +95,7 @@ GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
 SageAttention2：
 
 ```bash
-GPU_DEVICES=0 IMAGE=<包含-Aiter-ac27b0b26e-的镜像> \
+GPU_DEVICES=0 IMAGE=<包含-Aiter-6cf375c871-的镜像> \
   ./lightx2vModelrun --benchmark-wan21-4090-sage
 ```
 
@@ -103,13 +103,16 @@ GPU_DEVICES=0 IMAGE=<包含-Aiter-ac27b0b26e-的镜像> \
 `aiter_fav3_sage_bf16_attn`；cross-attention、FP8 DiT 权重、seed、offload
 比例和输入图均与原来的 4090 对标入口一致。
 
-同一台单卡上依次运行 FlyDSL BF16 与 Sage V2，并采集 Wan2.1 实际模型
-的逐 step 分解：
+依次运行 FlyDSL BF16 与 Sage V2，并采集 Wan2.1 实际模型的逐 step 分解。
+传两个 GPU id 时，FlyDSL 固定使用第一张卡，Sage 固定使用第二张卡；两组
+仍然顺序执行，避免 CPU offload、PCIe 和磁盘竞争污染 A/B：
 
 ```bash
-GPU_DEVICES=0 IMAGE=<包含本次-LightX2V-runtune-插桩的镜像> \
+GPU_DEVICES=0,1 IMAGE=<包含本次-LightX2V-runtune-插桩的镜像> \
   ./lightx2vModelrun --runtune-wan21
 ```
+
+传一个 GPU id 时保持旧行为，两组都在同一张卡上顺序运行。
 
 默认 workload 是相同的 720P/81 帧/4 步、seed 1234、全 block offload，
 并关闭 warmup。结果写入
@@ -122,7 +125,7 @@ backend 的原始 JSON/日志/视频，以及 A/B `summary.json`、`summary.csv`
 只检查两条容器命令和环境变量透传，不启动模型：
 
 ```bash
-GPU_DEVICES=0 OUTPUT_DIR=/tmp/lightx2v-runtune DRY_RUN=1 \
+GPU_DEVICES=0,1 OUTPUT_DIR=/tmp/lightx2v-runtune DRY_RUN=1 \
   ./lightx2vModelrun --runtune-wan21
 ```
 
@@ -279,12 +282,13 @@ and kernels.
 The BF16-attention 16-GPU Ring path requires an image built from the LightX2V
 ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
 `--infer-sage-fp8` path additionally requires Aiter revision
-`ac27b0b26e78c864b5d771ea83daa37ce284d9f8`, where native gfx1201
+`6cf375c871ab24a621cf187c76594f315d0b3b9b`, whose native gfx1201
 SageAttention2 returns K-smoothing-corrected natural-log LSE, and LightX2V
-revision `e761bd1f0596b2161f4ebeaf1c691d045d892bac`, where the ROCm adapter exposes
-that LSE to Ring and Wan warmup releases its device cache. The launcher checks
-both image labels before starting any rank. Those Aiter and LightX2V updates
-require one image rebuild; launcher-only changes remain bind-mounted afterward.
+revision `cf581854389737fb0adb32afad3fd7b54f903ffb`, where the ROCm adapter
+exposes that LSE to Ring and the Wan FP8 path uses direct-output activation
+quantization with self-attention Q/K/V reuse. The launcher checks both image
+labels before starting any rank. Those Aiter and LightX2V updates require one
+image rebuild; launcher-only changes remain bind-mounted afterward.
 
 The FP8 topology is:
 

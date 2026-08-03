@@ -9,10 +9,25 @@ modelrun="${run_repo_dir}/lightx2vModelrun"
     echo "ERROR: lightx2vModelrun is not executable: ${modelrun}" >&2
     exit 1
 }
-[[ "${GPU_DEVICES:-0}" =~ ^[0-9]+$ ]] || {
-    echo "ERROR: Wan2.1 runtune requires exactly one GPU_DEVICES id" >&2
+runtune_gpu_list="${GPU_DEVICES:-0}"
+[[ "${runtune_gpu_list}" =~ ^[0-9]+(,[0-9]+)?$ ]] || {
+    echo "ERROR: Wan2.1 runtune requires one or two GPU_DEVICES ids" >&2
     exit 1
 }
+IFS=',' read -r -a runtune_gpus <<<"${runtune_gpu_list}"
+if [[ "${#runtune_gpus[@]}" -eq 2 && "${runtune_gpus[0]}" == "${runtune_gpus[1]}" ]]; then
+    echo "ERROR: Wan2.1 runtune GPU_DEVICES contains duplicate id ${runtune_gpus[0]}" >&2
+    exit 1
+fi
+flydsl_gpu="${runtune_gpus[0]}"
+sage_gpu="${runtune_gpus[0]}"
+if [[ "${#runtune_gpus[@]}" -eq 2 ]]; then
+    sage_gpu="${runtune_gpus[1]}"
+fi
+declare -A backend_gpus=(
+    [flydsl]="${flydsl_gpu}"
+    [sage]="${sage_gpu}"
+)
 
 runtime_root="${RUNTIME_ROOT:-/disk/ssd/lightx2v-runtime}"
 output_dir="${OUTPUT_DIR:-${runtime_root}/outputs}"
@@ -58,19 +73,21 @@ offload_ratio="${OFFLOAD_RATIO:-1.0}"
 echo "Wan2.1 RunTune"
 echo "Results : ${host_results}"
 echo "Backends: ${backends[*]}"
+echo "GPU map : flydsl=${backend_gpus[flydsl]}, sage=${backend_gpus[sage]} (sequential)"
 echo "Workload: 720p, 81 frames, 4 steps, H40/S74592"
 echo "Common  : warmup=${warmup}, rope_chunk=${rope_chunk_size}, offload_ratio=${offload_ratio}, seed=${SEED:-1234}"
 
 run_backend() {
     local backend=$1
+    local gpu_id="${backend_gpus[${backend}]}"
     local mode
     case "${backend}" in
         flydsl) mode=--benchmark-wan21-4090 ;;
         sage) mode=--benchmark-wan21-4090-sage ;;
     esac
 
-    echo "[$(date +%H:%M:%S)] START ${backend}"
-    GPU_DEVICES="${GPU_DEVICES:-0}" \
+    echo "[$(date +%H:%M:%S)] START ${backend} gpu=${gpu_id}"
+    GPU_DEVICES="${gpu_id}" \
     OUTPUT_DIR="${output_dir}" \
     CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}-runtune-${backend}" \
     LIGHTX2V_WARMUP="${warmup}" \

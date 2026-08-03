@@ -4,8 +4,8 @@ set -Eeuo pipefail
 IMAGE="${IMAGE:-ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260801-v2}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
-EXPECTED_SAGE_AITER_REV="${EXPECTED_SAGE_AITER_REV:-ac27b0b26e78c864b5d771ea83daa37ce284d9f8}"
-EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-7efbab70a53613ea2f85886621b8cd0d66610fd6}"
+EXPECTED_SAGE_AITER_REV="${EXPECTED_SAGE_AITER_REV:-6cf375c871ab24a621cf187c76594f315d0b3b9b}"
+EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-cf581854389737fb0adb32afad3fd7b54f903ffb}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 
@@ -49,8 +49,8 @@ Usage:
                                       Run the Wan2.1 720p workload behind the published 4090 171s result
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090-sage
                                       Run the same Wan2.1 workload with native gfx1201 SageAttention2
-  GPU_DEVICES=0 ./lightx2vModelrun --runtune-wan21
-                                      Run both backends and collect Wan phase/kernel/offload timing
+  GPU_DEVICES=0,1 ./lightx2vModelrun --runtune-wan21
+                                      Run FlyDSL on the first GPU and Sage on the second, sequentially
   ./lightx2vModelrun --infer         Alias for --infer-fp8
   ./lightx2vModelrun COMMAND [ARG...] Run a command in the container
 
@@ -63,7 +63,7 @@ Important environment overrides:
   OUTPUT_DIR           Generated video directory
   INPUT_DIR            Custom input directory, available as /inputs
   CACHE_DIR            Persistent Aiter, Triton, Torch, and HF cache directory
-  GPU_DEVICES          Physical HIP GPU ids (FP8 supports 1/2/4/8/16; default: 0,1)
+  GPU_DEVICES          Physical HIP GPU ids (RunTune: 1/2; FP8: 1/2/4/8/16; default: 0,1)
   EXPECTED_SAGE_AITER_REV, EXPECTED_SAGE_LIGHTX2V_REV
                        Exact image source revisions required by --infer-sage-fp8
   RUN_REPO_DIR          LightX2VRun checkout mounted read-only into the container
