@@ -113,6 +113,26 @@ GPU_DEVICES=0,1 IMAGE=<包含本次-LightX2V-runtune-插桩的镜像> \
 ```
 
 传一个 GPU id 时保持旧行为，两组都在同一张卡上顺序运行。
+RunTune 默认把 FlyDSL 和 Sage 两边都设为 `triton_fused_qk_rope`，因此 attention
+A/B 仍使用相同 RoPE 口径；终端和 `summary.json` 会记录实际 backend。有效 fused
+运行的模型日志还会出现一次 `Using fused gfx1201 Q/K RoPE`；没有该行表示运行时契约
+未命中并回退，不能计作 fused 样本。
+
+只结算 fused Q/K RoPE 时用同一张卡、同一镜像做相邻 Sage-only A/B：
+
+```bash
+GPU_DEVICES=0 RUNTUNE_BACKENDS=sage \
+  RUNTUNE_ROPE_TYPE=torch_real_rope \
+  RUNTUNE_NAME=wan21_sage_rope_torch_<name> \
+  IMAGE=<包含-fused-RoPE-生产实现的镜像> \
+  ./lightx2vModelrun --runtune-wan21
+
+GPU_DEVICES=0 RUNTUNE_BACKENDS=sage \
+  RUNTUNE_ROPE_TYPE=triton_fused_qk_rope \
+  RUNTUNE_NAME=wan21_sage_rope_fused_<name> \
+  IMAGE=<同一镜像> \
+  ./lightx2vModelrun --runtune-wan21
+```
 
 只采集新的 Sage prepare/core 子计时时，不需要重跑 FlyDSL：
 
@@ -144,10 +164,11 @@ GPU_DEVICES=0,1 OUTPUT_DIR=/tmp/lightx2v-runtune DRY_RUN=1 \
   ./lightx2vModelrun --runtune-wan21
 ```
 
-Sage 入口默认将 FP32 `torch_real_rope` 按 8192 个序列位置分块，避免 720P
-完整 Q/K RoPE 产生约 1.42 GiB 的单个 FP32 临时张量。可以用
-`ROPE_CHUNK_SIZE=4096` 进一步降低峰值，或用 `ROPE_CHUNK_SIZE=0` 回退到
-非分块实现；普通 BF16 对标入口默认不启用分块。
+独立 Sage benchmark 入口默认仍将 FP32 `torch_real_rope` 按 8192 个序列位置分块，
+避免 720P 完整 Q/K RoPE 产生约 1.42 GiB 的单个 FP32 临时张量。RunTune 默认选择
+`triton_fused_qk_rope`；目标 gfx1201 契约成立时 chunk wrapper 会直通单次融合 kernel，
+不再产生 FP32 临时张量或 chunk 输出复制。融合契约不成立时仍按 8192 分块回退 Torch。
+可以用 `ROPE_CHUNK_SIZE=4096` 调整 fallback 峰值，或用 `ROPE_CHUNK_SIZE=0` 禁用分块。
 
 The default `OFFLOAD_RATIO=1.0` streams all 40 DiT blocks. This matches the
 historical benchmark config's annotated 720p setting; its `0.8` value was the
@@ -300,12 +321,12 @@ ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
 `b200d768d1ab2a2aa16ae200dcd2f914880b2d49`, whose native gfx1201
 SageAttention2 returns K-smoothing-corrected natural-log LSE and exposes
 prepare/core stage profiling, and LightX2V revision
-`c7c0cae3a32f79339df2824b38ee03c7f2a397f9`, where the ROCm adapter exposes
+`b31d5172ce8148d5d30cf3b2c1ddb92e5d9c3fb5`, where the ROCm adapter exposes
 that LSE to Ring, uses direct-output activation quantization with self-attention
-Q/K/V reuse, and connects the Sage stage profiler to WanRunTune. The launcher
-checks both image labels before starting any rank. Those Aiter and LightX2V
-updates require one image rebuild; launcher-only changes remain bind-mounted
-afterward.
+Q/K/V reuse, connects the Sage stage profiler to WanRunTune, and includes the
+tuned gfx1201 fused Q/K RoPE implementation. The launcher checks both image
+labels before starting any rank. Those Aiter and LightX2V updates require one
+image rebuild; launcher-only changes remain bind-mounted afterward.
 
 The FP8 topology is:
 

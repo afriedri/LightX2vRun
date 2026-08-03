@@ -241,6 +241,7 @@ def main():
     parser.add_argument("--flydsl")
     parser.add_argument("--sage")
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--rope-type", required=True)
     args = parser.parse_args()
     if not args.flydsl and not args.sage:
         parser.error("at least one of --flydsl or --sage is required")
@@ -261,6 +262,7 @@ def main():
     }
     summary = {
         "schema_version": 1,
+        "rope_type": args.rope_type,
         "flydsl_environment": flydsl.get("environment", {}) if flydsl else None,
         "sage_environment": sage.get("environment", {}) if sage else None,
         "target_self_attention": {
@@ -290,6 +292,7 @@ def main():
         f"S={TARGET_SELF_SHAPE['sequence']}, H={TARGET_SELF_SHAPE['heads']}, "
         f"D={TARGET_SELF_SHAPE['head_dim']}"
     )
+    print(f"RoPE backend: {args.rope_type}")
     print(f"\nJSON: {output_dir / 'summary.json'}")
     print(f"CSV : {output_dir / 'summary.csv'}")
     print(f"Shape details: {output_dir / 'details.csv'}")

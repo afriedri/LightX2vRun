@@ -64,14 +64,22 @@ done
 
 warmup="${LIGHTX2V_WARMUP:-0}"
 rope_chunk_size="${ROPE_CHUNK_SIZE:-8192}"
+rope_type="${RUNTUNE_ROPE_TYPE:-triton_fused_qk_rope}"
 offload_ratio="${OFFLOAD_RATIO:-1.0}"
+case "${rope_type}" in
+    torch_real_rope | triton_fused_qk_rope) ;;
+    *)
+        echo "ERROR: unsupported RUNTUNE_ROPE_TYPE=${rope_type}" >&2
+        exit 1
+        ;;
+esac
 
 echo "Wan2.1 RunTune"
 echo "Results : ${host_results}"
 echo "Backends: ${backends[*]}"
 echo "GPU map : flydsl=${backend_gpus[flydsl]}, sage=${backend_gpus[sage]} (sequential)"
 echo "Workload: 720p, 81 frames, 4 steps, H40/S74592"
-echo "Common  : warmup=${warmup}, rope_chunk=${rope_chunk_size}, offload_ratio=${offload_ratio}, seed=${SEED:-1234}"
+echo "Common  : warmup=${warmup}, rope=${rope_type}, rope_chunk=${rope_chunk_size}, offload_ratio=${offload_ratio}, seed=${SEED:-1234}"
 
 run_backend() {
     local backend=$1
@@ -88,6 +96,7 @@ run_backend() {
     CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}-runtune-${backend}" \
     LIGHTX2V_WARMUP="${warmup}" \
     LIGHTX2V_DIT_PROGRESS="${LIGHTX2V_DIT_PROGRESS:-1}" \
+    ROPE_TYPE="${rope_type}" \
     ROPE_CHUNK_SIZE="${rope_chunk_size}" \
     OFFLOAD_RATIO="${offload_ratio}" \
     LIGHTX2V_WAN_RUNTUNE=1 \
@@ -115,7 +124,7 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
     exit 0
 fi
 
-summary_args=(--output-dir "${host_results}")
+summary_args=(--output-dir "${host_results}" --rope-type "${rope_type}")
 for backend in "${backends[@]}"; do
     summary_args+=("--${backend}" "${host_results}/${backend}.json")
 done

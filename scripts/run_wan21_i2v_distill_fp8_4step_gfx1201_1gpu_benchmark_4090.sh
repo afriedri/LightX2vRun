@@ -15,6 +15,14 @@ case "${self_attn_type}" in
         exit 1
         ;;
 esac
+rope_type="${ROPE_TYPE:-torch_real_rope}"
+case "${rope_type}" in
+    torch_real_rope | triton_fused_qk_rope) ;;
+    *)
+        echo "ERROR: unsupported ROPE_TYPE=${rope_type}" >&2
+        exit 1
+        ;;
+esac
 
 export PLATFORM=amd_rocm
 export DTYPE=BF16
@@ -60,11 +68,11 @@ if [[ ! "${rope_chunk_size}" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" "${self_attn_type}" "${rope_chunk_size}" <<'PY'
+python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" "${self_attn_type}" "${rope_chunk_size}" "${rope_type}" <<'PY'
 import json
 import sys
 
-source_path, output_path, model_path, distill_checkpoint, offload_ratio_text, self_attn_type, rope_chunk_size_text = sys.argv[1:]
+source_path, output_path, model_path, distill_checkpoint, offload_ratio_text, self_attn_type, rope_chunk_size_text, rope_type = sys.argv[1:]
 try:
     offload_ratio = float(offload_ratio_text)
 except ValueError as exc:
@@ -109,7 +117,7 @@ config.update(
         "clip_quant_scheme": "fp8-sgl",
         "use_tiling_vae": True,
         "rms_norm_type": "sgl-kernel",
-        "rope_type": "torch_real_rope",
+        "rope_type": rope_type,
         "rope_chunk": rope_chunk_size > 0,
         "modulate_type": "torch",
         "feature_caching": "NoCaching",
@@ -142,9 +150,9 @@ echo "Reference: upstream RTX 4090 LightX2V_6-Distill = 171s"
 echo "GPU: ${HIP_VISIBLE_DEVICES} (single rank, SP=1)"
 echo "Self attention: ${self_attn_type}"
 if (( rope_chunk_size > 0 )); then
-    echo "RoPE: torch_real_rope, chunked at ${rope_chunk_size} sequence rows"
+    echo "RoPE: ${rope_type}, chunked at ${rope_chunk_size} sequence rows"
 else
-    echo "RoPE: torch_real_rope, unchunked"
+    echo "RoPE: ${rope_type}, unchunked"
 fi
 echo "Weights: ${distill_checkpoint} (4-step Distill per-channel FP8, Aiter fp8-sgl runtime)"
 resident_blocks="$(python3 -c 'import math, sys; ratio=float(sys.argv[1]); print(40-math.ceil(40*ratio))' "${offload_ratio}")"

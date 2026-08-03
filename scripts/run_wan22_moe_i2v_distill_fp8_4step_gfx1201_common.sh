@@ -110,6 +110,11 @@ with open(source_path, encoding="utf-8") as source_file:
 rope_chunk_size = int(rope_chunk_size_text)
 config["enable_cfg"] = False
 config["self_attn_1_type"] = self_attn_type
+rope_type = os.environ.get("ROPE_TYPE")
+if rope_type:
+    if rope_type not in {"torch_real_rope", "triton_fused_qk_rope"}:
+        raise SystemExit(f"unsupported ROPE_TYPE={rope_type!r}")
+    config["rope_type"] = rope_type
 config["rope_chunk"] = rope_chunk_size > 0
 if rope_chunk_size > 0:
     config["rope_chunk_size"] = rope_chunk_size
