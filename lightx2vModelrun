@@ -5,7 +5,7 @@ IMAGE="${IMAGE:-ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
 EXPECTED_SAGE_AITER_REV="${EXPECTED_SAGE_AITER_REV:-ac27b0b26e78c864b5d771ea83daa37ce284d9f8}"
-EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-e761bd1f0596b2161f4ebeaf1c691d045d892bac}"
+EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-7efbab70a53613ea2f85886621b8cd0d66610fd6}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 
@@ -49,6 +49,8 @@ Usage:
                                       Run the Wan2.1 720p workload behind the published 4090 171s result
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090-sage
                                       Run the same Wan2.1 workload with native gfx1201 SageAttention2
+  GPU_DEVICES=0 ./lightx2vModelrun --runtune-wan21
+                                      Run both backends and collect Wan phase/kernel/offload timing
   ./lightx2vModelrun --infer         Alias for --infer-fp8
   ./lightx2vModelrun COMMAND [ARG...] Run a command in the container
 
@@ -113,6 +115,12 @@ require_safetensors_source() {
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     usage
     exit 0
+fi
+
+if [[ "${1:-}" == "--runtune-wan21" ]]; then
+    runtune_script="${RUN_REPO_DIR}/scripts/run_wan21_i2v_runtune_gfx1201.sh"
+    require_file "${runtune_script}"
+    exec bash "${runtune_script}"
 fi
 
 inference_mode=shell
@@ -362,6 +370,7 @@ for inference_env in \
     MASTER_ADDR MASTER_PORT TARGET_VIDEO_LENGTH TARGET_HEIGHT TARGET_WIDTH \
     INFER_STEPS BASE_CONFIG_JSON LIGHTX2V_EXTRA_ARGS CONFIG_ONLY OFFLOAD_RATIO \
     LIGHTX2V_WARMUP LIGHTX2V_DIT_PROGRESS ROPE_CHUNK_SIZE \
+    LIGHTX2V_WAN_RUNTUNE LIGHTX2V_WAN_RUNTUNE_OUTPUT LIGHTX2V_WAN_RUNTUNE_BACKEND \
     LORA_STRENGTH LORA_CONVERT_DEVICE FORCE_LORA_CONVERT \
     LORA_CONVERT_ONLY SKIP_LORA_CONVERT; do
     if [[ -n "${!inference_env:-}" ]]; then

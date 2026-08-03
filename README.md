@@ -103,6 +103,29 @@ GPU_DEVICES=0 IMAGE=<包含-Aiter-ac27b0b26e-的镜像> \
 `aiter_fav3_sage_bf16_attn`；cross-attention、FP8 DiT 权重、seed、offload
 比例和输入图均与原来的 4090 对标入口一致。
 
+同一台单卡上依次运行 FlyDSL BF16 与 Sage V2，并采集 Wan2.1 实际模型
+的逐 step 分解：
+
+```bash
+GPU_DEVICES=0 IMAGE=<包含本次-LightX2V-runtune-插桩的镜像> \
+  ./lightx2vModelrun --runtune-wan21
+```
+
+默认 workload 是相同的 720P/81 帧/4 步、seed 1234、全 block offload，
+并关闭 warmup。结果写入
+`/disk/ssd/lightx2v-runtime/outputs/wan21_runtune_<timestamp>/`，包含两个
+backend 的原始 JSON/日志/视频，以及 A/B `summary.json`、`summary.csv` 和
+按 Q/K/V、M/N/K shape 展开的 `details.csv`。汇总同时报告全部 4 步与排除
+首步的 steady-state；self/cross/FFN、attention、FP8 GEMM 和 offload copy/wait
+是嵌套计时区间，不能彼此相加作为 step 总时间。
+
+只检查两条容器命令和环境变量透传，不启动模型：
+
+```bash
+GPU_DEVICES=0 OUTPUT_DIR=/tmp/lightx2v-runtune DRY_RUN=1 \
+  ./lightx2vModelrun --runtune-wan21
+```
+
 Sage 入口默认将 FP32 `torch_real_rope` 按 8192 个序列位置分块，避免 720P
 完整 Q/K RoPE 产生约 1.42 GiB 的单个 FP32 临时张量。可以用
 `ROPE_CHUNK_SIZE=4096` 进一步降低峰值，或用 `ROPE_CHUNK_SIZE=0` 回退到
