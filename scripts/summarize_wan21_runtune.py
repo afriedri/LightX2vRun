@@ -25,17 +25,6 @@ METRICS = (
     ("offload_device_wait", "cpu", "offload.device_wait"),
 )
 
-SAGE_BREAKDOWN_METRICS = (
-    ("sage_prepare", "attention.sage_v2.prepare"),
-    ("sage_prepare_layout", "attention.sage_v2.prepare.layout"),
-    ("sage_k_mean", "attention.sage_v2.prepare.k_mean"),
-    ("sage_v_amax", "attention.sage_v2.prepare.v_amax"),
-    ("sage_qkv_quant", "attention.sage_v2.prepare.qkv_quant"),
-    ("sage_prepare_padding", "attention.sage_v2.prepare.padding"),
-    ("sage_core", "attention.sage_v2.core"),
-    ("sage_output", "attention.sage_v2.output"),
-)
-
 SELF_ATTENTION_CATEGORY = {
     "flydsl": "attention.flydsl_bf16",
     "sage": "attention.sage_v2",
@@ -138,24 +127,6 @@ def collect_scope(flydsl, sage, steady):
                 ),
             }
         )
-    if sage is not None:
-        for name, category in SAGE_BREAKDOWN_METRICS:
-            sage_ms, sage_steps = metric_total(
-                sage, "sage", "gpu", category, steady
-            )
-            rows.append(
-                {
-                    "metric": name,
-                    "steps": sage_steps,
-                    "flydsl_total_ms": None,
-                    "sage_total_ms": sage_ms,
-                    "flydsl_mean_per_step_ms": None,
-                    "sage_mean_per_step_ms": (
-                        sage_ms / sage_steps if sage_steps else None
-                    ),
-                    "sage_speedup": None,
-                }
-            )
     return rows
 
 

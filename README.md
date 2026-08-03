@@ -95,7 +95,7 @@ GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
 SageAttention2：
 
 ```bash
-GPU_DEVICES=0 IMAGE=<包含-Aiter-b200d768d1-的镜像> \
+GPU_DEVICES=0 IMAGE=<包含-Aiter-ca4804815-的镜像> \
   ./lightx2vModelrun --benchmark-wan21-4090-sage
 ```
 
@@ -134,20 +134,10 @@ GPU_DEVICES=0 RUNTUNE_BACKENDS=sage \
   ./lightx2vModelrun --runtune-wan21
 ```
 
-只采集新的 Sage prepare/core 子计时时，不需要重跑 FlyDSL：
-
-```bash
-GPU_DEVICES=0 RUNTUNE_BACKENDS=sage \
-  RUNTUNE_NAME=wan21_sage_breakdown_<name> \
-  IMAGE=<包含本次-Aiter-LightX2V-插桩的镜像> \
-  ./lightx2vModelrun --runtune-wan21
-```
-
 单 backend 模式仍生成原始 JSON、`summary.json`、`summary.csv` 和
-`details.csv`；缺失 backend 的 A/B 列显示为 `n/a`。终端表和 `summary.csv`
-会直接列出 `sage_prepare`、`sage_k_mean`、`sage_v_amax`、`sage_qkv_quant`、
-`sage_core` 等子计时。Q/K/V quant 在生产实现中属于同一个 fused task grid，故这里
-保留为一项，避免为了计时改变 kernel launch 结构。
+`details.csv`；缺失 backend 的 A/B 列显示为 `n/a`。一次性 Sage prepare/core
+插桩已经移除，避免每层额外 timing events 扰动性能；常规 self-attention、phase、
+FP8 GEMM/quant 和 offload 指标保持不变。
 
 默认 workload 是相同的 720P/81 帧/4 步、seed 1234、全 block offload，
 并关闭 warmup。结果写入
@@ -318,13 +308,12 @@ and kernels.
 The BF16-attention 16-GPU Ring path requires an image built from the LightX2V
 ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
 `--infer-sage-fp8` path additionally requires Aiter revision
-`b200d768d1ab2a2aa16ae200dcd2f914880b2d49`, whose native gfx1201
-SageAttention2 returns K-smoothing-corrected natural-log LSE and exposes
-prepare/core stage profiling, and LightX2V revision
-`b31d5172ce8148d5d30cf3b2c1ddb92e5d9c3fb5`, where the ROCm adapter exposes
+`ca48048151bcb0a1435c9c4ee395b4cc755ca371`, whose native gfx1201
+SageAttention2 returns K-smoothing-corrected natural-log LSE without the
+one-off prepare/core timing hooks, and LightX2V revision
+`03a19ad60b449f1a2d19e9067f26c9d1b10c73d9`, where the ROCm adapter exposes
 that LSE to Ring, uses direct-output activation quantization with self-attention
-Q/K/V reuse, connects the Sage stage profiler to WanRunTune, and includes the
-tuned gfx1201 fused Q/K RoPE implementation. The launcher checks both image
+Q/K/V reuse, and includes the tuned gfx1201 fused Q/K RoPE implementation. The launcher checks both image
 labels before starting any rank. Those Aiter and LightX2V updates require one
 image rebuild; launcher-only changes remain bind-mounted afterward.
 
