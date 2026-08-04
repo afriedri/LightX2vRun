@@ -53,6 +53,8 @@ Usage:
                                       Run the same Wan2.1 workload with native gfx1201 SageAttention2
   GPU_DEVICES=0,1 ./lightx2vModelrun --runtune-wan21
                                       Run FlyDSL on the first GPU and Sage on the second, sequentially
+  GPU_DEVICES=0,1,2,3 ./lightx2vModelrun --runtune-wan21-vae
+                                      Run four isolated Wan2.1 VAE T0 combinations in parallel
   ./lightx2vModelrun --infer         Alias for --infer-fp8
   ./lightx2vModelrun COMMAND [ARG...] Run a command in the container
 
@@ -87,6 +89,12 @@ FP8 inference overrides:
   ROPE_CHUNK_SIZE=8192    Fallback-only chunk size; fused Q/K RoPE bypasses chunking
   LIGHTX2V_AMD_FP8_GEMM_BACKEND=scaled-mm
                           GFX1201 FP8 GEMM default; use aiter for the CK A/B baseline
+  LIGHTX2V_AMD_MIOPEN=1    Enable MIOpen for ROCm VAE convolution (default: 0 until T0 passes)
+  USE_TILING_VAE=0         Disable overlapping Wan VAE spatial tiles (default: 1 until T0 passes)
+  VAE_CPU_OFFLOAD=0        Keep Wan VAE weights GPU resident (default: 1 until T0 passes)
+  T5_CPU_OFFLOAD=0, CLIP_CPU_OFFLOAD=0
+                          Keep an encoder resident; both default to CPU offload for Wan2.1
+  USE_CHANNELS_LAST_3D=1  Test Conv3d channels-last weights independently (default: 0)
   LIGHTX2V_WARMUP=1       Enable upstream Wan warmup (disabled by default)
   LIGHTX2V_DIT_PROGRESS=0  Disable the DiT progress and final step-time summary
 
@@ -129,6 +137,14 @@ if [[ "${1:-}" == "--runtune-wan21" ]]; then
     runtune_script="${RUN_REPO_DIR}/scripts/run_wan21_i2v_runtune_gfx1201.sh"
     require_file "${runtune_script}"
     exec bash "${runtune_script}"
+fi
+
+if [[ "${1:-}" == "--runtune-wan21-vae" ]]; then
+    vae_runtune_script="${RUN_REPO_DIR}/scripts/run_wan21_vae_t0_runtune.sh"
+    require_file "${vae_runtune_script}"
+    export IMAGE MODEL_STORE WAN21_DISTILL_DIR OUTPUT_DIR RUN_REPO_DIR
+    export GPU_IDS="${GPU_DEVICES}"
+    exec bash "${vae_runtune_script}"
 fi
 
 inference_mode=shell
@@ -396,6 +412,8 @@ for inference_env in \
     MASTER_ADDR MASTER_PORT TARGET_VIDEO_LENGTH TARGET_HEIGHT TARGET_WIDTH \
     INFER_STEPS BASE_CONFIG_JSON LIGHTX2V_EXTRA_ARGS CONFIG_ONLY OFFLOAD_RATIO \
     ROPE_TYPE LIGHTX2V_GFX1201_FUSED_QK_ROPE LIGHTX2V_AMD_FP8_GEMM_BACKEND \
+    LIGHTX2V_AMD_MIOPEN USE_TILING_VAE VAE_CPU_OFFLOAD T5_CPU_OFFLOAD \
+    CLIP_CPU_OFFLOAD USE_CHANNELS_LAST_3D \
     LIGHTX2V_WARMUP LIGHTX2V_DIT_PROGRESS ROPE_CHUNK_SIZE \
     LIGHTX2V_WAN_RUNTUNE LIGHTX2V_WAN_RUNTUNE_OUTPUT LIGHTX2V_WAN_RUNTUNE_BACKEND \
     LORA_STRENGTH LORA_CONVERT_DEVICE FORCE_LORA_CONVERT \

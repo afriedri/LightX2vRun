@@ -170,6 +170,35 @@ GPU_DEVICES=0,1 OUTPUT_DIR=/tmp/lightx2v-runtune DRY_RUN=1 \
   ./lightx2vModelrun --runtune-wan21
 ```
 
+### Wan2.1 VAE T0 four-card runtune
+
+The VAE-only T0 launcher assigns one isolated combination to each card and runs
+the exact Wan2.1 720p/81-frame encoder and decoder shapes. It records synchronized
+wall time, PyTorch peak allocated/reserved VRAM, host peak RSS, output hashes, and
+element-wise comparisons against the legacy arm. T5, CLIP, DiT, channels-last,
+and VAE parallelism are deliberately excluded so they cannot contaminate the
+MIOpen/tiling/residency result.
+
+```bash
+GPU_DEVICES=0,1,2,3 ./lightx2vModelrun --runtune-wan21-vae
+```
+
+The default mapping is:
+
+| GPU | Arm | MIOpen | Spatial tiling | VAE CPU offload |
+| --- | --- | --- | --- | --- |
+| 0 | `legacy` | 0 | 1 | 1 |
+| 1 | `miopen` | 1 | 1 | 1 |
+| 2 | `miopen_untiled` | 1 | 0 | 1 |
+| 3 | `optimized` | 1 | 0 | 0 |
+
+This focused runner explicitly applies the requested PyTorch MIOpen switch after
+platform initialization, so the existing T1 image can run the experiment without
+a rebuild. Results and a `.tar.gz` archive are written under `OUTPUT_DIR`. Because
+the four arms use different cards, use `T0_ROTATION=1` for a second run that shifts
+every arm to the next card when the first result is close enough for card bias to
+matter. `T0_ROUNDS=2` records a cold and warm-cache sample in one process.
+
 独立 Sage benchmark 入口默认仍将 FP32 `torch_real_rope` 按 8192 个序列位置分块，
 避免 720P 完整 Q/K RoPE 产生约 1.42 GiB 的单个 FP32 临时张量。RunTune 默认选择
 `triton_fused_qk_rope`；目标 gfx1201 契约成立时 chunk wrapper 会直通单次融合 kernel，

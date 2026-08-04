@@ -32,6 +32,26 @@ case "${rope_type}" in
         ;;
 esac
 
+LIGHTX2V_AMD_MIOPEN="${LIGHTX2V_AMD_MIOPEN:-0}"
+USE_TILING_VAE="${USE_TILING_VAE:-1}"
+VAE_CPU_OFFLOAD="${VAE_CPU_OFFLOAD:-1}"
+T5_CPU_OFFLOAD="${T5_CPU_OFFLOAD:-1}"
+CLIP_CPU_OFFLOAD="${CLIP_CPU_OFFLOAD:-1}"
+USE_CHANNELS_LAST_3D="${USE_CHANNELS_LAST_3D:-0}"
+for flag_name in \
+    LIGHTX2V_AMD_MIOPEN USE_TILING_VAE VAE_CPU_OFFLOAD \
+    T5_CPU_OFFLOAD CLIP_CPU_OFFLOAD USE_CHANNELS_LAST_3D; do
+    flag_value="${!flag_name}"
+    case "${flag_value}" in
+        0 | 1) ;;
+        *)
+            echo "ERROR: ${flag_name} must be 0 or 1, got ${flag_value}" >&2
+            exit 1
+            ;;
+    esac
+done
+export LIGHTX2V_AMD_MIOPEN USE_CHANNELS_LAST_3D
+
 export PLATFORM=amd_rocm
 export DTYPE=BF16
 export TOKENIZERS_PARALLELISM=false
@@ -89,11 +109,11 @@ if [[ ! "${rope_chunk_size}" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" "${self_attn_type}" "${rope_chunk_size}" "${rope_type}" "${expected_gpu_count}" <<'PY'
+python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" "${self_attn_type}" "${rope_chunk_size}" "${rope_type}" "${expected_gpu_count}" "${USE_TILING_VAE}" "${VAE_CPU_OFFLOAD}" "${T5_CPU_OFFLOAD}" "${CLIP_CPU_OFFLOAD}" <<'PY'
 import json
 import sys
 
-source_path, output_path, model_path, distill_checkpoint, offload_ratio_text, self_attn_type, rope_chunk_size_text, rope_type, seq_p_size_text = sys.argv[1:]
+source_path, output_path, model_path, distill_checkpoint, offload_ratio_text, self_attn_type, rope_chunk_size_text, rope_type, seq_p_size_text, use_tiling_vae_text, vae_cpu_offload_text, t5_cpu_offload_text, clip_cpu_offload_text = sys.argv[1:]
 try:
     offload_ratio = float(offload_ratio_text)
 except ValueError as exc:
@@ -102,6 +122,10 @@ if not 0.0 <= offload_ratio <= 1.0:
     raise SystemExit(f"OFFLOAD_RATIO must be in [0, 1], got {offload_ratio_text!r}")
 rope_chunk_size = int(rope_chunk_size_text)
 seq_p_size = int(seq_p_size_text)
+use_tiling_vae = use_tiling_vae_text == "1"
+vae_cpu_offload = vae_cpu_offload_text == "1"
+t5_cpu_offload = t5_cpu_offload_text == "1"
+clip_cpu_offload = clip_cpu_offload_text == "1"
 
 with open(source_path, encoding="utf-8") as source_file:
     config = json.load(source_file)
@@ -124,9 +148,9 @@ config.update(
         "cpu_offload": True,
         "offload_granularity": "block",
         "offload_ratio": offload_ratio,
-        "t5_cpu_offload": True,
-        "clip_cpu_offload": True,
-        "vae_cpu_offload": True,
+        "t5_cpu_offload": t5_cpu_offload,
+        "clip_cpu_offload": clip_cpu_offload,
+        "vae_cpu_offload": vae_cpu_offload,
         "denoising_step_list": [1000, 750, 500, 250],
         "dit_quantized": True,
         "dit_quantized_ckpt": distill_checkpoint,
@@ -137,7 +161,7 @@ config.update(
         "clip_quantized": True,
         "clip_quantized_ckpt": f"{model_path}/clip-fp8.pth",
         "clip_quant_scheme": "fp8-sgl",
-        "use_tiling_vae": True,
+        "use_tiling_vae": use_tiling_vae,
         "rms_norm_type": "sgl-kernel",
         "rope_type": rope_type,
         "rope_chunk": rope_chunk_size > 0,
@@ -148,6 +172,7 @@ config.update(
             "seq_p_attn_type": "ulysses",
             "seq_p_prepost_backend": "torch",
             "seq_p_a2a_backend": "torch",
+            "vae_parallel": seq_p_size > 1,
         },
     }
 )
@@ -187,7 +212,10 @@ echo "Weights: ${distill_checkpoint} (4-step Distill per-channel FP8, Aiter fp8-
 resident_blocks="$(python3 -c 'import math, sys; ratio=float(sys.argv[1]); print(40-math.ceil(40*ratio))' "${offload_ratio}")"
 streamed_blocks="$((40 - resident_blocks))"
 echo "Offload: block; ratio=${offload_ratio} (${streamed_blocks} streamed, ${resident_blocks} GPU-resident)"
-echo "Encoder offload: T5/CLIP/VAE CPU offload enabled"
+echo "MIOpen: ${LIGHTX2V_AMD_MIOPEN} (1=enabled through torch.backends.cudnn)"
+echo "VAE: tiling=${USE_TILING_VAE}, cpu_offload=${VAE_CPU_OFFLOAD}, parallel=$((expected_gpu_count > 1 ? 1 : 0))"
+echo "Encoder offload: T5=${T5_CPU_OFFLOAD}, CLIP=${CLIP_CPU_OFFLOAD} (1=CPU offload)"
+echo "VAE channels_last_3d: ${USE_CHANNELS_LAST_3D}"
 echo "Seed: ${seed}"
 echo "Config: ${runtime_config_json}"
 echo "Output: ${save_result_path}"
