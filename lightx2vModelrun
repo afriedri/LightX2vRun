@@ -80,7 +80,11 @@ FP8 inference overrides:
   OFFLOAD_RATIO=1.0       Wan2.1 720P default; streams all 40 DiT blocks
   RUNTUNE_ROPE_TYPE=triton_fused_qk_rope
                           RunTune RoPE backend; use torch_real_rope for baseline
-  ROPE_CHUNK_SIZE=8192    Sage default; lower to 4096 for a smaller RoPE memory peak, 0 disables
+  LIGHTX2V_GFX1201_FUSED_QK_ROPE=1
+                          Enable full-sequence fused Q/K RoPE by default on gfx1201
+  ROPE_CHUNK_SIZE=8192    Fallback-only chunk size; fused Q/K RoPE bypasses chunking
+  LIGHTX2V_AMD_FP8_GEMM_BACKEND=scaled-mm
+                          GFX1201 FP8 GEMM default; use aiter for the CK A/B baseline
   LIGHTX2V_WARMUP=0       Disable the default upstream Wan warmup
   LIGHTX2V_DIT_PROGRESS=0  Disable the DiT progress and final step-time summary
 

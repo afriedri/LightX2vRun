@@ -65,11 +65,27 @@ done
 warmup="${LIGHTX2V_WARMUP:-0}"
 rope_chunk_size="${ROPE_CHUNK_SIZE:-8192}"
 rope_type="${RUNTUNE_ROPE_TYPE:-triton_fused_qk_rope}"
+fused_qk_rope="${LIGHTX2V_GFX1201_FUSED_QK_ROPE:-1}"
+fp8_gemm_backend="${LIGHTX2V_AMD_FP8_GEMM_BACKEND:-scaled-mm}"
 offload_ratio="${OFFLOAD_RATIO:-1.0}"
 case "${rope_type}" in
     torch_real_rope | triton_fused_qk_rope) ;;
     *)
         echo "ERROR: unsupported RUNTUNE_ROPE_TYPE=${rope_type}" >&2
+        exit 1
+        ;;
+esac
+case "${fused_qk_rope}" in
+    0 | 1) ;;
+    *)
+        echo "ERROR: LIGHTX2V_GFX1201_FUSED_QK_ROPE must be 0 or 1" >&2
+        exit 1
+        ;;
+esac
+case "${fp8_gemm_backend}" in
+    scaled-mm | aiter) ;;
+    *)
+        echo "ERROR: LIGHTX2V_AMD_FP8_GEMM_BACKEND must be scaled-mm or aiter" >&2
         exit 1
         ;;
 esac
@@ -79,7 +95,7 @@ echo "Results : ${host_results}"
 echo "Backends: ${backends[*]}"
 echo "GPU map : flydsl=${backend_gpus[flydsl]}, sage=${backend_gpus[sage]} (sequential)"
 echo "Workload: 720p, 81 frames, 4 steps, H40/S74592"
-echo "Common  : warmup=${warmup}, rope=${rope_type}, rope_chunk=${rope_chunk_size}, offload_ratio=${offload_ratio}, seed=${SEED:-1234}"
+echo "Common  : warmup=${warmup}, rope=${rope_type}, fused_qk=${fused_qk_rope}, fallback_chunk=${rope_chunk_size}, fp8_gemm=${fp8_gemm_backend}, offload_ratio=${offload_ratio}, seed=${SEED:-1234}"
 
 run_backend() {
     local backend=$1
@@ -98,6 +114,8 @@ run_backend() {
     LIGHTX2V_DIT_PROGRESS="${LIGHTX2V_DIT_PROGRESS:-1}" \
     ROPE_TYPE="${rope_type}" \
     ROPE_CHUNK_SIZE="${rope_chunk_size}" \
+    LIGHTX2V_GFX1201_FUSED_QK_ROPE="${fused_qk_rope}" \
+    LIGHTX2V_AMD_FP8_GEMM_BACKEND="${fp8_gemm_backend}" \
     OFFLOAD_RATIO="${offload_ratio}" \
     LIGHTX2V_WAN_RUNTUNE=1 \
     LIGHTX2V_WAN_RUNTUNE_BACKEND="${backend}" \
