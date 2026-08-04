@@ -163,7 +163,7 @@ echo "Seed: ${seed}"
 echo "Config: ${runtime_config_json}"
 echo "Output: ${save_result_path}"
 
-warmup="${LIGHTX2V_WARMUP:-1}"
+warmup="${LIGHTX2V_WARMUP:-0}"
 case "${warmup}" in
     0 | 1) ;;
     *)

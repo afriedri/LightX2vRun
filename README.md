@@ -10,11 +10,11 @@ Both the prebuilt scaled-FP8 and merged LoRA-FP8 launchers report synchronized
 DiT progress. Each completed step uses the slowest rank's profiler duration,
 which represents the distributed critical path. The final line reports DiT
 total time, average `s/it`, and throughput in `it/s`; model loading, T5, and VAE
-time are intentionally excluded. Upstream Wan warmup is enabled before measured
-inference for every Distill/LoRA 1/2/4/8/16-GPU launcher; it covers the high- and
-low-noise models without entering the measured progress samples. Set
-`LIGHTX2V_WARMUP=0` to disable warmup or `LIGHTX2V_DIT_PROGRESS=0` to restore raw
-torchrun output without the progress report.
+time are intentionally excluded. Upstream Wan warmup is disabled by default for
+every Distill/LoRA 1/2/4/8/16-GPU launcher. Set `LIGHTX2V_WARMUP=1` to run the
+high- and low-noise warmup before measured inference, or
+`LIGHTX2V_DIT_PROGRESS=0` to restore raw torchrun output without the progress
+report.
 
 GFX1201 images can bundle a committed fallback snapshot of these launchers at
 `/opt/LightX2VRun`. The two in-image compatibility entries (Distill and LoRA,

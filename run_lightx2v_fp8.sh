@@ -12,7 +12,7 @@ Environment overrides:
   HOST_OUTPUT_DIR   Host directory for generated videos
   GPU_ID            Physical ROCm GPU id (default: 0)
   SHM_SIZE          Container shared memory size (default: 32g)
-  LIGHTX2V_WARMUP   Set to 0 to disable the default upstream Wan warmup
+  LIGHTX2V_WARMUP   Set to 1 to enable upstream Wan warmup (default: 0)
   USE_SUDO          Set to 1 to run Docker through sudo
   DRY_RUN           Set to 1 to print the Docker command only
 
@@ -103,7 +103,7 @@ docker_args=(
     -e "MODELS_ROOT=/models"
     -e "MODEL_PATH=/models/Wan-AI/Wan2.2-I2V-A14B"
     -e "TOKENIZERS_PARALLELISM=false"
-    -e "LIGHTX2V_WARMUP=${LIGHTX2V_WARMUP:-1}"
+    -e "LIGHTX2V_WARMUP=${LIGHTX2V_WARMUP:-0}"
     "${docker_image}"
     bash /workspace/LightX2VRun/scripts/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_1gpu.sh
 )

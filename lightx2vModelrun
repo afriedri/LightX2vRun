@@ -85,7 +85,7 @@ FP8 inference overrides:
   ROPE_CHUNK_SIZE=8192    Fallback-only chunk size; fused Q/K RoPE bypasses chunking
   LIGHTX2V_AMD_FP8_GEMM_BACKEND=scaled-mm
                           GFX1201 FP8 GEMM default; use aiter for the CK A/B baseline
-  LIGHTX2V_WARMUP=0       Disable the default upstream Wan warmup
+  LIGHTX2V_WARMUP=1       Enable upstream Wan warmup (disabled by default)
   LIGHTX2V_DIT_PROGRESS=0  Disable the DiT progress and final step-time summary
 
 LoRA merge/quantization overrides:
