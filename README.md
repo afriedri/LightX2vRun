@@ -293,10 +293,10 @@ matching scale tensors. The 1022 LoRAs also contain adjustments for a legacy
 CLIP image-attention branch that is absent from the official latent-conditioned
 I2V base and disabled by the runtime configuration; only those precisely
 matched keys may be skipped. Any other missing key still stops conversion.
-LoRA merging does not change GEMM shapes, so the existing GFX1201 Aiter rowwise
-CK tuning remains applicable.
+LoRA merging does not change GEMM shapes, so the GFX1201 hipBLASLt scaled-mm
+route and its Aiter rowwise CK fallback remain applicable.
 
-The default image is `ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260803-SageMemBreak`. Generated videos
+The default image is `ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM`. Generated videos
 are written to `/disk/ssd/lightx2v-runtime/outputs`.
 
 `lightx2vModelrun` mounts this checkout read-only at `/workspace/LightX2VRun`
@@ -311,11 +311,12 @@ ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
 `ca48048151bcb0a1435c9c4ee395b4cc755ca371`, whose native gfx1201
 SageAttention2 returns K-smoothing-corrected natural-log LSE without the
 one-off prepare/core timing hooks, and LightX2V revision
-`03a19ad60b449f1a2d19e9067f26c9d1b10c73d9`, where the ROCm adapter exposes
+`2d7043ca91fe521dab2eb96bcd26b421ea021bdd`, where the ROCm adapter exposes
 that LSE to Ring, uses direct-output activation quantization with self-attention
-Q/K/V reuse, and includes the tuned gfx1201 fused Q/K RoPE implementation. The launcher checks both image
-labels before starting any rank. Those Aiter and LightX2V updates require one
-image rebuild; launcher-only changes remain bind-mounted afterward.
+Q/K/V reuse, includes the tuned gfx1201 fused Q/K RoPE implementation, and
+routes eligible FP8 GEMMs through hipBLASLt scaled-mm. The launcher checks both
+image labels before starting any rank. Those Aiter and LightX2V updates require
+one image rebuild; launcher-only changes remain bind-mounted afterward.
 
 The FP8 topology is:
 
@@ -339,8 +340,9 @@ only self-attention to `aiter_fav3_sage_bf16_attn`; on SP16, each Ring step
 gets native Sage output plus natural-log LSE and merges all 16 K/V shards with
 `logaddexp` weights.
 
-The launcher fixes AITER dispatch to `GPU_ARCHS=gfx1201` and `CU_NUM=24`,
-matching the rowwise CK tuning CSV embedded in the image.
+The launcher fixes AITER dispatch to `GPU_ARCHS=gfx1201` and `CU_NUM=24`.
+Eligible FP8 GEMMs use hipBLASLt scaled-mm by default; the rowwise CK tuning CSV
+embedded in the image remains the explicit and automatic fallback.
 
 Use environment variables to override the defaults when needed:
 
