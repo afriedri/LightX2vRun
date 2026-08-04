@@ -67,11 +67,27 @@ GPU_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 \
 GPU_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 \
   ./lightx2vModelrun --infer-sage-fp8
 
+# Wan2.1 720p/81-frame/4-step Sage inference on two GPUs
+GPU_DEVICES=0,1 ./lightx2vModelrun --infer-wan21-sage-fp8
+
 # BF16 4-step I2V
 ./lightx2vModelrun --infer-bf16
 
 # Interactive container shell
 ./lightx2vModelrun
+```
+
+## Wan2.1 two-GPU inference
+
+The production Wan2.1 entry uses two ranks with Ulysses `SP=2`, CFG disabled,
+native gfx1201 SageAttention2 for self-attention, and fused Q/K RoPE. It reuses
+the same 720p, 81-frame, four-step FP8 checkpoint layout as the single-GPU
+comparison launcher. Warmup remains disabled unless `LIGHTX2V_WARMUP=1` is
+set. FP8 GEMMs retain the LightX2V default scaled-mm path and its automatic
+Aiter fallback.
+
+```bash
+GPU_DEVICES=0,1 ./lightx2vModelrun --infer-wan21-sage-fp8
 ```
 
 ## Reproduce the RTX 4090 171-second workload

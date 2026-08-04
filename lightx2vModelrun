@@ -45,6 +45,8 @@ Usage:
   ./lightx2vModelrun --infer-lora-fp8
                                       Merge LoRAs, quantize to FP8, then infer on 1/2/4/8/16 GPUs
   ./lightx2vModelrun --infer-bf16    Run the GFX1201 BF16 4-step I2V example
+  GPU_DEVICES=0,1 ./lightx2vModelrun --infer-wan21-sage-fp8
+                                      Run Wan2.1 720p/81-frame FP8 with Sage on Ulysses SP=2
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
                                       Run the Wan2.1 720p workload behind the published 4090 171s result
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090-sage
@@ -63,9 +65,9 @@ Important environment overrides:
   OUTPUT_DIR           Generated video directory
   INPUT_DIR            Custom input directory, available as /inputs
   CACHE_DIR            Persistent Aiter, Triton, Torch, and HF cache directory
-  GPU_DEVICES          Physical HIP GPU ids (RunTune: 1/2; FP8: 1/2/4/8/16; default: 0,1)
+  GPU_DEVICES          Physical HIP GPU ids (Wan2.1 production: 2; FP8: 1/2/4/8/16; default: 0,1)
   EXPECTED_SAGE_AITER_REV, EXPECTED_SAGE_LIGHTX2V_REV
-                       Exact image source revisions required by --infer-sage-fp8
+                       Exact image source revisions required by Sage inference modes
   RUN_REPO_DIR          LightX2VRun checkout mounted read-only into the container
   IMAGE                Docker image (default: ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1)
   CONTAINER_NAME       Docker container name
@@ -135,6 +137,7 @@ case "${1:-}" in
     --infer-sage-fp8) inference_mode=sage_fp8 ;;
     --infer-lora-fp8) inference_mode=lora_fp8 ;;
     --infer-bf16) inference_mode=bf16 ;;
+    --infer-wan21-sage-fp8) inference_mode=wan21_sage_fp8 ;;
     --benchmark-wan21-4090) inference_mode=wan21_4090 ;;
     --benchmark-wan21-4090-sage) inference_mode=wan21_4090_sage ;;
 esac
@@ -171,9 +174,26 @@ if [[ "${inference_mode}" == "wan21_4090_sage" ]]; then
     [[ "${gpu_count}" -eq 1 ]] || die "the Sage RTX 4090 comparison is a single-GPU workload; set GPU_DEVICES to one id"
     fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_i2v_distill_fp8_4step_sage_gfx1201_1gpu_benchmark_4090.sh"
 fi
+if [[ "${inference_mode}" == "wan21_sage_fp8" ]]; then
+    [[ "${gpu_count}" -eq 2 ]] || die "Wan2.1 Sage production inference requires exactly two GPU_DEVICES"
+    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_i2v_distill_fp8_4step_sage_gfx1201_2gpu.sh"
+fi
+
+is_wan21_mode=0
+uses_fp8_run_script=0
+needs_sage_image=0
+case "${inference_mode}" in
+    wan21_*) is_wan21_mode=1 ;;
+esac
+case "${inference_mode}" in
+    fp8 | sage_fp8 | lora_fp8 | wan21_*) uses_fp8_run_script=1 ;;
+esac
+case "${inference_mode}" in
+    sage_fp8 | wan21_4090_sage | wan21_sage_fp8) needs_sage_image=1 ;;
+esac
 
 require_dir "${RUN_REPO_DIR}"
-if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "lora_fp8" || "${inference_mode}" == "wan21_4090" || "${inference_mode}" == "wan21_4090_sage" ]]; then
+if [[ "${uses_fp8_run_script}" == 1 ]]; then
     require_file "${RUN_REPO_DIR}/${fp8_run_script#${CONTAINER_RUN_ROOT}/}"
     require_file "${RUN_REPO_DIR}/scripts/report_dit_progress.py"
 fi
@@ -200,7 +220,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     [[ -c /dev/kfd ]] || die "ROCm device /dev/kfd is unavailable"
     [[ -d /dev/dri ]] || die "DRM device directory /dev/dri is unavailable"
 
-    if [[ "${inference_mode}" == "wan21_4090" || "${inference_mode}" == "wan21_4090_sage" ]]; then
+    if [[ "${is_wan21_mode}" == 1 ]]; then
         require_dir "${WAN21_DISTILL_DIR}"
     else
         require_dir "${ENCODERS_DIR}"
@@ -208,7 +228,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         require_dir "${WAN22_BASE_DIR}"
     fi
     if [[ "${SKIP_MODEL_CHECKS:-0}" != "1" ]]; then
-        if [[ "${inference_mode}" == "wan21_4090" || "${inference_mode}" == "wan21_4090_sage" ]]; then
+        if [[ "${is_wan21_mode}" == 1 ]]; then
             require_dir "${WAN21_DISTILL_DIR}/google/umt5-xxl"
             require_file "${WAN21_DISTILL_DIR}/google/umt5-xxl/special_tokens_map.json"
             require_file "${WAN21_DISTILL_DIR}/google/umt5-xxl/spiece.model"
@@ -261,7 +281,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     fi
 
     docker image inspect "${IMAGE}" >/dev/null 2>&1 || die "Docker image is unavailable: ${IMAGE}"
-    if [[ "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "wan21_4090_sage" ]]; then
+    if [[ "${needs_sage_image}" == 1 ]]; then
         image_aiter_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.aiter.revision"}}' "${IMAGE}")"
         image_lightx2v_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE}")"
         [[ "${image_aiter_revision}" == "${EXPECTED_SAGE_AITER_REV}" ]] || \
@@ -272,7 +292,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
 fi
 
 container_model_path="${CONTAINER_BASE_MODEL}"
-if [[ "${inference_mode}" == "wan21_4090" || "${inference_mode}" == "wan21_4090_sage" ]]; then
+if [[ "${is_wan21_mode}" == 1 ]]; then
     container_model_path="${CONTAINER_WAN21_DISTILL_MODEL}"
 fi
 
@@ -320,7 +340,7 @@ docker_args=(
     --mount "type=bind,source=${CACHE_DIR}/triton,target=/workspace/.cache/triton"
 )
 
-if [[ "${inference_mode}" == "wan21_4090" || "${inference_mode}" == "wan21_4090_sage" ]]; then
+if [[ "${is_wan21_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${WAN21_DISTILL_DIR},target=${CONTAINER_WAN21_DISTILL_MODEL},readonly"
     )
@@ -390,7 +410,7 @@ if [[ -e /etc/localtime ]]; then
 fi
 
 container_command=(/bin/bash)
-if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "lora_fp8" || "${inference_mode}" == "wan21_4090" || "${inference_mode}" == "wan21_4090_sage" ]]; then
+if [[ "${uses_fp8_run_script}" == 1 ]]; then
     container_command=(/bin/bash "${fp8_run_script}")
 elif [[ "${inference_mode}" == "bf16" ]]; then
     container_command=(/bin/bash "${BF16_RUN_SCRIPT}")
@@ -402,7 +422,7 @@ printf 'Image:          %s\n' "${IMAGE}"
 printf 'Container:      %s\n' "${CONTAINER_NAME}"
 printf 'GPU devices:    %s\n' "${GPU_DEVICES}"
 printf 'Mode:           %s\n' "${inference_mode}"
-if [[ "${inference_mode}" == "wan21_4090" || "${inference_mode}" == "wan21_4090_sage" ]]; then
+if [[ "${is_wan21_mode}" == 1 ]]; then
     printf 'Wan2.1 Distill: %s\n' "${WAN21_DISTILL_DIR}"
 else
     printf 'Base model:     %s\n' "${WAN22_BASE_DIR}"
@@ -417,7 +437,7 @@ printf 'Inputs:         %s\n' "${INPUT_DIR}"
 printf 'Outputs:        %s\n' "${OUTPUT_DIR}"
 printf 'Cache:          %s\n' "${CACHE_DIR}"
 printf 'Run scripts:    %s -> %s\n' "${RUN_REPO_DIR}" "${CONTAINER_RUN_ROOT}"
-if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "lora_fp8" || "${inference_mode}" == "wan21_4090" || "${inference_mode}" == "wan21_4090_sage" ]]; then
+if [[ "${uses_fp8_run_script}" == 1 ]]; then
     printf 'FP8 launcher:   %s\n' "${fp8_run_script}"
 fi
 
