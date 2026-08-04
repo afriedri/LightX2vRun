@@ -296,7 +296,7 @@ matched keys may be skipped. Any other missing key still stops conversion.
 LoRA merging does not change GEMM shapes, so the GFX1201 hipBLASLt scaled-mm
 route and its Aiter rowwise CK fallback remain applicable.
 
-The default image is `ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM`. Generated videos
+The default image is `ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1`. Generated videos
 are written to `/disk/ssd/lightx2v-runtime/outputs`.
 
 `lightx2vModelrun` mounts this checkout read-only at `/workspace/LightX2VRun`
@@ -308,15 +308,17 @@ and kernels.
 The BF16-attention 16-GPU Ring path requires an image built from the LightX2V
 ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
 `--infer-sage-fp8` path additionally requires Aiter revision
-`ca48048151bcb0a1435c9c4ee395b4cc755ca371`, whose native gfx1201
+`24aa37dd72f98be15ad21deb97ddfd4ab8fc09b1`, whose native gfx1201
 SageAttention2 returns K-smoothing-corrected natural-log LSE without the
-one-off prepare/core timing hooks, and LightX2V revision
-`2d7043ca91fe521dab2eb96bcd26b421ea021bdd`, where the ROCm adapter exposes
+one-off prepare/core timing hooks and enables the combined T1 VALU reductions
+internally, and LightX2V revision
+`14a87614f21f414e9e3a66339c3469640c550a4f`, where the ROCm adapter exposes
 that LSE to Ring, uses direct-output activation quantization with self-attention
-Q/K/V reuse, includes the tuned gfx1201 fused Q/K RoPE implementation, and
-routes eligible FP8 GEMMs through hipBLASLt scaled-mm. The launcher checks both
-image labels before starting any rank. Those Aiter and LightX2V updates require
-one image rebuild; launcher-only changes remain bind-mounted afterward.
+Q/K/V reuse, includes the tuned gfx1201 fused Q/K RoPE implementation, routes
+eligible FP8 GEMMs through hipBLASLt scaled-mm, and records the T1 integration
+contract. The launcher checks both image labels before starting any rank. Those
+Aiter and LightX2V updates require one image rebuild; launcher-only changes
+remain bind-mounted afterward.
 
 The FP8 topology is:
 

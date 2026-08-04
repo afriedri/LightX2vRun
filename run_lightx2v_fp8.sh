@@ -30,7 +30,7 @@ fi
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 gpu_id="${1:-${GPU_ID:-0}}"
-docker_image="${DOCKER_IMAGE:-ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM}"
+docker_image="${DOCKER_IMAGE:-ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1}"
 host_models_dir="${HOST_MODELS_DIR:-/disk/ssd/difumodels}"
 host_output_dir="${HOST_OUTPUT_DIR:-${script_dir}/outputs}"
 shm_size="${SHM_SIZE:-32g}"
