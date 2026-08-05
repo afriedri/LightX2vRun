@@ -109,6 +109,9 @@ class CKConv3dV1RunTuneTest(unittest.TestCase):
         launcher = LAUNCHER_PATH.read_text(encoding="utf-8")
         self.assertNotIn("LIGHTX2V_DIR", launcher)
         self.assertNotIn("rocm-smi", launcher)
+        self.assertNotIn("TMPDIR=/task/tmp", launcher)
+        self.assertIn("--env TMPDIR=/tmp", launcher)
+        self.assertIn("source=${container_tmp},target=/tmp", launcher)
         self.assertIn("source=${RUNNER},target=${CONTAINER_RUNNER},readonly", launcher)
 
     def test_arm_contract_only_changes_vae_backend_and_offload(self):

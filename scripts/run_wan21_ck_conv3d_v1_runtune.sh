@@ -221,10 +221,11 @@ run_gpu() {
         --env "HIP_VISIBLE_DEVICES=${gpu}" \
         --env "HOST_GPU_ID=${gpu}" \
         --env "LIGHTX2V_VAE_CONV3D_BACKEND=${ARM_BACKENDS[${arm_index}]}" \
-        --env TMPDIR=/task/tmp \
+        --env TMPDIR=/tmp \
         --mount "type=bind,source=${RUNNER},target=${CONTAINER_RUNNER},readonly" \
         --mount "type=bind,source=${VAE_PATH},target=/models/Wan2.1_VAE.pth,readonly" \
         --mount "type=bind,source=${gpu_result},target=/task" \
+        --mount "type=bind,source=${container_tmp},target=/tmp" \
         --mount "type=bind,source=${SYNC_DIR},target=/runtune-sync" \
         --mount "type=bind,source=${REFERENCE_DIR},target=/runtune-reference" \
         --entrypoint=python3 \
