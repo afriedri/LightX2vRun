@@ -73,7 +73,7 @@ Important environment overrides:
   EXPECTED_SAGE_AITER_REV, EXPECTED_SAGE_LIGHTX2V_REV
                        Exact image source revisions required by Sage inference modes
   RUN_REPO_DIR          LightX2VRun checkout mounted read-only into the container
-  LIGHTX2V_DIR           LightX2V checkout containing the CK Conv3d runtune runner
+  LIGHTX2V_DIR           Optional LightX2V checkout override for CK Conv3d runtune
   IMAGE                Docker image (default: ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1)
   CONTAINER_NAME       Docker container name
   AUTO_REMOVE=0        Keep the stopped container

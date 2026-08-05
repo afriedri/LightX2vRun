@@ -228,10 +228,14 @@ will not compile CK at runtime. Its default image is
 `ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260805-CKConv3dV1-AOT`.
 
 ```bash
-GPU_DEVICES=0,1 \
-LIGHTX2V_DIR=/home/yangecool/WorkSpace/Code/LightX2V-ROCm-GFX1201/LightX2V \
-./lightx2vModelrun --runtune-wan21-ck-conv3d-v1
+GPU_DEVICES=0,1 ./lightx2vModelrun --runtune-wan21-ck-conv3d-v1
 ```
+
+The run machine does not need a LightX2V checkout. The wrapper extracts the
+matching host-side launcher from the selected image, while the containers use
+the image-bundled `/workspace/LightX2V` source and runtune runner. Set
+`LIGHTX2V_DIR` only to deliberately override the image source with a local
+checkout for development.
 
 Set `ROTATION=1` for the second run to exchange the two physical cards. The
 launcher uses Docker host networking and forwards the default
