@@ -52,7 +52,9 @@ if [[ -d "${RESULT_DIR}" && -n "$(find "${RESULT_DIR}" -mindepth 1 -maxdepth 1 -
 fi
 mkdir -p "${RESULT_DIR}"
 RESULT_DIR="$(realpath "${RESULT_DIR}")"
-exec > >(tee -a "${RESULT_DIR}/launcher.log") 2>&1
+exec 3>&1 4>&2
+exec > >(tee -a "${RESULT_DIR}/launcher.log" >&3) 2>&1
+LOGGER_PID=$!
 
 print_mapping() {
     local ordinal arm_index
@@ -158,10 +160,46 @@ run_and_report() {
     local gpu=$1
     local arm_index=$2
     local arm=${ARM_NAMES[${arm_index}]}
+    local gpu_result="${RESULT_DIR}/gpu${gpu}"
+    local result_file="${gpu_result}/result.json"
+    local status_file="${gpu_result}/pipeline_status.txt"
+    mkdir -p "${gpu_result}"
     set -o pipefail
-    if run_gpu "${gpu}" "${arm_index}" 2>&1 | tee "${RESULT_DIR}/gpu${gpu}/run.log" | awk -v prefix="[gpu${gpu}:${arm}] " '{ print prefix $0; fflush() }'; then
+    set +e
+    run_gpu "${gpu}" "${arm_index}" 2>&1 | tee "${gpu_result}/run.log" | awk -v prefix="[gpu${gpu}:${arm}] " '{ print prefix $0; fflush() }'
+    local pipeline_status=("${PIPESTATUS[@]}")
+    set -e
+    local docker_status=${pipeline_status[0]}
+    local tee_status=${pipeline_status[1]}
+    local awk_status=${pipeline_status[2]}
+    printf 'docker=%s\ntee=%s\nawk=%s\n' \
+        "${docker_status}" "${tee_status}" "${awk_status}" >"${status_file}"
+
+    if [[ "${docker_status}" == 0 && "${tee_status}" == 0 && "${awk_status}" == 0 ]]; then
         return 0
     fi
+
+    if [[ -s "${result_file}" ]] && python3 - "${result_file}" "${arm}" "${T0_ROUNDS}" <<'PY'
+import json
+import sys
+
+result_path, expected_arm, expected_rounds_text = sys.argv[1:]
+with open(result_path, encoding="utf-8") as result_file:
+    result = json.load(result_file)
+if result.get("experiment") != "wan21_vae_t0":
+    raise SystemExit("unexpected experiment")
+if result.get("arm") != expected_arm:
+    raise SystemExit("unexpected arm")
+if len(result.get("rounds", [])) != int(expected_rounds_text):
+    raise SystemExit("incomplete rounds")
+PY
+    then
+        printf 'accepted_result=1\n' >>"${status_file}"
+        warn "GPU ${gpu} ${arm} pipeline exited docker=${docker_status}, tee=${tee_status}, awk=${awk_status} after a complete result.json; accepting the committed result"
+        return 0
+    fi
+
+    printf 'accepted_result=0\n' >>"${status_file}"
     touch "${SYNC_DIR}/abort"
     return 1
 }
@@ -191,7 +229,25 @@ done
 
 python3 -B "${RUNNER}" --aggregate-root "${RESULT_DIR}" | tee "${RESULT_DIR}/aggregate.log"
 ARCHIVE="${RESULT_DIR}.tar.gz"
-tar -C "$(dirname "${RESULT_DIR}")" -czf "${ARCHIVE}" "$(basename "${RESULT_DIR}")"
-ok "T0 summary : ${RESULT_DIR}/summary.json"
-ok "T0 archive : ${ARCHIVE}"
-warn "The four arms use different cards. Re-run with T0_ROTATION=1 to check card bias before production gating."
+info "Closing launcher.log before packaging results"
+exec 1>&3 2>&4
+exec 3>&- 4>&-
+LOGGER_STATUS=0
+wait "${LOGGER_PID}" || LOGGER_STATUS=$?
+
+ARCHIVE_OK=1
+if ! tar -C "$(dirname "${RESULT_DIR}")" -czf "${ARCHIVE}" "$(basename "${RESULT_DIR}")"; then
+    ARCHIVE_OK=0
+fi
+{
+    ok "T0 summary : ${RESULT_DIR}/summary.json"
+    if [[ "${LOGGER_STATUS}" != 0 ]]; then
+        warn "launcher.log tee exited with status ${LOGGER_STATUS}; per-GPU logs and JSON results remain authoritative"
+    fi
+    if [[ "${ARCHIVE_OK}" == 1 ]]; then
+        ok "T0 archive : ${ARCHIVE}"
+    else
+        warn "T0 archive failed; uncompressed results remain at ${RESULT_DIR}"
+    fi
+    warn "The four arms use different cards. Re-run with T0_ROTATION=1 to check card bias before production gating."
+} 2>&1 | tee -a "${RESULT_DIR}/launcher.log"

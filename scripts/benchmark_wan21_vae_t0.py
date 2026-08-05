@@ -498,8 +498,8 @@ def main() -> int:
         aggregate(args.aggregate_root)
         return 0
     try:
-        result = run_arm(args)
-        print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+        run_arm(args)
+        log(args.arm, "benchmark completed successfully")
         return 0
     except Exception as exc:
         args.output_dir.mkdir(parents=True, exist_ok=True)

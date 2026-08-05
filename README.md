@@ -204,7 +204,15 @@ on one card therefore cannot time out the other cards before decode.
 Logging does not depend on a successful run or on the container filesystem. The
 host result directory always retains `launcher.log`, each arm's `gpuN/run.log`
 and `failure.json`/`result.json`, plus the remaining container `/tmp` contents
-under `gpuN/container_tmp/` after the `--rm` containers exit.
+under `gpuN/container_tmp/` after the `--rm` containers exit. The launcher closes
+its live log before creating the archive, preventing a successful benchmark from
+being marked failed by tar's `file changed as we read it` check.
+
+Each GPU directory also contains `pipeline_status.txt` with the Docker, `tee`,
+and `awk` exit codes. A ROCm process can occasionally return nonzero during
+interpreter teardown after atomically committing a complete result. The launcher
+validates the experiment, arm, and round count in `result.json`; a valid committed
+result remains successful while the teardown status is retained as a warning.
 
 独立 Sage benchmark 入口默认仍将 FP32 `torch_real_rope` 按 8192 个序列位置分块，
 避免 720P 完整 Q/K RoPE 产生约 1.42 GiB 的单个 FP32 临时张量。RunTune 默认选择
