@@ -73,7 +73,8 @@ Important environment overrides:
   EXPECTED_SAGE_AITER_REV, EXPECTED_SAGE_LIGHTX2V_REV
                        Exact image source revisions required by Sage inference modes
   RUN_REPO_DIR          LightX2VRun checkout mounted read-only into the container
-  LIGHTX2V_DIR           Optional LightX2V checkout override for CK Conv3d runtune
+  EXPECTED_AITER_REV, EXPECTED_LIGHTX2V_REV
+                       Exact image revisions required by CK Conv3d runtune
   IMAGE                Docker image (default: ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1)
   CONTAINER_NAME       Docker container name
   AUTO_REMOVE=0        Keep the stopped container
@@ -153,7 +154,7 @@ fi
 if [[ "${1:-}" == "--runtune-wan21-ck-conv3d-v1" ]]; then
     ck_conv3d_runtune_script="${RUN_REPO_DIR}/scripts/run_wan21_ck_conv3d_v1_runtune.sh"
     require_file "${ck_conv3d_runtune_script}"
-    export IMAGE MODEL_STORE WAN21_DISTILL_DIR OUTPUT_DIR RUN_REPO_DIR LIGHTX2V_DIR
+    export IMAGE MODEL_STORE WAN21_DISTILL_DIR OUTPUT_DIR RUN_REPO_DIR
     export GPU_IDS="${GPU_DEVICES}"
     exec bash "${ck_conv3d_runtune_script}"
 fi

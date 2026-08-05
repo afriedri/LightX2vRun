@@ -231,11 +231,11 @@ will not compile CK at runtime. Its default image is
 GPU_DEVICES=0,1 ./lightx2vModelrun --runtune-wan21-ck-conv3d-v1
 ```
 
-The run machine does not need a LightX2V checkout. The wrapper extracts the
-matching host-side launcher from the selected image, while the containers use
-the image-bundled `/workspace/LightX2V` source and runtune runner. Set
-`LIGHTX2V_DIR` only to deliberately override the image source with a local
-checkout for development.
+The run machine does not need a LightX2V checkout. The complete host launcher
+and Python measurement runner live in LightX2VRun; the launcher mounts only the
+runner into each container. LightX2V application code always comes from the
+selected image at `/workspace/LightX2V`, and both its LightX2V and Aiter
+revisions are checked before either GPU starts.
 
 Set `ROTATION=1` for the second run to exchange the two physical cards. The
 launcher uses Docker host networking and forwards the default
