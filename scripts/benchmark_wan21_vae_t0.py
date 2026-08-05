@@ -336,7 +336,6 @@ def run_arm(args: argparse.Namespace) -> dict[str, object]:
 
             log(args.arm, f"round {round_index}: preparing 21-frame decoder latent")
             latent = build_latent_input(torch, args, round_index)
-            barrier(args, f"round{round_index}_decode_start")
             log(args.arm, f"round {round_index}: VAE decode start")
             decoded, decode_measurement = measure_cuda(torch, lambda: model.decode(latent))
             log(
@@ -368,7 +367,6 @@ def run_arm(args: argparse.Namespace) -> dict[str, object]:
                     },
                 }
             )
-            barrier(args, f"round{round_index}_complete")
 
     result = {
         "experiment": "wan21_vae_t0",

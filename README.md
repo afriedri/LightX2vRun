@@ -197,7 +197,9 @@ platform initialization, so the existing T1 image can run the experiment without
 a rebuild. Results and a `.tar.gz` archive are written under `OUTPUT_DIR`. Because
 the four arms use different cards, use `T0_ROTATION=1` for a second run that shifts
 every arm to the next card when the first result is close enough for card bias to
-matter. `T0_ROUNDS=2` records a cold and warm-cache sample in one process.
+matter. `T0_ROUNDS=2` records a cold and warm-cache sample in one process. All arms
+start encode together, then advance independently; a slow first-use MIOpen search
+on one card therefore cannot time out the other cards before decode.
 
 独立 Sage benchmark 入口默认仍将 FP32 `torch_real_rope` 按 8192 个序列位置分块，
 避免 720P 完整 Q/K RoPE 产生约 1.42 GiB 的单个 FP32 临时张量。RunTune 默认选择
