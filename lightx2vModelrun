@@ -55,6 +55,8 @@ Usage:
                                       Run FlyDSL on the first GPU and Sage on the second, sequentially
   GPU_DEVICES=0,1,2,3 ./lightx2vModelrun --runtune-wan21-vae
                                       Run four isolated Wan2.1 VAE T0 combinations in parallel
+  GPU_DEVICES=0,1 ./lightx2vModelrun --runtune-wan21-ck-conv3d-v1
+                                      Compare PyTorch-offload and prebuilt CK-v1 resident VAE
   ./lightx2vModelrun --infer         Alias for --infer-fp8
   ./lightx2vModelrun COMMAND [ARG...] Run a command in the container
 
@@ -71,6 +73,7 @@ Important environment overrides:
   EXPECTED_SAGE_AITER_REV, EXPECTED_SAGE_LIGHTX2V_REV
                        Exact image source revisions required by Sage inference modes
   RUN_REPO_DIR          LightX2VRun checkout mounted read-only into the container
+  LIGHTX2V_DIR           LightX2V checkout containing the CK Conv3d runtune runner
   IMAGE                Docker image (default: ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1)
   CONTAINER_NAME       Docker container name
   AUTO_REMOVE=0        Keep the stopped container
@@ -145,6 +148,14 @@ if [[ "${1:-}" == "--runtune-wan21-vae" ]]; then
     export IMAGE MODEL_STORE WAN21_DISTILL_DIR OUTPUT_DIR RUN_REPO_DIR
     export GPU_IDS="${GPU_DEVICES}"
     exec bash "${vae_runtune_script}"
+fi
+
+if [[ "${1:-}" == "--runtune-wan21-ck-conv3d-v1" ]]; then
+    ck_conv3d_runtune_script="${RUN_REPO_DIR}/scripts/run_wan21_ck_conv3d_v1_runtune.sh"
+    require_file "${ck_conv3d_runtune_script}"
+    export IMAGE MODEL_STORE WAN21_DISTILL_DIR OUTPUT_DIR RUN_REPO_DIR LIGHTX2V_DIR
+    export GPU_IDS="${GPU_DEVICES}"
+    exec bash "${ck_conv3d_runtune_script}"
 fi
 
 inference_mode=shell

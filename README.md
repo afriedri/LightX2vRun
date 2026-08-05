@@ -214,6 +214,30 @@ interpreter teardown after atomically committing a complete result. The launcher
 validates the experiment, arm, and round count in `result.json`; a valid committed
 result remains successful while the teardown status is retained as a warning.
 
+### Wan2.1 CK Conv3d v1 two-card runtune
+
+This A/B assigns one complete, untiled VAE workload to each card. The baseline
+uses `backend=pytorch`, MIOpen disabled, and `VAE_CPU_OFFLOAD=1`; the candidate
+uses `backend=Aiter_CK_Conv3d_v1`, MIOpen disabled, and
+`VAE_CPU_OFFLOAD=0`. Both encode and decode are measured. A single Conv3d is
+never split across cards.
+
+The CK extension must already exist in the image as
+`aiter.jit.module_ck_vae_conv3d`. The launcher checks the wheel extension and
+will not compile CK at runtime. Its default image is
+`ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260805-CKConv3dV1-AOT`.
+
+```bash
+GPU_DEVICES=0,1 \
+LIGHTX2V_DIR=/home/yangecool/WorkSpace/Code/LightX2V-ROCm-GFX1201/LightX2V \
+./lightx2vModelrun --runtune-wan21-ck-conv3d-v1
+```
+
+Set `ROTATION=1` for the second run to exchange the two physical cards. The
+launcher uses Docker host networking and forwards the default
+`http://192.168.2.3:10808` proxy; set `PROXY_URL=` to disable it. It never calls
+`rocm-smi` or changes frequency and power settings.
+
 独立 Sage benchmark 入口默认仍将 FP32 `torch_real_rope` 按 8192 个序列位置分块，
 避免 720P 完整 Q/K RoPE 产生约 1.42 GiB 的单个 FP32 临时张量。RunTune 默认选择
 `triton_fused_qk_rope`；目标 gfx1201 契约成立时 chunk wrapper 会直通单次融合 kernel，
