@@ -201,6 +201,11 @@ matter. `T0_ROUNDS=2` records a cold and warm-cache sample in one process. All a
 start encode together, then advance independently; a slow first-use MIOpen search
 on one card therefore cannot time out the other cards before decode.
 
+Logging does not depend on a successful run or on the container filesystem. The
+host result directory always retains `launcher.log`, each arm's `gpuN/run.log`
+and `failure.json`/`result.json`, plus the remaining container `/tmp` contents
+under `gpuN/container_tmp/` after the `--rm` containers exit.
+
 独立 Sage benchmark 入口默认仍将 FP32 `torch_real_rope` 按 8192 个序列位置分块，
 避免 720P 完整 Q/K RoPE 产生约 1.42 GiB 的单个 FP32 临时张量。RunTune 默认选择
 `triton_fused_qk_rope`；目标 gfx1201 契约成立时 chunk wrapper 会直通单次融合 kernel，

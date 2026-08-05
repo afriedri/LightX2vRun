@@ -52,6 +52,7 @@ if [[ -d "${RESULT_DIR}" && -n "$(find "${RESULT_DIR}" -mindepth 1 -maxdepth 1 -
 fi
 mkdir -p "${RESULT_DIR}"
 RESULT_DIR="$(realpath "${RESULT_DIR}")"
+exec > >(tee -a "${RESULT_DIR}/launcher.log") 2>&1
 
 print_mapping() {
     local ordinal arm_index
@@ -109,7 +110,9 @@ run_gpu() {
     local arm_index=$2
     local arm=${ARM_NAMES[${arm_index}]}
     local gpu_result="${RESULT_DIR}/gpu${gpu}"
-    mkdir -p "${gpu_result}"
+    local container_tmp="${gpu_result}/container_tmp"
+    mkdir -p "${gpu_result}" "${container_tmp}"
+    chmod 1777 "${container_tmp}"
 
     docker run --rm \
         --network=host \
@@ -126,10 +129,12 @@ run_gpu() {
         --env DTYPE=BF16 \
         --env "LIGHTX2V_AMD_MIOPEN=${ARM_MIOPEN[${arm_index}]}" \
         --env USE_CHANNELS_LAST_3D=0 \
+        --env TMPDIR=/tmp \
         --env PYTHONUNBUFFERED=1 \
         --mount "type=bind,source=${RUNNER},target=/workspace/benchmark_wan21_vae_t0.py,readonly" \
         --mount "type=bind,source=${VAE_PATH},target=/models/Wan2.1_VAE.pth,readonly" \
         --mount "type=bind,source=${gpu_result},target=/results" \
+        --mount "type=bind,source=${container_tmp},target=/tmp" \
         --mount "type=bind,source=${SYNC_DIR},target=/t0-sync" \
         --mount "type=bind,source=${REFERENCE_DIR},target=/t0-reference" \
         --entrypoint=python3 \
