@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-IMAGE="${IMAGE:-ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1}"
+LEGACY_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1"
+CK_CONV3D_V1_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260805-CKConv3dV1-AOT"
+IMAGE="${IMAGE:-${LEGACY_IMAGE}}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
 EXPECTED_SAGE_AITER_REV="${EXPECTED_SAGE_AITER_REV:-24aa37dd72f98be15ad21deb97ddfd4ab8fc09b1}"
 EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-14a87614f21f414e9e3a66339c3469640c550a4f}"
+EXPECTED_CK_AITER_REV="${EXPECTED_CK_AITER_REV:-7fe71721445d12da5edc1137b2937999f65e660a}"
+EXPECTED_CK_LIGHTX2V_REV="${EXPECTED_CK_LIGHTX2V_REV:-08ba757f399d240d511caf46e5aca86ff3021f20}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 
@@ -47,6 +51,8 @@ Usage:
   ./lightx2vModelrun --infer-bf16    Run the GFX1201 BF16 4-step I2V example
   GPU_DEVICES=0,1 ./lightx2vModelrun --infer-wan21-sage-fp8
                                       Run Wan2.1 720p/81-frame FP8 with Sage on Ulysses SP=2
+  GPU_DEVICES=0 ./lightx2vModelrun --wan21-ckconv3d-v1-release
+                                      Run single-card Wan2.1 with resident untiled CK-v1 VAE
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
                                       Run the Wan2.1 720p workload behind the published 4090 171s result
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090-sage
@@ -72,6 +78,8 @@ Important environment overrides:
   GPU_DEVICES          Physical HIP GPU ids (Wan2.1 production: 2; FP8: 1/2/4/8/16; default: 0,1)
   EXPECTED_SAGE_AITER_REV, EXPECTED_SAGE_LIGHTX2V_REV
                        Exact image source revisions required by Sage inference modes
+  EXPECTED_CK_AITER_REV, EXPECTED_CK_LIGHTX2V_REV
+                       Exact CK AOT image source revisions required by the release mode
   RUN_REPO_DIR          LightX2VRun checkout mounted read-only into the container
   EXPECTED_AITER_REV, EXPECTED_LIGHTX2V_REV
                        Exact image revisions required by CK Conv3d runtune
@@ -166,6 +174,7 @@ case "${1:-}" in
     --infer-lora-fp8) inference_mode=lora_fp8 ;;
     --infer-bf16) inference_mode=bf16 ;;
     --infer-wan21-sage-fp8) inference_mode=wan21_sage_fp8 ;;
+    --wan21-ckconv3d-v1-release) inference_mode=wan21_ckconv3d_v1_release ;;
     --benchmark-wan21-4090) inference_mode=wan21_4090 ;;
     --benchmark-wan21-4090-sage) inference_mode=wan21_4090_sage ;;
 esac
@@ -206,10 +215,18 @@ if [[ "${inference_mode}" == "wan21_sage_fp8" ]]; then
     [[ "${gpu_count}" -eq 2 ]] || die "Wan2.1 Sage production inference requires exactly two GPU_DEVICES"
     fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_i2v_distill_fp8_4step_sage_gfx1201_2gpu.sh"
 fi
+if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" ]]; then
+    [[ "${gpu_count}" -eq 1 ]] || die "Wan2.1 CK Conv3d v1 release requires exactly one GPU_DEVICE"
+    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_ckconv3d_v1_release.sh"
+    if [[ "${IMAGE}" == "${LEGACY_IMAGE}" ]]; then
+        IMAGE="${CK_CONV3D_V1_IMAGE}"
+    fi
+fi
 
 is_wan21_mode=0
 uses_fp8_run_script=0
 needs_sage_image=0
+needs_ck_image=0
 case "${inference_mode}" in
     wan21_*) is_wan21_mode=1 ;;
 esac
@@ -219,6 +236,9 @@ esac
 case "${inference_mode}" in
     sage_fp8 | wan21_4090_sage | wan21_sage_fp8) needs_sage_image=1 ;;
 esac
+if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" ]]; then
+    needs_ck_image=1
+fi
 
 require_dir "${RUN_REPO_DIR}"
 if [[ "${uses_fp8_run_script}" == 1 ]]; then
@@ -316,6 +336,14 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
             die "Sage image Aiter revision ${image_aiter_revision:-missing} does not match ${EXPECTED_SAGE_AITER_REV}; rebuild the image"
         [[ "${image_lightx2v_revision}" == "${EXPECTED_SAGE_LIGHTX2V_REV}" ]] || \
             die "Sage image LightX2V revision ${image_lightx2v_revision:-missing} does not match ${EXPECTED_SAGE_LIGHTX2V_REV}; rebuild the image"
+    fi
+    if [[ "${needs_ck_image}" == 1 ]]; then
+        image_aiter_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.aiter.revision"}}' "${IMAGE}")"
+        image_lightx2v_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE}")"
+        [[ "${image_aiter_revision}" == "${EXPECTED_CK_AITER_REV}" ]] || \
+            die "CK release image Aiter revision ${image_aiter_revision:-missing} does not match ${EXPECTED_CK_AITER_REV}; rebuild the image"
+        [[ "${image_lightx2v_revision}" == "${EXPECTED_CK_LIGHTX2V_REV}" ]] || \
+            die "CK release image LightX2V revision ${image_lightx2v_revision:-missing} does not match ${EXPECTED_CK_LIGHTX2V_REV}; rebuild the image"
     fi
 fi
 
@@ -424,7 +452,8 @@ for inference_env in \
     MASTER_ADDR MASTER_PORT TARGET_VIDEO_LENGTH TARGET_HEIGHT TARGET_WIDTH \
     INFER_STEPS BASE_CONFIG_JSON LIGHTX2V_EXTRA_ARGS CONFIG_ONLY OFFLOAD_RATIO \
     ROPE_TYPE LIGHTX2V_GFX1201_FUSED_QK_ROPE LIGHTX2V_AMD_FP8_GEMM_BACKEND \
-    LIGHTX2V_AMD_MIOPEN USE_TILING_VAE VAE_CPU_OFFLOAD T5_CPU_OFFLOAD \
+    LIGHTX2V_AMD_MIOPEN LIGHTX2V_VAE_CONV3D_BACKEND \
+    USE_TILING_VAE VAE_CPU_OFFLOAD T5_CPU_OFFLOAD \
     CLIP_CPU_OFFLOAD USE_CHANNELS_LAST_3D \
     LIGHTX2V_WARMUP LIGHTX2V_DIT_PROGRESS ROPE_CHUNK_SIZE \
     LIGHTX2V_WAN_RUNTUNE LIGHTX2V_WAN_RUNTUNE_OUTPUT LIGHTX2V_WAN_RUNTUNE_BACKEND \

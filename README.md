@@ -70,6 +70,9 @@ GPU_DEVICES=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 \
 # Wan2.1 720p/81-frame/4-step Sage inference on two GPUs
 GPU_DEVICES=0,1 ./lightx2vModelrun --infer-wan21-sage-fp8
 
+# Single-GPU Wan2.1 release with the image-built CK Conv3d v1 VAE
+GPU_DEVICES=0 ./lightx2vModelrun --wan21-ckconv3d-v1-release
+
 # BF16 4-step I2V
 ./lightx2vModelrun --infer-bf16
 
@@ -88,6 +91,18 @@ Aiter fallback.
 
 ```bash
 GPU_DEVICES=0,1 ./lightx2vModelrun --infer-wan21-sage-fp8
+```
+
+## Wan2.1 CK Conv3d v1 single-GPU release
+
+This release entry keeps the Wan2.1 DiT block offload, T5/CLIP CPU offload,
+SageAttention2, and fused Q/K RoPE configuration. The Wan VAE is single-GPU,
+GPU-resident, and untiled; both encode and decode route supported Conv3d calls
+through the image-built `Aiter_CK_Conv3d_v1` module while MIOpen remains off.
+The launcher requires exactly one GPU and selects the CK AOT image by default.
+
+```bash
+GPU_DEVICES=0 ./lightx2vModelrun --wan21-ckconv3d-v1-release
 ```
 
 ## Reproduce the RTX 4090 171-second workload
