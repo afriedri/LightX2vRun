@@ -216,11 +216,13 @@ result remains successful while the teardown status is retained as a warning.
 
 ### Wan2.1 CK Conv3d v1 two-card runtune
 
-This A/B assigns one complete, untiled VAE workload to each card. The baseline
-uses `backend=pytorch`, MIOpen disabled, and `VAE_CPU_OFFLOAD=1`; the candidate
-uses `backend=Aiter_CK_Conv3d_v1`, MIOpen disabled, and
-`VAE_CPU_OFFLOAD=0`. Both encode and decode are measured. A single Conv3d is
-never split across cards.
+This A/B assigns one complete VAE workload to each card. The baseline preserves
+the original T1 VAE policy: `backend=pytorch`, MIOpen disabled,
+`VAE_CPU_OFFLOAD=1`, and tiling enabled. The candidate uses
+`backend=Aiter_CK_Conv3d_v1`, MIOpen disabled, `VAE_CPU_OFFLOAD=0`, and tiling
+disabled. Both encode and decode are measured. A single Conv3d is never split
+across cards; the reported speedup compares the complete T1 VAE strategy with
+the complete CK-v1 resident VAE strategy.
 
 The CK extension must already exist in the image as
 `aiter.jit.module_ck_vae_conv3d`. The launcher checks the wheel extension and

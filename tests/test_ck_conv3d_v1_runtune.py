@@ -43,7 +43,7 @@ def fake_result(arm: str, gpu_id: int, encode_seconds: float, decode_seconds: fl
         "configuration": {
             "backend": "Aiter_CK_Conv3d_v1" if is_ck else "pytorch",
             "miopen": False,
-            "tiling": False,
+            "tiling": not is_ck,
             "vae_cpu_offload": not is_ck,
             "channels_last_3d": False,
             "dtype": "BF16",
@@ -114,17 +114,19 @@ class CKConv3dV1RunTuneTest(unittest.TestCase):
         self.assertIn("source=${container_tmp},target=/tmp", launcher)
         self.assertIn("source=${RUNNER},target=${CONTAINER_RUNNER},readonly", launcher)
 
-    def test_arm_contract_only_changes_vae_backend_and_offload(self):
+    def test_arm_contract_matches_t1_baseline_and_ck_resident_candidate(self):
         self.assertEqual(
             RUNTUNE.ARM_CONFIG,
             {
                 "pytorch_offload": {
                     "backend": "pytorch",
                     "vae_cpu_offload": True,
+                    "use_tiling": True,
                 },
                 "ck_v1_resident": {
                     "backend": "Aiter_CK_Conv3d_v1",
                     "vae_cpu_offload": False,
+                    "use_tiling": False,
                 },
             },
         )
@@ -159,7 +161,7 @@ class CKConv3dV1RunTuneTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "frozen non-VAE setting"):
                 RUNTUNE.aggregate(root)
 
-    def test_aggregate_rejects_tiling(self):
+    def test_aggregate_rejects_a_changed_tiling_contract(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             baseline = fake_result("pytorch_offload", 0, 20.0, 30.0)
@@ -168,7 +170,7 @@ class CKConv3dV1RunTuneTest(unittest.TestCase):
             write_result(root, 0, baseline)
             write_result(root, 1, candidate)
 
-            with self.assertRaisesRegex(ValueError, "frozen non-VAE setting"):
+            with self.assertRaisesRegex(ValueError, "changed its VAE contract"):
                 RUNTUNE.aggregate(root)
 
     def test_aggregate_rejects_a_changed_vae_contract(self):

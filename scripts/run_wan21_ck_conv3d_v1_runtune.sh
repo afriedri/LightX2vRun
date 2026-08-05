@@ -55,6 +55,7 @@ done
 ARM_NAMES=(pytorch_offload ck_v1_resident)
 ARM_BACKENDS=(pytorch Aiter_CK_Conv3d_v1)
 ARM_OFFLOAD=(1 0)
+ARM_TILING=(1 0)
 
 NOW="$(date +%Y%m%d_%H%M%S)"
 RESULT_DIR="${RESULT_DIR:-${OUTPUT_DIR}/ck_conv3d_v1_runtune_${NOW}}"
@@ -74,7 +75,7 @@ print_mapping() {
     for ordinal in "${!GPU_LIST[@]}"; do
         arm_index=$(((ordinal + ROTATION) % 2))
         info "GPU ${GPU_LIST[${ordinal}]} -> ${ARM_NAMES[${arm_index}]} "\
-"(backend=${ARM_BACKENDS[${arm_index}]}, MIOpen=0, tiling=0, VAE_CPU_OFFLOAD=${ARM_OFFLOAD[${arm_index}]}, channels_last_3d=0)"
+"(backend=${ARM_BACKENDS[${arm_index}]}, MIOpen=0, tiling=${ARM_TILING[${arm_index}]}, VAE_CPU_OFFLOAD=${ARM_OFFLOAD[${arm_index}]}, channels_last_3d=0)"
     done
 }
 
@@ -155,7 +156,8 @@ trap cleanup EXIT INT TERM
     echo "AITER_CK_GITLINK_REV=${AITER_CK_REV}"
     echo "NETWORK=host"
     echo "AUTOMATIC_FREQUENCY=1"
-    echo "FROZEN=MIOpen:0,tiling:0,channels_last_3d:0,BF16,720p,81f"
+    echo "VAE_ARMS=pytorch_offload:backend=pytorch,tiling=1,cpu_offload=1;ck_v1_resident:backend=Aiter_CK_Conv3d_v1,tiling=0,cpu_offload=0"
+    echo "FROZEN=MIOpen:0,channels_last_3d:0,BF16,720p,81f"
 } >"${RESULT_DIR}/host_environment.txt" 2>&1
 
 docker_common=(

@@ -24,10 +24,12 @@ ARM_CONFIG = {
     "pytorch_offload": {
         "backend": "pytorch",
         "vae_cpu_offload": True,
+        "use_tiling": True,
     },
     "ck_v1_resident": {
         "backend": "Aiter_CK_Conv3d_v1",
         "vae_cpu_offload": False,
+        "use_tiling": False,
     },
 }
 
@@ -419,9 +421,10 @@ def run_arm(args: argparse.Namespace) -> dict[str, object]:
     reset_ck_conv3d_state()
 
     cpu_offload = bool(config["vae_cpu_offload"])
+    use_tiling = bool(config["use_tiling"])
     log(
         args.arm,
-        f"backend={config['backend']}, MIOpen=0, tiling=0, "
+        f"backend={config['backend']}, MIOpen=0, tiling={int(use_tiling)}, "
         f"VAE_CPU_OFFLOAD={int(cpu_offload)}, channels_last_3d=0",
     )
     model, load_measurement = measure_cuda(
@@ -432,7 +435,7 @@ def run_arm(args: argparse.Namespace) -> dict[str, object]:
             dtype=torch.bfloat16,
             device="cpu" if cpu_offload else "cuda",
             parallel=False,
-            use_tiling=False,
+            use_tiling=use_tiling,
             cpu_offload=cpu_offload,
             load_from_rank0=False,
         ),
@@ -537,7 +540,7 @@ def run_arm(args: argparse.Namespace) -> dict[str, object]:
         "configuration": {
             "backend": config["backend"],
             "miopen": False,
-            "tiling": False,
+            "tiling": use_tiling,
             "vae_cpu_offload": cpu_offload,
             "channels_last_3d": False,
             "dtype": "BF16",
@@ -672,11 +675,11 @@ def aggregate(root: Path) -> dict[str, object]:
         if (
             config.get("backend") != expected_arm["backend"]
             or config.get("vae_cpu_offload") != expected_arm["vae_cpu_offload"]
+            or config.get("tiling") != expected_arm["use_tiling"]
         ):
             raise ValueError(f"arm {result['arm']} changed its VAE contract")
         if (
             config.get("miopen")
-            or config.get("tiling")
             or config.get("channels_last_3d")
             or config.get("dtype") != "BF16"
         ):
