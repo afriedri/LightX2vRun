@@ -53,6 +53,8 @@ Usage:
                                       Run Wan2.1 720p/81-frame FP8 with Sage on Ulysses SP=2
   GPU_DEVICES=0 ./lightx2vModelrun --wan21-ckconv3d-v1-release
                                       Run single-card Wan2.1 with resident untiled CK-v1 VAE
+  GPU_DEVICES=0,1,2,3 ./lightx2vModelrun --profile-wan21-ckconv3d-v1
+                                      Profile real Wan2.1 CK-v1 VAE shapes on 1/2/4/8/16 GPUs
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
                                       Run the Wan2.1 720p workload behind the published 4090 171s result
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090-sage
@@ -80,6 +82,8 @@ Important environment overrides:
                        Exact image source revisions required by Sage inference modes
   EXPECTED_CK_AITER_REV, EXPECTED_CK_LIGHTX2V_REV
                        Exact CK AOT image source revisions required by the release mode
+  CK_CONV3D_TUNED_CSV  Host path to a generated Conv3d v1 tuned CSV; mounted read-only
+  PROFILE_TAG          Output directory tag for CK Conv3d shape collection
   RUN_REPO_DIR          LightX2VRun checkout mounted read-only into the container
   EXPECTED_AITER_REV, EXPECTED_LIGHTX2V_REV
                        Exact image revisions required by CK Conv3d runtune
@@ -175,6 +179,7 @@ case "${1:-}" in
     --infer-bf16) inference_mode=bf16 ;;
     --infer-wan21-sage-fp8) inference_mode=wan21_sage_fp8 ;;
     --wan21-ckconv3d-v1-release) inference_mode=wan21_ckconv3d_v1_release ;;
+    --profile-wan21-ckconv3d-v1) inference_mode=wan21_ckconv3d_v1_profile ;;
     --benchmark-wan21-4090) inference_mode=wan21_4090 ;;
     --benchmark-wan21-4090-sage) inference_mode=wan21_4090_sage ;;
 esac
@@ -222,6 +227,16 @@ if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" ]]; then
         IMAGE="${CK_CONV3D_V1_IMAGE}"
     fi
 fi
+if [[ "${inference_mode}" == "wan21_ckconv3d_v1_profile" ]]; then
+    case "${gpu_count}" in
+        1 | 2 | 4 | 8 | 16) ;;
+        *) die "Wan2.1 CK Conv3d profiling supports exactly 1, 2, 4, 8, or 16 GPU_DEVICES" ;;
+    esac
+    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_ckconv3d_v1_profile_${gpu_count}gpu.sh"
+    if [[ "${IMAGE}" == "${LEGACY_IMAGE}" ]]; then
+        IMAGE="${CK_CONV3D_V1_IMAGE}"
+    fi
+fi
 
 is_wan21_mode=0
 uses_fp8_run_script=0
@@ -236,7 +251,7 @@ esac
 case "${inference_mode}" in
     sage_fp8 | wan21_4090_sage | wan21_sage_fp8) needs_sage_image=1 ;;
 esac
-if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" ]]; then
+if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" || "${inference_mode}" == "wan21_ckconv3d_v1_profile" ]]; then
     needs_ck_image=1
 fi
 
@@ -244,6 +259,9 @@ require_dir "${RUN_REPO_DIR}"
 if [[ "${uses_fp8_run_script}" == 1 ]]; then
     require_file "${RUN_REPO_DIR}/${fp8_run_script#${CONTAINER_RUN_ROOT}/}"
     require_file "${RUN_REPO_DIR}/scripts/report_dit_progress.py"
+fi
+if [[ "${inference_mode}" == "wan21_ckconv3d_v1_profile" ]]; then
+    require_file "${RUN_REPO_DIR}/scripts/run_wan21_ckconv3d_v1_profile_common.sh"
 fi
 if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "lora_fp8" ]]; then
     require_file "${RUN_REPO_DIR}/scripts/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_common.sh"
@@ -396,6 +414,15 @@ docker_args=(
     --mount "type=bind,source=${CACHE_DIR}/triton,target=/workspace/.cache/triton"
 )
 
+if [[ -n "${CK_CONV3D_TUNED_CSV:-}" ]]; then
+    require_file "${CK_CONV3D_TUNED_CSV}"
+    ck_conv3d_tuned_csv="$(realpath "${CK_CONV3D_TUNED_CSV}")"
+    docker_args+=(
+        --mount "type=bind,source=${ck_conv3d_tuned_csv},target=/workspace/ck-conv3d-config/conv3d_v1_tuned.csv,readonly"
+        --env AITER_CONFIG_CONV3D_V1=/workspace/ck-conv3d-config/conv3d_v1_tuned.csv
+    )
+fi
+
 if [[ "${is_wan21_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${WAN21_DISTILL_DIR},target=${CONTAINER_WAN21_DISTILL_MODEL},readonly"
@@ -453,6 +480,8 @@ for inference_env in \
     INFER_STEPS BASE_CONFIG_JSON LIGHTX2V_EXTRA_ARGS CONFIG_ONLY OFFLOAD_RATIO \
     ROPE_TYPE LIGHTX2V_GFX1201_FUSED_QK_ROPE LIGHTX2V_AMD_FP8_GEMM_BACKEND \
     LIGHTX2V_AMD_MIOPEN LIGHTX2V_VAE_CONV3D_BACKEND \
+    LIGHTX2V_CK_CONV3D_PROFILE_DIR PROFILE_TAG \
+    SEQ_P_ATTN_TYPE SELF_ATTN_TYPE \
     USE_TILING_VAE VAE_CPU_OFFLOAD T5_CPU_OFFLOAD \
     CLIP_CPU_OFFLOAD USE_CHANNELS_LAST_3D \
     LIGHTX2V_WARMUP LIGHTX2V_DIT_PROGRESS ROPE_CHUNK_SIZE \
@@ -495,6 +524,9 @@ fi
 printf 'Inputs:         %s\n' "${INPUT_DIR}"
 printf 'Outputs:        %s\n' "${OUTPUT_DIR}"
 printf 'Cache:          %s\n' "${CACHE_DIR}"
+if [[ -n "${CK_CONV3D_TUNED_CSV:-}" ]]; then
+    printf 'Conv3d CSV:     %s\n' "${ck_conv3d_tuned_csv}"
+fi
 printf 'Run scripts:    %s -> %s\n' "${RUN_REPO_DIR}" "${CONTAINER_RUN_ROOT}"
 if [[ "${uses_fp8_run_script}" == 1 ]]; then
     printf 'FP8 launcher:   %s\n' "${fp8_run_script}"

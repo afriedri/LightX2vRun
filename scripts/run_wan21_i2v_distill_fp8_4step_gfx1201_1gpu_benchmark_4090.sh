@@ -9,20 +9,38 @@ distill_checkpoint="${DIT_QUANTIZED_CKPT:-${model_path}}"
 base_config_json="${BASE_CONFIG_JSON:-${lightx2v_path}/configs/distill/wan21/wan_i2v_distill_fp8_4step_cfg.json}"
 expected_gpu_count="${EXPECTED_GPU_COUNT:-1}"
 case "${expected_gpu_count}" in
-    1 | 2) ;;
+    1 | 2 | 4 | 8 | 16) ;;
     *)
-        echo "ERROR: Wan2.1 launcher supports EXPECTED_GPU_COUNT=1 or 2" >&2
+        echo "ERROR: Wan2.1 launcher supports EXPECTED_GPU_COUNT=1, 2, 4, 8, or 16" >&2
         exit 1
         ;;
 esac
-self_attn_type="${SELF_ATTN_TYPE:-aiter_flydsl_bf16_flash_attn}"
+self_attn_default=aiter_flydsl_bf16_flash_attn
+seq_p_attn_default=ulysses
+if [[ "${expected_gpu_count}" == 16 ]]; then
+    self_attn_default=aiter_triton_bf16_flash_attn
+    seq_p_attn_default=ring
+fi
+self_attn_type="${SELF_ATTN_TYPE:-${self_attn_default}}"
 case "${self_attn_type}" in
-    aiter_flydsl_bf16_flash_attn | aiter_fav3_sage_bf16_attn) ;;
+    aiter_flydsl_bf16_flash_attn | aiter_triton_bf16_flash_attn | aiter_fav3_sage_bf16_attn) ;;
     *)
         echo "ERROR: unsupported SELF_ATTN_TYPE=${self_attn_type}" >&2
         exit 1
         ;;
 esac
+seq_p_attn_type="${SEQ_P_ATTN_TYPE:-${seq_p_attn_default}}"
+case "${seq_p_attn_type}" in
+    ulysses | ring) ;;
+    *)
+        echo "ERROR: unsupported SEQ_P_ATTN_TYPE=${seq_p_attn_type}" >&2
+        exit 1
+        ;;
+esac
+if [[ "${expected_gpu_count}" == 16 && "${seq_p_attn_type}" == ulysses ]]; then
+    echo "ERROR: Wan2.1 has 40 attention heads; SP16 requires ring attention" >&2
+    exit 1
+fi
 rope_type="${ROPE_TYPE:-torch_real_rope}"
 case "${rope_type}" in
     torch_real_rope | triton_fused_qk_rope) ;;
@@ -109,11 +127,11 @@ if [[ ! "${rope_chunk_size}" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" "${self_attn_type}" "${rope_chunk_size}" "${rope_type}" "${expected_gpu_count}" "${USE_TILING_VAE}" "${VAE_CPU_OFFLOAD}" "${T5_CPU_OFFLOAD}" "${CLIP_CPU_OFFLOAD}" <<'PY'
+python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${distill_checkpoint}" "${offload_ratio}" "${self_attn_type}" "${rope_chunk_size}" "${rope_type}" "${expected_gpu_count}" "${seq_p_attn_type}" "${USE_TILING_VAE}" "${VAE_CPU_OFFLOAD}" "${T5_CPU_OFFLOAD}" "${CLIP_CPU_OFFLOAD}" <<'PY'
 import json
 import sys
 
-source_path, output_path, model_path, distill_checkpoint, offload_ratio_text, self_attn_type, rope_chunk_size_text, rope_type, seq_p_size_text, use_tiling_vae_text, vae_cpu_offload_text, t5_cpu_offload_text, clip_cpu_offload_text = sys.argv[1:]
+source_path, output_path, model_path, distill_checkpoint, offload_ratio_text, self_attn_type, rope_chunk_size_text, rope_type, seq_p_size_text, seq_p_attn_type, use_tiling_vae_text, vae_cpu_offload_text, t5_cpu_offload_text, clip_cpu_offload_text = sys.argv[1:]
 try:
     offload_ratio = float(offload_ratio_text)
 except ValueError as exc:
@@ -169,7 +187,7 @@ config.update(
         "feature_caching": "NoCaching",
         "parallel": {
             "seq_p_size": seq_p_size,
-            "seq_p_attn_type": "ulysses",
+            "seq_p_attn_type": seq_p_attn_type,
             "seq_p_prepost_backend": "torch",
             "seq_p_a2a_backend": "torch",
             "vae_parallel": seq_p_size > 1,
@@ -209,6 +227,7 @@ else
     echo "RoPE: ${rope_type}, unchunked"
 fi
 echo "Weights: ${distill_checkpoint} (4-step Distill per-channel FP8, Aiter fp8-sgl runtime)"
+echo "Parallel: SP=${expected_gpu_count}, attention=${seq_p_attn_type}"
 resident_blocks="$(python3 -c 'import math, sys; ratio=float(sys.argv[1]); print(40-math.ceil(40*ratio))' "${offload_ratio}")"
 streamed_blocks="$((40 - resident_blocks))"
 echo "Offload: block; ratio=${offload_ratio} (${streamed_blocks} streamed, ${resident_blocks} GPU-resident)"

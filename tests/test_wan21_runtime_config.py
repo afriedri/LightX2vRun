@@ -78,6 +78,27 @@ class Wan21RuntimeConfigTest(unittest.TestCase):
         self.assertEqual(config["parallel"]["seq_p_size"], 2)
         self.assertTrue(config["parallel"]["vae_parallel"])
 
+    def test_scale_parallel_modes(self):
+        for gpu_count in (1, 2, 4, 8):
+            with self.subTest(gpu_count=gpu_count):
+                config, _ = self.run_config(gpu_count=gpu_count)
+                self.assertEqual(config["parallel"]["seq_p_size"], gpu_count)
+                self.assertEqual(config["parallel"]["seq_p_attn_type"], "ulysses")
+
+        config, _ = self.run_config(gpu_count=16)
+        self.assertEqual(config["parallel"]["seq_p_size"], 16)
+        self.assertEqual(config["parallel"]["seq_p_attn_type"], "ring")
+        self.assertEqual(config["self_attn_1_type"], "aiter_triton_bf16_flash_attn")
+
+    def test_sp16_rejects_ulysses_for_wan21_heads(self):
+        with self.assertRaises(subprocess.CalledProcessError) as raised:
+            self.run_config(
+                gpu_count=16,
+                overrides={"SEQ_P_ATTN_TYPE": "ulysses"},
+            )
+
+        self.assertIn("SP16 requires ring attention", raised.exception.stderr)
+
     def test_rejects_non_binary_flag(self):
         with self.assertRaises(subprocess.CalledProcessError) as raised:
             self.run_config(overrides={"USE_TILING_VAE": "true"})
