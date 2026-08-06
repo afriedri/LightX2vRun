@@ -29,11 +29,10 @@ export SAVE_RESULT_PATH="${SAVE_RESULT_PATH:-${LIGHTX2V_CK_CONV3D_PROFILE_DIR}/o
 
 if [[ "${expected_gpu_count}" == 16 ]]; then
     export SEQ_P_ATTN_TYPE="${SEQ_P_ATTN_TYPE:-ring}"
-    export SELF_ATTN_TYPE="${SELF_ATTN_TYPE:-aiter_triton_bf16_flash_attn}"
 else
     export SEQ_P_ATTN_TYPE="${SEQ_P_ATTN_TYPE:-ulysses}"
-    export SELF_ATTN_TYPE="${SELF_ATTN_TYPE:-aiter_flydsl_bf16_flash_attn}"
 fi
+export SELF_ATTN_TYPE=aiter_fav3_sage_bf16_attn
 
 echo "Wan2.1 CK Conv3d v1 profile: ${expected_gpu_count} GPUs"
 echo "VAE: resident, spatial_parallel=$((expected_gpu_count > 1 ? 1 : 0)), tiling=0, MIOpen=0"

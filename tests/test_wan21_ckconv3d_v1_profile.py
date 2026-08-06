@@ -31,6 +31,7 @@ class Wan21CKConv3dV1ProfileTest(unittest.TestCase):
                     "RUNTIME_CONFIG_DIR": str(root / "runtime"),
                     "AITER_JIT_DIR": str(root / "aiter"),
                     "PROFILE_TAG": f"test_{gpu_count}gpu",
+                    "SELF_ATTN_TYPE": "aiter_flydsl_bf16_flash_attn",
                 }
             )
             script = SCRIPTS / f"run_wan21_ckconv3d_v1_profile_{gpu_count}gpu.sh"
@@ -51,6 +52,13 @@ class Wan21CKConv3dV1ProfileTest(unittest.TestCase):
                 self.assertFalse(config["vae_cpu_offload"])
                 self.assertEqual(config["parallel"]["seq_p_size"], gpu_count)
                 self.assertEqual(config["parallel"]["vae_parallel"], gpu_count > 1)
+                self.assertEqual(
+                    config["self_attn_1_type"], "aiter_fav3_sage_bf16_attn"
+                )
+                self.assertEqual(
+                    config["parallel"]["seq_p_attn_type"],
+                    "ring" if gpu_count == 16 else "ulysses",
+                )
                 self.assertIn("MIOpen: 0", output)
 
     def test_modelrun_selects_wrapper_from_gpu_count(self):
