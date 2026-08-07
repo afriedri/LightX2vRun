@@ -110,7 +110,15 @@ class Wan21CKConv3dV1ReleaseTest(unittest.TestCase):
             call_log = root / "calls.log"
             fake_modelrun.write_text(
                 "#!/usr/bin/env bash\n"
-                "printf '%s|%s|%s|%s|%s|%s\\n' \"$GPU_DEVICES\" \"$CONTAINER_NAME\" \"$SAVE_RESULT_PATH\" \"${LIGHTX2V_CK_CONV3D_PROFILE_DIR-unset}\" \"${PROFILE_TAG-unset}\" \"$*\" >> \"$CALL_LOG\"\n",
+                "printf '%s|%s|%s|%s|%s|%s\\n' \"$GPU_DEVICES\" \"$CONTAINER_NAME\" \"$SAVE_RESULT_PATH\" \"${LIGHTX2V_CK_CONV3D_PROFILE_DIR-unset}\" \"${PROFILE_TAG-unset}\" \"$*\" >> \"$CALL_LOG\"\n"
+                "echo '[Profile] Single GPU - Level1_Log Run Image Encoder cost 1.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log Run VAE Encoder cost 2.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log Run Text Encoder cost 3.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level2_Log Run Encoders cost 6.100000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log Run VAE Decoder cost 7.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log RUN pipeline cost 18.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log Total Cost cost 20.000000 seconds'\n"
+                "echo 'DiT summary: status=complete, steps=4/4, total=4.000s, average=1.000s/it, throughput=1.0000it/s'\n",
                 encoding="utf-8",
             )
             fake_modelrun.chmod(0o755)
@@ -123,6 +131,7 @@ class Wan21CKConv3dV1ReleaseTest(unittest.TestCase):
                     "CONTAINER_NAME": "lightx2v-gfx1201",
                     "LIGHTX2V_CK_CONV3D_PROFILE_DIR": "must-not-pass",
                     "PROFILE_TAG": "must-not-pass",
+                    "RESULT_DIR": str(root / "results"),
                 }
             )
             result = subprocess.run(
@@ -133,6 +142,7 @@ class Wan21CKConv3dV1ReleaseTest(unittest.TestCase):
                 env=env,
             )
             calls = [line.split("|") for line in call_log.read_text(encoding="utf-8").splitlines()]
+            timings_csv_exists = (root / "results" / "timings.csv").is_file()
 
         self.assertEqual(
             [call[0] for call in calls],
@@ -154,6 +164,7 @@ class Wan21CKConv3dV1ReleaseTest(unittest.TestCase):
             )
         )
         self.assertIn("production scale sweep complete", result.stdout)
+        self.assertTrue(timings_csv_exists)
 
 
 if __name__ == "__main__":
