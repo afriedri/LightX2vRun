@@ -2,14 +2,14 @@
 set -Eeuo pipefail
 
 LEGACY_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1"
-CK_CONV3D_V1_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260805-CKConv3dV1-AOT"
+CK_CONV3D_V1_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260806-CKConv3dV1-Hot9-AOT4"
 IMAGE="${IMAGE:-${LEGACY_IMAGE}}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
 EXPECTED_SAGE_AITER_REV="${EXPECTED_SAGE_AITER_REV:-24aa37dd72f98be15ad21deb97ddfd4ab8fc09b1}"
 EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-14a87614f21f414e9e3a66339c3469640c550a4f}"
-EXPECTED_CK_AITER_REV="${EXPECTED_CK_AITER_REV:-1abd99a06c66af00fdd22f711b1222fad44a64fc}"
-EXPECTED_CK_LIGHTX2V_REV="${EXPECTED_CK_LIGHTX2V_REV:-2c2f4204cdf2d442fe76a76173604f763c166d63}"
+EXPECTED_CK_AITER_REV="${EXPECTED_CK_AITER_REV:-5ebf6f95b9a9fe9773966b0e01366312c14a712f}"
+EXPECTED_CK_LIGHTX2V_REV="${EXPECTED_CK_LIGHTX2V_REV:-74cf8653cf92259f650bbdd6ef17d78f61c8d9d8}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 
@@ -51,8 +51,10 @@ Usage:
   ./lightx2vModelrun --infer-bf16    Run the GFX1201 BF16 4-step I2V example
   GPU_DEVICES=0,1 ./lightx2vModelrun --infer-wan21-sage-fp8
                                       Run Wan2.1 720p/81-frame FP8 with Sage on Ulysses SP=2
-  GPU_DEVICES=0 ./lightx2vModelrun --wan21-ckconv3d-v1-release
-                                      Run single-card Wan2.1 with resident untiled CK-v1 VAE
+  GPU_DEVICES=0,1,2,3 ./lightx2vModelrun --wan21-ckconv3d-v1-release
+                                      Run Wan2.1 with resident untiled CK-v1 VAE on 1/2/4/8/16 GPUs
+  ./scripts/run_wan21_ckconv3d_v1_scale_sweep.sh
+                                      Run full CK-v1 production inference at all five scales sequentially
   GPU_DEVICES=0,1,2,3 ./lightx2vModelrun --profile-wan21-ckconv3d-v1
                                       Profile real Wan2.1 CK-v1 VAE shapes on 1/2/4/8/16 GPUs
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
@@ -77,7 +79,7 @@ Important environment overrides:
   OUTPUT_DIR           Generated video directory
   INPUT_DIR            Custom input directory, available as /inputs
   CACHE_DIR            Persistent Aiter, Triton, Torch, and HF cache directory
-  GPU_DEVICES          Physical HIP GPU ids (Wan2.1 production: 2; FP8: 1/2/4/8/16; default: 0,1)
+  GPU_DEVICES          Physical HIP GPU ids (Wan2.1 CK/FP8: 1/2/4/8/16; default: 0,1)
   EXPECTED_SAGE_AITER_REV, EXPECTED_SAGE_LIGHTX2V_REV
                        Exact image source revisions required by Sage inference modes
   EXPECTED_CK_AITER_REV, EXPECTED_CK_LIGHTX2V_REV
@@ -221,7 +223,10 @@ if [[ "${inference_mode}" == "wan21_sage_fp8" ]]; then
     fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_i2v_distill_fp8_4step_sage_gfx1201_2gpu.sh"
 fi
 if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" ]]; then
-    [[ "${gpu_count}" -eq 1 ]] || die "Wan2.1 CK Conv3d v1 release requires exactly one GPU_DEVICE"
+    case "${gpu_count}" in
+        1 | 2 | 4 | 8 | 16) ;;
+        *) die "Wan2.1 CK Conv3d v1 release supports exactly 1, 2, 4, 8, or 16 GPU_DEVICES" ;;
+    esac
     fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_ckconv3d_v1_release.sh"
     if [[ "${IMAGE}" == "${LEGACY_IMAGE}" ]]; then
         IMAGE="${CK_CONV3D_V1_IMAGE}"

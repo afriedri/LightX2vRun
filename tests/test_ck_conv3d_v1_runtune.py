@@ -103,7 +103,7 @@ class CKConv3dV1RunTuneTest(unittest.TestCase):
                 env=env,
             )
 
-        self.assertIn("gfx1201-R9600-FP8-260805-CKConv3dV1-AOT", result.stdout)
+        self.assertIn("gfx1201-R9600-FP8-260806-CKConv3dV1-Hot9-AOT4", result.stdout)
         self.assertIn("image-bundled /workspace/LightX2V", result.stdout)
         self.assertIn(str(RUNNER_PATH), result.stdout)
         launcher = LAUNCHER_PATH.read_text(encoding="utf-8")

@@ -99,7 +99,7 @@ This release entry keeps the Wan2.1 DiT block offload, T5/CLIP CPU offload,
 SageAttention2, and fused Q/K RoPE configuration. The Wan VAE is single-GPU,
 GPU-resident, and untiled; both encode and decode route supported Conv3d calls
 through the image-built `Aiter_CK_Conv3d_v1` module while MIOpen remains off.
-The launcher requires exactly one GPU and selects the CK AOT image by default.
+The launcher accepts 1, 2, 4, 8, or 16 GPUs and selects the CK AOT image by default.
 
 ```bash
 GPU_DEVICES=0 ./lightx2vModelrun --wan21-ckconv3d-v1-release
@@ -242,7 +242,7 @@ the complete CK-v1 resident VAE strategy.
 The CK extension must already exist in the image as
 `aiter.jit.module_ck_vae_conv3d`. The launcher checks the wheel extension and
 will not compile CK at runtime. Its default image is
-`ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260805-CKConv3dV1-AOT`.
+`ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260806-CKConv3dV1-Hot9-AOT4`.
 
 ```bash
 GPU_DEVICES=0,1 ./lightx2vModelrun --runtune-wan21-ck-conv3d-v1
