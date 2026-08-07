@@ -120,6 +120,7 @@ class Wan21CKConv3dV1ReleaseTest(unittest.TestCase):
                     "MODEL_RUN": str(fake_modelrun),
                     "CALL_LOG": str(call_log),
                     "SWEEP_TAG": "test-release-sweep",
+                    "CONTAINER_NAME": "lightx2v-gfx1201",
                     "LIGHTX2V_CK_CONV3D_PROFILE_DIR": "must-not-pass",
                     "PROFILE_TAG": "must-not-pass",
                 }
@@ -143,9 +144,9 @@ class Wan21CKConv3dV1ReleaseTest(unittest.TestCase):
                 "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15",
             ],
         )
+        self.assertTrue(all(call[1] == "lightx2v-gfx1201" for call in calls))
         self.assertTrue(all(call[3:5] == ["unset", "unset"] for call in calls))
         self.assertTrue(all(call[5] == "--wan21-ckconv3d-v1-release" for call in calls))
-        self.assertTrue(all("profile" not in call[1] for call in calls))
         self.assertTrue(
             all(
                 call[2].endswith(f"_{count}gpu.mp4")

@@ -55,7 +55,6 @@ for count in "${counts[@]}"; do
     echo "[$(date +%H:%M:%S)] Wan2.1 CK Conv3d release: ${count} GPUs (${selected})"
     env \
         GPU_DEVICES="${selected}" \
-        CONTAINER_NAME="ck-conv3d-release-${count}gpu-${sweep_tag}" \
         SAVE_RESULT_PATH="${output_path}" \
         "${model_run}" --wan21-ckconv3d-v1-release
 done
