@@ -46,7 +46,14 @@ def _critical_path(profiles, name: str):
     by_rank = profiles.get(name)
     if not by_rank:
         return None
-    return max(sum(samples) for samples in by_rank.values())
+    candidates = [
+        sum(samples) for rank, samples in by_rank.items() if rank is not None
+    ]
+    # Decorator-backed profilers are constructed before torch.distributed is
+    # initialized, so every worker may be logged as "Single GPU". Each such
+    # sample is a parallel rank, not another invocation on rank 0.
+    candidates.extend(by_rank.get(None, ()))
+    return max(candidates) if candidates else None
 
 
 def _encoder_total(profiles, values):
@@ -56,6 +63,7 @@ def _encoder_total(profiles, values):
 
     component_names = ("Run Image Encoder", "Run VAE Encoder", "Run Text Encoder")
     ranks = set().union(*(profiles.get(name, {}).keys() for name in component_names))
+    ranks.discard(None)
     rank_totals = []
     for rank in ranks:
         if all(rank in profiles.get(name, {}) for name in component_names):
@@ -94,7 +102,7 @@ def parse_log(path: Path) -> dict[str, float | None]:
     text = ANSI_RE.sub("", path.read_text(encoding="utf-8", errors="replace"))
     profiles = defaultdict(lambda: defaultdict(list))
     for match in PROFILE_RE.finditer(text):
-        rank = int(match.group("rank")) if match.group("rank") is not None else 0
+        rank = int(match.group("rank")) if match.group("rank") is not None else None
         name = " ".join(match.group("name").split())
         profiles[name][rank].append(float(match.group("seconds")))
 
