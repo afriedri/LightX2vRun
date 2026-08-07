@@ -6,7 +6,7 @@ repo_root="$(cd -- "${script_dir}/.." && pwd)"
 model_run="${MODEL_RUN:-${repo_root}/lightx2vModelrun}"
 sweep_counts="${SWEEP_COUNTS:-1,2,4,8,16}"
 sweep_tag="${SWEEP_TAG:-wan21_ckconv3d_v1_release_$(date +%Y%m%d_%H%M%S)}"
-scale_gpu_groups="${SCALE_GPU_GROUPS:-0;1,2;3,4,5,6;7,8,9,10,11,12,13,14;0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
+scale_gpu_groups="${SCALE_GPU_GROUPS:-0;1,2;15,14,13,12;0,1,2,3,4,5,6,7;0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
 unset LIGHTX2V_CK_CONV3D_PROFILE_DIR PROFILE_TAG
 
 [[ -x "${model_run}" ]] || { echo "ERROR: launcher is not executable: ${model_run}" >&2; exit 1; }
