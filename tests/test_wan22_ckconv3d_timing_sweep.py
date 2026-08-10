@@ -158,10 +158,11 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
         self.assertTrue(all(call[4] == "--wan22-ckconv3d-v1-release" for call in calls))
         self.assertEqual(stale_contents, "stale\n")
         self.assertEqual(list(rows["Image Encoder"]), ["metric", "2", "4", "8", "16", "unit"])
-        self.assertTrue(all(rows["Image Encoder"][str(scale)] == "0.000000" for scale in (2, 4, 8, 16)))
+        self.assertTrue(all(rows["Image Encoder"][str(scale)] == "N/A" for scale in (2, 4, 8, 16)))
         self.assertTrue(all(rows["Encoders 合计"][str(scale)] == "6.100000" for scale in (2, 4, 8, 16)))
         self.assertTrue(all(rows["DiT 4 steps"][str(scale)] == "4.000000" for scale in (2, 4, 8, 16)))
         self.assertIn("timing sweep complete", completed.stdout)
+        self.assertIn("Image Encoder: N/A (disabled", completed.stdout)
 
 
 if __name__ == "__main__":

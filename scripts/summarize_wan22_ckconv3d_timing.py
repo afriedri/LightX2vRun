@@ -9,6 +9,7 @@ from summarize_wan21_ckconv3d_scale import METRICS, parse_log
 
 
 SCALES = (2, 4, 8, 16)
+DISABLED_METRICS = {"Image Encoder"}
 
 
 def parse_counts(value: str) -> tuple[int, ...]:
@@ -21,8 +22,10 @@ def parse_counts(value: str) -> tuple[int, ...]:
     return counts
 
 
-def format_seconds(value):
-    return "" if value is None else f"{value:.6f}"
+def format_seconds(metric, value):
+    if value is None:
+        return "N/A" if metric in DISABLED_METRICS else ""
+    return f"{value:.6f}"
 
 
 def write_csv(path: Path, results) -> None:
@@ -31,7 +34,11 @@ def write_csv(path: Path, results) -> None:
         writer.writerow(("metric", *(str(scale) for scale in SCALES), "unit"))
         for metric in METRICS:
             writer.writerow(
-                (metric, *(format_seconds(results[scale].get(metric)) for scale in SCALES), "seconds")
+                (
+                    metric,
+                    *(format_seconds(metric, results[scale].get(metric)) for scale in SCALES),
+                    "seconds",
+                )
             )
 
 
@@ -44,7 +51,10 @@ def markdown_table(results) -> str:
         cells = []
         for scale in SCALES:
             value = results[scale].get(metric)
-            cells.append("—" if value is None else f"{value:.3f}s")
+            if value is None and metric in DISABLED_METRICS:
+                cells.append("N/A")
+            else:
+                cells.append("—" if value is None else f"{value:.3f}s")
         lines.append(f"| {metric} | " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 
@@ -69,11 +79,8 @@ def main() -> int:
             errors.append(f"missing {scale}-GPU log: {log_path}")
             continue
         results[scale] = parse_log(log_path)
-        # Wan2.2 I2V has no standalone CLIP/image-encoder stage. Its image
-        # conditioning is covered by VAE Encoder, so the absent Wan2.1 metric
-        # is a real zero rather than a truncated log.
-        if results[scale]["Image Encoder"] is None:
-            results[scale]["Image Encoder"] = 0.0
+        # Wan2.2 I2V sets use_image_encoder=false, so the standalone Wan2.1
+        # CLIP image-encoder metric is intentionally not applicable.
         if (
             results[scale]["Encoders 合计"] is None
             and results[scale]["VAE Encoder"] is not None
@@ -82,7 +89,11 @@ def main() -> int:
             results[scale]["Encoders 合计"] = (
                 results[scale]["VAE Encoder"] + results[scale]["Text Encoder"]
             )
-        missing = [metric for metric in METRICS if results[scale].get(metric) is None]
+        missing = [
+            metric
+            for metric in METRICS
+            if metric not in DISABLED_METRICS and results[scale].get(metric) is None
+        ]
         if missing:
             errors.append(f"{scale}-GPU log is missing: {', '.join(missing)}")
 
@@ -92,6 +103,7 @@ def main() -> int:
     table = markdown_table(results)
     output_md.write_text(table, encoding="utf-8")
     print(table, end="")
+    print("Image Encoder: N/A (disabled by Wan2.2 use_image_encoder=false)")
     print(f"CSV: {output_csv}")
     print(f"Table: {output_md}")
     if errors:
