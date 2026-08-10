@@ -2,14 +2,14 @@
 set -Eeuo pipefail
 
 LEGACY_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1"
-CK_CONV3D_V1_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260806-CKConv3dV1-Hot9-AOT4"
+CK_CONV3D_V1_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260810-CKConv3dV1-Hot26-AOTFinal"
 IMAGE="${IMAGE:-${LEGACY_IMAGE}}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
 EXPECTED_SAGE_AITER_REV="${EXPECTED_SAGE_AITER_REV:-24aa37dd72f98be15ad21deb97ddfd4ab8fc09b1}"
 EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-14a87614f21f414e9e3a66339c3469640c550a4f}"
-EXPECTED_CK_AITER_REV="${EXPECTED_CK_AITER_REV:-5ebf6f95b9a9fe9773966b0e01366312c14a712f}"
-EXPECTED_CK_LIGHTX2V_REV="${EXPECTED_CK_LIGHTX2V_REV:-74cf8653cf92259f650bbdd6ef17d78f61c8d9d8}"
+EXPECTED_CK_AITER_REV="${EXPECTED_CK_AITER_REV:-df54d2dd97919f821fe8c05f0be540713be7d4ac}"
+EXPECTED_CK_LIGHTX2V_REV="${EXPECTED_CK_LIGHTX2V_REV:-9b72869c9a33f64f92cbab56e3449266eb130ce8}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 
@@ -60,7 +60,11 @@ Usage:
   GPU_DEVICES=0,1,2,3 ./lightx2vModelrun --profile-wan22-ckconv3d-v1
                                       Profile real Wan2.2 CK-v1 VAE shapes on 1/2/4/8/16 GPUs
   ./scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
-                                      Collect Wan2.2 CK-v1 shapes at all five scales sequentially
+                                      Collect Wan2.2 CK-v1 shapes on 2/4/8/16 GPUs sequentially
+  GPU_DEVICES=0,1,2,3 ./lightx2vModelrun --wan22-ckconv3d-v1-release
+                                      Run Wan2.2 with resident untiled CK-v1 VAE on 2/4/8/16 GPUs
+  ./scripts/run_wan22_ckconv3d_v1_timing_sweep.sh
+                                      Measure Wan2.2 CK-v1 stage timings on 2/4/8/16 GPUs
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
                                       Run the Wan2.1 720p workload behind the published 4090 171s result
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090-sage
@@ -186,6 +190,7 @@ case "${1:-}" in
     --infer-bf16) inference_mode=bf16 ;;
     --infer-wan21-sage-fp8) inference_mode=wan21_sage_fp8 ;;
     --wan21-ckconv3d-v1-release) inference_mode=wan21_ckconv3d_v1_release ;;
+    --wan22-ckconv3d-v1-release) inference_mode=wan22_ckconv3d_v1_release ;;
     --profile-wan21-ckconv3d-v1) inference_mode=wan21_ckconv3d_v1_profile ;;
     --profile-wan22-ckconv3d-v1) inference_mode=wan22_ckconv3d_v1_profile ;;
     --benchmark-wan21-4090) inference_mode=wan21_4090 ;;
@@ -238,6 +243,16 @@ if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" ]]; then
         IMAGE="${CK_CONV3D_V1_IMAGE}"
     fi
 fi
+if [[ "${inference_mode}" == "wan22_ckconv3d_v1_release" ]]; then
+    case "${gpu_count}" in
+        2 | 4 | 8 | 16) ;;
+        *) die "Wan2.2 CK Conv3d v1 release supports exactly 2, 4, 8, or 16 GPU_DEVICES" ;;
+    esac
+    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan22_ckconv3d_v1_release.sh"
+    if [[ "${IMAGE}" == "${LEGACY_IMAGE}" ]]; then
+        IMAGE="${CK_CONV3D_V1_IMAGE}"
+    fi
+fi
 if [[ "${inference_mode}" == "wan21_ckconv3d_v1_profile" ]]; then
     case "${gpu_count}" in
         1 | 2 | 4 | 8 | 16) ;;
@@ -267,12 +282,12 @@ case "${inference_mode}" in
     wan21_*) is_wan21_mode=1 ;;
 esac
 case "${inference_mode}" in
-    fp8 | sage_fp8 | lora_fp8 | wan21_* | wan22_ckconv3d_v1_profile) uses_fp8_run_script=1 ;;
+    fp8 | sage_fp8 | lora_fp8 | wan21_* | wan22_ckconv3d_v1_release | wan22_ckconv3d_v1_profile) uses_fp8_run_script=1 ;;
 esac
 case "${inference_mode}" in
     sage_fp8 | wan21_4090_sage | wan21_sage_fp8) needs_sage_image=1 ;;
 esac
-if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" || "${inference_mode}" == "wan21_ckconv3d_v1_profile" || "${inference_mode}" == "wan22_ckconv3d_v1_profile" ]]; then
+if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" || "${inference_mode}" == "wan21_ckconv3d_v1_profile" || "${inference_mode}" == "wan22_ckconv3d_v1_release" || "${inference_mode}" == "wan22_ckconv3d_v1_profile" ]]; then
     needs_ck_image=1
 fi
 
@@ -287,7 +302,7 @@ fi
 if [[ "${inference_mode}" == "wan22_ckconv3d_v1_profile" ]]; then
     require_file "${RUN_REPO_DIR}/scripts/run_wan22_ckconv3d_v1_profile_common.sh"
 fi
-if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "lora_fp8" ]]; then
+if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "lora_fp8" || "${inference_mode}" == "wan22_ckconv3d_v1_release" ]]; then
     require_file "${RUN_REPO_DIR}/scripts/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_common.sh"
 fi
 if [[ "${inference_mode}" == "sage_fp8" ]]; then
@@ -343,7 +358,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
             require_file "${WAN22_BASE_DIR}/low_noise_model/config.json"
             require_file "${WAN22_BASE_DIR}/Wan2.1_VAE.pth"
         fi
-        if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "wan22_ckconv3d_v1_profile" ]]; then
+        if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "wan22_ckconv3d_v1_release" || "${inference_mode}" == "wan22_ckconv3d_v1_profile" ]]; then
             require_file "${t5_fp8_path}"
             require_file "${DISTILL_MODELS_DIR}/wan2.2_i2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"
             require_file "${DISTILL_MODELS_DIR}/wan2.2_i2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"

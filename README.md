@@ -105,6 +105,20 @@ The launcher accepts 1, 2, 4, 8, or 16 GPUs and selects the CK AOT image by defa
 GPU_DEVICES=0 ./lightx2vModelrun --wan21-ckconv3d-v1-release
 ```
 
+## Wan2.2 CK Conv3d v1 timing sweep
+
+The Wan2.2 timing sweep runs the same resident, untiled CK-v1 VAE workload used
+for shape collection, but explicitly disables the CK Conv3d profile directory.
+It runs 2, 4, 8, and 16 GPUs sequentially and uses the Wan2.1 scale sweep's
+rank-critical-path calculation for encoder, four-step DiT, decoder, pipeline,
+and total timings. Results are written as `timings.csv` and `timings.md` beside
+the four raw logs.
+
+```bash
+bash scripts/run_wan22_ckconv3d_v1_timing_sweep.sh \
+  --image ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260810-CKConv3dV1-Hot26-AOTFinal
+```
+
 ## Reproduce the RTX 4090 171-second workload
 
 The upstream `171s` result is a single RTX 4090 running Wan2.1 I2V 14B at
