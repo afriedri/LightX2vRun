@@ -8,6 +8,42 @@ model_path="${MODEL_PATH:-${models_root}/Wan-AI/Wan2.2-I2V-A14B}"
 expected_gpu_count="${EXPECTED_GPU_COUNT:?EXPECTED_GPU_COUNT must be set by a GPU-count launcher}"
 base_config_json="${BASE_CONFIG_JSON:-${lightx2v_path}/configs/platforms/amd_rocm/wan22_moe_i2v_distill_fp8_4step_gfx1201.json}"
 
+# Keep the production memory policy aligned with the Wan2.1 720p launcher.
+CPU_OFFLOAD="${CPU_OFFLOAD:-1}"
+OFFLOAD_GRANULARITY="${OFFLOAD_GRANULARITY:-block}"
+OFFLOAD_RATIO="${OFFLOAD_RATIO:-1.0}"
+T5_CPU_OFFLOAD="${T5_CPU_OFFLOAD:-1}"
+VAE_CPU_OFFLOAD="${VAE_CPU_OFFLOAD:-1}"
+USE_TILING_VAE="${USE_TILING_VAE:-1}"
+LIGHTX2V_AMD_MIOPEN="${LIGHTX2V_AMD_MIOPEN:-0}"
+USE_CHANNELS_LAST_3D="${USE_CHANNELS_LAST_3D:-0}"
+for flag_name in \
+    CPU_OFFLOAD T5_CPU_OFFLOAD VAE_CPU_OFFLOAD USE_TILING_VAE \
+    LIGHTX2V_AMD_MIOPEN USE_CHANNELS_LAST_3D; do
+    flag_value="${!flag_name}"
+    case "${flag_value}" in
+        0 | 1) ;;
+        *)
+            echo "ERROR: ${flag_name} must be 0 or 1, got ${flag_value}" >&2
+            exit 1
+            ;;
+    esac
+done
+case "${OFFLOAD_GRANULARITY}" in
+    block | model) ;;
+    *)
+        echo "ERROR: OFFLOAD_GRANULARITY must be block or model, got ${OFFLOAD_GRANULARITY}" >&2
+        exit 1
+        ;;
+esac
+if [[ ! "${OFFLOAD_RATIO}" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]; then
+    echo "ERROR: OFFLOAD_RATIO must be a number in [0, 1], got ${OFFLOAD_RATIO}" >&2
+    exit 1
+fi
+export CPU_OFFLOAD OFFLOAD_GRANULARITY OFFLOAD_RATIO
+export T5_CPU_OFFLOAD VAE_CPU_OFFLOAD USE_TILING_VAE
+export LIGHTX2V_AMD_MIOPEN USE_CHANNELS_LAST_3D
+
 export PLATFORM=amd_rocm
 export DTYPE=BF16
 export TOKENIZERS_PARALLELISM=false
@@ -125,7 +161,24 @@ config["parallel"] = {
     "seq_p_attn_type": seq_p_attn_type,
     "seq_p_prepost_backend": "torch",
     "seq_p_a2a_backend": "torch",
+    "vae_parallel": int(seq_p_size) > 1,
 }
+
+offload_ratio = float(os.environ["OFFLOAD_RATIO"])
+if not 0.0 <= offload_ratio <= 1.0:
+    raise SystemExit(
+        f"OFFLOAD_RATIO must be in [0, 1], got {os.environ['OFFLOAD_RATIO']!r}"
+    )
+config.update(
+    {
+        "cpu_offload": os.environ["CPU_OFFLOAD"] == "1",
+        "offload_granularity": os.environ["OFFLOAD_GRANULARITY"],
+        "offload_ratio": offload_ratio,
+        "t5_cpu_offload": os.environ["T5_CPU_OFFLOAD"] == "1",
+        "vae_cpu_offload": os.environ["VAE_CPU_OFFLOAD"] == "1",
+        "use_tiling_vae": os.environ["USE_TILING_VAE"] == "1",
+    }
+)
 
 integer_overrides = {
     "INFER_STEPS": "infer_steps",
@@ -159,6 +212,8 @@ save_result_path="${SAVE_RESULT_PATH:-${lightx2v_path}/save_results/output_light
 
 echo "GPUs: ${HIP_VISIBLE_DEVICES} (${expected_gpu_count} ranks)"
 echo "Parallel: SP=${seq_p_size}, attention=${seq_p_attn_type}, CFG=disabled"
+echo "Offload: ${OFFLOAD_GRANULARITY}; ratio=${OFFLOAD_RATIO}, DiT=${CPU_OFFLOAD}, T5=${T5_CPU_OFFLOAD}, VAE=${VAE_CPU_OFFLOAD}"
+echo "VAE: tiling=${USE_TILING_VAE}, parallel=$((expected_gpu_count > 1 ? 1 : 0)), MIOpen=${LIGHTX2V_AMD_MIOPEN}, channels_last_3d=${USE_CHANNELS_LAST_3D}"
 if (( rope_chunk_size > 0 )); then
     echo "RoPE: chunked at ${rope_chunk_size} sequence rows"
 else
