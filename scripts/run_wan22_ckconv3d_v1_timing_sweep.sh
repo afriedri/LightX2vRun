@@ -6,7 +6,8 @@ usage() {
 Usage:
   bash scripts/run_wan22_ckconv3d_v1_timing_sweep.sh [--image IMAGE]
 
-SWEEP_COUNTS may select unique values from 2,4,8,16.
+TIMING_SWEEP_COUNTS may select unique values from 2,4,8,16.
+TIMING_SWEEP_TAG and TIMING_RESULT_DIR override this task's output location.
 This sweep records stage timings only and never enables CK Conv3d shape collection.
 EOF
 }
@@ -42,11 +43,11 @@ done
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/.." && pwd)"
 model_run="${MODEL_RUN:-${repo_root}/lightx2vModelrun}"
-summary_script="${SUMMARY_SCRIPT:-${script_dir}/summarize_wan22_ckconv3d_timing.py}"
-sweep_counts="${SWEEP_COUNTS:-2,4,8,16}"
-sweep_tag="${SWEEP_TAG:-wan22_ckconv3d_v1_timing_$(date +%Y%m%d_%H%M%S)}"
-result_dir="${RESULT_DIR:-${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${sweep_tag}}"
-scale_gpu_groups="${SCALE_GPU_GROUPS:-1,2;15,14,13,12;0,1,2,3,4,5,6,7;0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
+summary_script="${TIMING_SUMMARY_SCRIPT:-${script_dir}/summarize_wan22_ckconv3d_timing.py}"
+sweep_counts="${TIMING_SWEEP_COUNTS:-2,4,8,16}"
+sweep_tag="${TIMING_SWEEP_TAG:-wan22_ckconv3d_v1_timing_$(date +%Y%m%d_%H%M%S)}"
+result_dir="${TIMING_RESULT_DIR:-${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${sweep_tag}}"
+scale_gpu_groups="${TIMING_GPU_GROUPS:-1,2;15,14,13,12;0,1,2,3,4,5,6,7;0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
 
 unset LIGHTX2V_CK_CONV3D_PROFILE_DIR PROFILE_TAG
 [[ -x "${model_run}" ]] || { echo "ERROR: launcher is not executable: ${model_run}" >&2; exit 1; }
@@ -62,7 +63,7 @@ fi
 
 IFS=';' read -r -a gpu_groups <<<"${scale_gpu_groups}"
 if [[ "${#gpu_groups[@]}" -ne 4 ]]; then
-    echo "ERROR: SCALE_GPU_GROUPS must contain four semicolon-separated groups for 2/4/8/16 GPUs" >&2
+    echo "ERROR: TIMING_GPU_GROUPS must contain four semicolon-separated groups for 2/4/8/16 GPUs" >&2
     exit 1
 fi
 declare -A gpu_group_by_count=(
@@ -98,10 +99,10 @@ declare -A seen_counts=()
 for count in "${counts[@]}"; do
     case "${count}" in
         2 | 4 | 8 | 16) ;;
-        *) echo "ERROR: SWEEP_COUNTS contains unsupported count ${count}" >&2; exit 1 ;;
+        *) echo "ERROR: TIMING_SWEEP_COUNTS contains unsupported count ${count}" >&2; exit 1 ;;
     esac
     [[ -z "${seen_counts[${count}]:-}" ]] || {
-        echo "ERROR: SWEEP_COUNTS contains duplicate count ${count}" >&2
+        echo "ERROR: TIMING_SWEEP_COUNTS contains duplicate count ${count}" >&2
         exit 1
     }
     seen_counts["${count}"]=1

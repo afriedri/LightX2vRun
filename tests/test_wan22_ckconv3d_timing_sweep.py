@@ -117,7 +117,11 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
                 encoding="utf-8",
             )
             fake_modelrun.chmod(0o755)
-            result_dir = root / "results"
+            stale_result_dir = root / "wan22_ckconv3d_targeted_replay_stale"
+            stale_result_dir.mkdir()
+            (stale_result_dir / "winners.csv").write_text("stale\n", encoding="utf-8")
+            output_dir = root / "outputs"
+            result_dir = output_dir / "test-wan22-timing"
             completed = subprocess.run(
                 ["bash", str(SWEEP), "--image", "registry.example/hot26:test"],
                 check=False,
@@ -127,8 +131,10 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
                     **os.environ,
                     "MODEL_RUN": str(fake_modelrun),
                     "CALL_LOG": str(call_log),
-                    "SWEEP_TAG": "test-wan22-timing",
-                    "RESULT_DIR": str(result_dir),
+                    "OUTPUT_DIR": str(output_dir),
+                    "TIMING_SWEEP_TAG": "test-wan22-timing",
+                    "SWEEP_TAG": "wan22_ckconv3d_targeted_replay_stale",
+                    "RESULT_DIR": str(stale_result_dir),
                     "LIGHTX2V_CK_CONV3D_PROFILE_DIR": "must-not-pass",
                     "PROFILE_TAG": "must-not-pass",
                 },
@@ -137,6 +143,7 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
             calls = [line.split("|") for line in call_log.read_text(encoding="utf-8").splitlines()]
             with (result_dir / "timings.csv").open(newline="", encoding="utf-8") as source:
                 rows = {row["metric"]: row for row in csv.DictReader(source)}
+            stale_contents = (stale_result_dir / "winners.csv").read_text(encoding="utf-8")
 
         self.assertEqual(
             [call[0] for call in calls],
@@ -150,6 +157,7 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
         self.assertTrue(all(call[1] == "registry.example/hot26:test" for call in calls))
         self.assertTrue(all(call[2:4] == ["unset", "unset"] for call in calls))
         self.assertTrue(all(call[4] == "--wan22-ckconv3d-v1-release" for call in calls))
+        self.assertEqual(stale_contents, "stale\n")
         self.assertEqual(list(rows["Image Encoder"]), ["metric", "2", "4", "8", "16", "unit"])
         self.assertTrue(all(rows["Encoders 合计"][str(scale)] == "6.100000" for scale in (2, 4, 8, 16)))
         self.assertTrue(all(rows["DiT 4 steps"][str(scale)] == "4.000000" for scale in (2, 4, 8, 16)))

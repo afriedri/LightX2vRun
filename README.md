@@ -112,7 +112,9 @@ for shape collection, but explicitly disables the CK Conv3d profile directory.
 It runs 2, 4, 8, and 16 GPUs sequentially and uses the Wan2.1 scale sweep's
 rank-critical-path calculation for encoder, four-step DiT, decoder, pipeline,
 and total timings. Results are written as `timings.csv` and `timings.md` beside
-the four raw logs.
+the four raw logs. Task-specific overrides use `TIMING_SWEEP_TAG`,
+`TIMING_RESULT_DIR`, `TIMING_SWEEP_COUNTS`, and `TIMING_GPU_GROUPS`; generic
+`SWEEP_TAG` and `RESULT_DIR` values left by shape/tuning tasks are ignored.
 
 ```bash
 bash scripts/run_wan22_ckconv3d_v1_timing_sweep.sh \
