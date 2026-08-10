@@ -115,6 +115,9 @@ and total timings. Results are written as `timings.csv` and `timings.md` beside
 the four raw logs. Task-specific overrides use `TIMING_SWEEP_TAG`,
 `TIMING_RESULT_DIR`, `TIMING_SWEEP_COUNTS`, and `TIMING_GPU_GROUPS`; generic
 `SWEEP_TAG` and `RESULT_DIR` values left by shape/tuning tasks are ignored.
+Wan2.2 has no standalone Wan2.1-style image/CLIP encoder stage, so its
+`Image Encoder` timing is reported as zero; image conditioning is measured by
+`VAE Encoder`.
 
 ```bash
 bash scripts/run_wan22_ckconv3d_v1_timing_sweep.sh \

@@ -69,6 +69,19 @@ def main() -> int:
             errors.append(f"missing {scale}-GPU log: {log_path}")
             continue
         results[scale] = parse_log(log_path)
+        # Wan2.2 I2V has no standalone CLIP/image-encoder stage. Its image
+        # conditioning is covered by VAE Encoder, so the absent Wan2.1 metric
+        # is a real zero rather than a truncated log.
+        if results[scale]["Image Encoder"] is None:
+            results[scale]["Image Encoder"] = 0.0
+        if (
+            results[scale]["Encoders 合计"] is None
+            and results[scale]["VAE Encoder"] is not None
+            and results[scale]["Text Encoder"] is not None
+        ):
+            results[scale]["Encoders 合计"] = (
+                results[scale]["VAE Encoder"] + results[scale]["Text Encoder"]
+            )
         missing = [metric for metric in METRICS if results[scale].get(metric) is None]
         if missing:
             errors.append(f"{scale}-GPU log is missing: {', '.join(missing)}")

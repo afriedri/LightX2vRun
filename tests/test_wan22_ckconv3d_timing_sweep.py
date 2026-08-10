@@ -106,7 +106,6 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
             fake_modelrun.write_text(
                 "#!/usr/bin/env bash\n"
                 "printf '%s|%s|%s|%s|%s\\n' \"$GPU_DEVICES\" \"$IMAGE\" \"${LIGHTX2V_CK_CONV3D_PROFILE_DIR-unset}\" \"${PROFILE_TAG-unset}\" \"$*\" >> \"$CALL_LOG\"\n"
-                "echo '[Profile] Single GPU - Level1_Log Run Image Encoder cost 1.000000 seconds'\n"
                 "echo '[Profile] Single GPU - Level1_Log Run VAE Encoder cost 2.000000 seconds'\n"
                 "echo '[Profile] Single GPU - Level1_Log Run Text Encoder cost 3.000000 seconds'\n"
                 "echo '[Profile] Single GPU - Level2_Log Run Encoders cost 6.100000 seconds'\n"
@@ -159,6 +158,7 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
         self.assertTrue(all(call[4] == "--wan22-ckconv3d-v1-release" for call in calls))
         self.assertEqual(stale_contents, "stale\n")
         self.assertEqual(list(rows["Image Encoder"]), ["metric", "2", "4", "8", "16", "unit"])
+        self.assertTrue(all(rows["Image Encoder"][str(scale)] == "0.000000" for scale in (2, 4, 8, 16)))
         self.assertTrue(all(rows["Encoders 合计"][str(scale)] == "6.100000" for scale in (2, 4, 8, 16)))
         self.assertTrue(all(rows["DiT 4 steps"][str(scale)] == "4.000000" for scale in (2, 4, 8, 16)))
         self.assertIn("timing sweep complete", completed.stdout)
