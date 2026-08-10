@@ -1,6 +1,44 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+usage() {
+    cat <<'EOF'
+Usage:
+  bash scripts/run_wan22_ckconv3d_v1_scale_sweep.sh [--image IMAGE]
+
+IMAGE can also be supplied as an exported environment variable or as:
+  IMAGE=registry/image:tag bash scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
+EOF
+}
+
+image_override="${IMAGE:-}"
+while (( $# > 0 )); do
+    case "$1" in
+        --image)
+            (( $# >= 2 )) || { echo "ERROR: --image requires a value" >&2; exit 2; }
+            image_override="$2"
+            shift 2
+            ;;
+        --image=*)
+            image_override="${1#--image=}"
+            shift
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: unsupported argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+[[ -z "${image_override}" || "${image_override}" != *[[:space:]]* ]] || {
+    echo "ERROR: image reference may not contain whitespace" >&2
+    exit 2
+}
+
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/.." && pwd)"
 model_run="${MODEL_RUN:-${repo_root}/lightx2vModelrun}"
@@ -18,6 +56,9 @@ if [[ -d "${result_dir}" ]] && [[ -n "$(find "${result_dir}" -mindepth 1 -maxdep
     exit 1
 fi
 mkdir -p "${result_dir}"
+if [[ -n "${image_override}" ]]; then
+    echo "Wan2.2 CK Conv3d image override: ${image_override}"
+fi
 
 IFS=';' read -r -a gpu_groups <<<"${scale_gpu_groups}"
 if [[ "${#gpu_groups[@]}" -ne 5 ]]; then
@@ -77,12 +118,17 @@ for count in "${counts[@]}"; do
         exit 1
     fi
     echo "[$(date +%H:%M:%S)] Wan2.2 CK Conv3d profile: ${count} GPUs (${selected})"
+    run_environment=(
+        GPU_DEVICES="${selected}"
+        PROFILE_TAG="${profile_tag}"
+        LIGHTX2V_CK_CONV3D_PROFILE_DIR="/workspace/LightX2V/save_results/ck_conv3d_profiles/${profile_tag}"
+        SAVE_RESULT_PATH="${output_path}"
+    )
+    if [[ -n "${image_override}" ]]; then
+        run_environment+=(IMAGE="${image_override}")
+    fi
     set +e
-    env \
-        GPU_DEVICES="${selected}" \
-        PROFILE_TAG="${profile_tag}" \
-        LIGHTX2V_CK_CONV3D_PROFILE_DIR="/workspace/LightX2V/save_results/ck_conv3d_profiles/${profile_tag}" \
-        SAVE_RESULT_PATH="${output_path}" \
+    env "${run_environment[@]}" \
         "${model_run}" --profile-wan22-ckconv3d-v1 2>&1 | tee "${log_path}"
     pipeline_status=("${PIPESTATUS[@]}")
     set -e

@@ -261,6 +261,29 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("scale sweep dry-run complete", completed.stdout)
 
+    def test_scale_sweep_passes_explicit_image_override(self):
+        image = "registry.example/lightx2v:wan22-ck-aot-final"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            completed = subprocess.run(
+                ["bash", str(SWEEP), "--image", image],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "DRY_RUN": "1",
+                    "SWEEP_COUNTS": "1",
+                    "SWEEP_TAG": "image_override_test",
+                    "OUTPUT_DIR": str(root / "outputs"),
+                    "RESULT_DIR": str(root / "results"),
+                },
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn(f"image override: {image}", completed.stdout)
+        self.assertIn(f"Image:          {image}", completed.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
