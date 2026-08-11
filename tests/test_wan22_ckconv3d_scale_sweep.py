@@ -33,8 +33,15 @@ def _route(*, calls: int, route: str = "ck") -> dict[str, object]:
     }
 
 
-def _write_profile(root: Path) -> Path:
-    profile = root / "profile_2gpu"
+def _write_profile(
+    root: Path,
+    *,
+    workload: str = "720p",
+    target_height: int = 720,
+    target_width: int = 1280,
+    profile_name: str | None = None,
+) -> Path:
+    profile = root / (profile_name or f"profile_{workload}_2gpu")
     profile.mkdir()
     snapshot_names = []
     for rank in range(2):
@@ -63,6 +70,12 @@ def _write_profile(root: Path) -> Path:
         json.dumps(
             {
                 "kind": "wan22_ck_conv3d_v1_profile_manifest",
+                "workload": workload,
+                "target_video_length": 81,
+                "target_height": target_height,
+                "target_width": target_width,
+                "fps": 16,
+                "duration_seconds": 5.0,
                 "world_size": 2,
                 "snapshots": sorted(snapshot_names),
             }
@@ -74,7 +87,11 @@ def _write_profile(root: Path) -> Path:
 
 
 class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
-    def run_config(self, gpu_count: int) -> tuple[dict[str, object], str]:
+    def run_config(
+        self,
+        gpu_count: int,
+        overrides: dict[str, str] | None = None,
+    ) -> tuple[dict[str, object], str]:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             base_config = root / "base.json"
@@ -95,6 +112,7 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
                     "RUNTIME_CONFIG_DIR": str(root / "runtime"),
                     "AITER_JIT_DIR": str(root / "aiter"),
                     "PROFILE_TAG": f"test_{gpu_count}gpu",
+                    **(overrides or {}),
                 },
             )
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
@@ -117,7 +135,29 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
                     "ring" if gpu_count == 16 else "ulysses",
                 )
                 self.assertEqual(config["self_attn_1_type"], "aiter_fav3_sage_bf16_attn")
+                self.assertEqual(config["target_video_length"], 81)
+                self.assertEqual(config["target_height"], 720)
+                self.assertEqual(config["target_width"], 1280)
+                self.assertEqual(config["fps"], 16)
                 self.assertIn("VAE resident, tiling=0", output)
+
+    def test_480p_profile_is_explicit_16fps_five_second_workload(self):
+        config, output = self.run_config(
+            2,
+            {
+                "PROFILE_WORKLOAD": "480p",
+                "TARGET_VIDEO_LENGTH": "81",
+                "TARGET_HEIGHT": "480",
+                "TARGET_WIDTH": "832",
+                "TARGET_FPS": "16",
+            },
+        )
+
+        self.assertEqual(config["target_video_length"], 81)
+        self.assertEqual(config["target_height"], 480)
+        self.assertEqual(config["target_width"], 832)
+        self.assertEqual(config["fps"], 16)
+        self.assertIn("Workload: 480p, 480x832, 81 frames @ 16 fps", output)
 
     def test_modelrun_selects_wan22_profile_wrapper_from_gpu_count(self):
         for gpu_count in (1, 2, 4, 8, 16):
@@ -171,6 +211,7 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
             manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
 
         self.assertEqual(len(contracts), 1)
+        self.assertEqual(contracts[0]["workloads"], "720p")
         self.assertEqual(contracts[0]["calls"], "5")
         self.assertEqual(contracts[0]["flops_per_call"], "155520")
         self.assertEqual(contracts[0]["projected_flops"], "777600")
@@ -180,9 +221,57 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
         self.assertEqual(len(routes), 4)
         self.assertEqual(manifest["kind"], "wan22_ck_conv3d_v1_scale_sweep_summary")
         self.assertEqual(manifest["world_sizes"], [2])
+        self.assertEqual(manifest["workloads"][0]["workload"], "720p")
         self.assertEqual(manifest["contract_count"], 1)
         self.assertEqual(manifest["ck_route_count"], 7)
         self.assertEqual(manifest["fallback_route_count"], 3)
+
+    def test_planner_combines_workloads_without_rejecting_same_world_size(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile_720p = _write_profile(root, workload="720p")
+            profile_480p = _write_profile(
+                root,
+                workload="480p",
+                target_height=480,
+                target_width=832,
+            )
+            output = root / "plan"
+            completed = subprocess.run(
+                [
+                    "python3",
+                    "-B",
+                    str(SUMMARY),
+                    "--inputs",
+                    str(profile_720p),
+                    str(profile_480p),
+                    "--output-dir",
+                    str(output),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            with (output / "full_tune_contracts.csv").open(
+                newline="", encoding="utf-8"
+            ) as handle:
+                [contract] = list(csv.DictReader(handle))
+            with (output / "routes.csv").open(newline="", encoding="utf-8") as handle:
+                routes = list(csv.DictReader(handle))
+            manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(contract["workloads"], "480p,720p")
+        self.assertEqual(contract["calls"], "10")
+        self.assertEqual(contract["projected_flops"], "1555200")
+        self.assertEqual({route["workload"] for route in routes}, {"480p", "720p"})
+        self.assertEqual(len(manifest["profiles"]), 2)
+        self.assertEqual(manifest["world_sizes"], [2])
+        self.assertEqual(
+            {workload["workload"] for workload in manifest["workloads"]},
+            {"480p", "720p"},
+        )
 
     def test_planner_rejects_incomplete_rank_phase_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -252,6 +341,7 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
                     "DRY_RUN": "1",
                     "MODEL_RUN": "/bin/true",
                     "SWEEP_COUNTS": "1,2",
+                    "SWEEP_WORKLOADS": "480p",
                     "SWEEP_TAG": "dry_run_test",
                     "OUTPUT_DIR": str(root / "outputs"),
                     "RESULT_DIR": str(root / "results"),
@@ -274,6 +364,7 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
                     **os.environ,
                     "DRY_RUN": "1",
                     "SWEEP_COUNTS": "1",
+                    "SWEEP_WORKLOADS": "480p",
                     "SWEEP_TAG": "image_override_test",
                     "OUTPUT_DIR": str(root / "outputs"),
                     "RESULT_DIR": str(root / "results"),
@@ -283,6 +374,38 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn(f"image override: {image}", completed.stdout)
         self.assertIn(f"Image:          {image}", completed.stdout)
+
+    def test_scale_sweep_passes_480p_workload_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            model_run = root / "model-run"
+            model_run.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf 'WORKLOAD=%s HEIGHT=%s WIDTH=%s FRAMES=%s FPS=%s\\n' "
+                '"${PROFILE_WORKLOAD}" "${TARGET_HEIGHT}" "${TARGET_WIDTH}" '
+                '"${TARGET_VIDEO_LENGTH}" "${TARGET_FPS}"\n',
+                encoding="utf-8",
+            )
+            model_run.chmod(0o755)
+            completed = subprocess.run(
+                ["bash", str(SWEEP)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "DRY_RUN": "1",
+                    "MODEL_RUN": str(model_run),
+                    "SWEEP_COUNTS": "2",
+                    "SWEEP_WORKLOADS": "480p",
+                    "SWEEP_TAG": "test_480p_contract",
+                    "OUTPUT_DIR": str(root / "outputs"),
+                    "RESULT_DIR": str(root / "results"),
+                },
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("WORKLOAD=480p HEIGHT=480 WIDTH=832 FRAMES=81 FPS=16", completed.stdout)
 
 
 if __name__ == "__main__":

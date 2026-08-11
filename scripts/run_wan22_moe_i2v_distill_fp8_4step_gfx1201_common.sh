@@ -185,6 +185,7 @@ integer_overrides = {
     "TARGET_VIDEO_LENGTH": "target_video_length",
     "TARGET_HEIGHT": "target_height",
     "TARGET_WIDTH": "target_width",
+    "TARGET_FPS": "fps",
 }
 for environment_name, config_name in integer_overrides.items():
     value = os.environ.get(environment_name)

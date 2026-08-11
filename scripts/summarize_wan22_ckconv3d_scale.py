@@ -15,6 +15,7 @@ from typing import Any, Iterable
 WORLD_SIZES = (1, 2, 4, 8, 16)
 PLAN_FIELDS = (
     "contract_id",
+    "workloads",
     "calls",
     "priority_score",
     "flops_per_call",
@@ -54,6 +55,11 @@ PLAN_FIELDS = (
 )
 ROUTE_FIELDS = (
     "contract_id",
+    "workload",
+    "target_video_length",
+    "target_height",
+    "target_width",
+    "fps",
     "world_size",
     "rank",
     "phase",
@@ -125,7 +131,7 @@ def contract_id(key: tuple[Any, ...]) -> str:
     return f"wan22_{hashlib.sha256(payload.encode()).hexdigest()[:16]}"
 
 
-def load_profile(path: Path) -> tuple[int, list[dict[str, Any]]]:
+def load_profile(path: Path) -> tuple[dict[str, Any], int, list[dict[str, Any]]]:
     manifest_path = path / "manifest.json"
     if not manifest_path.is_file():
         raise ValueError(f"missing profile manifest: {manifest_path}")
@@ -135,6 +141,25 @@ def load_profile(path: Path) -> tuple[int, list[dict[str, Any]]]:
     world_size = int(manifest["world_size"])
     if world_size not in WORLD_SIZES:
         raise ValueError(f"unsupported world size in {manifest_path}: {world_size}")
+    workload = str(manifest.get("workload", "720p")).strip()
+    if not workload:
+        raise ValueError(f"missing workload in {manifest_path}")
+    workload_spec = {
+        "workload": workload,
+        "target_video_length": int(manifest.get("target_video_length", 81)),
+        "target_height": int(manifest.get("target_height", 720)),
+        "target_width": int(manifest.get("target_width", 1280)),
+        "fps": int(manifest.get("fps", 16)),
+    }
+    if any(int(value) <= 0 for key, value in workload_spec.items() if key != "workload"):
+        raise ValueError(f"invalid workload dimensions in {manifest_path}: {workload_spec}")
+    if (workload_spec["target_video_length"] - 1) % 4:
+        raise ValueError(
+            f"target_video_length does not satisfy the Wan VAE 4n+1 contract in {manifest_path}"
+        )
+    workload_spec["duration_seconds"] = (
+        workload_spec["target_video_length"] - 1
+    ) / workload_spec["fps"]
     expected = {
         (rank, phase)
         for rank in range(world_size)
@@ -193,6 +218,7 @@ def load_profile(path: Path) -> tuple[int, list[dict[str, Any]]]:
                 continue
             normalized = dict(route)
             normalized.update(
+                **workload_spec,
                 world_size=world_size,
                 rank=rank,
                 phase=phase,
@@ -200,7 +226,7 @@ def load_profile(path: Path) -> tuple[int, list[dict[str, Any]]]:
                 wgp=int(payload.get("wgp", 24) or 24),
             )
             routes.append(normalized)
-    return world_size, routes
+    return workload_spec, world_size, routes
 
 
 def write_csv(path: Path, fields: Iterable[str], rows: Iterable[dict[str, Any]]) -> None:
@@ -212,15 +238,26 @@ def write_csv(path: Path, fields: Iterable[str], rows: Iterable[dict[str, Any]])
 
 
 def build_summary(profile_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
-    profiles: dict[int, Path] = {}
+    profiles: dict[tuple[str, int], Path] = {}
+    workload_specs: dict[str, dict[str, Any]] = {}
     routes: list[dict[str, Any]] = []
     for directory in profile_dirs:
-        world_size, profile_routes = load_profile(directory)
-        if world_size in profiles:
+        workload_spec, world_size, profile_routes = load_profile(directory)
+        workload = str(workload_spec["workload"])
+        profile_key = (workload, world_size)
+        if profile_key in profiles:
             raise ValueError(
-                f"duplicate world size {world_size}: {profiles[world_size]} and {directory}"
+                f"duplicate workload/world size {profile_key}: "
+                f"{profiles[profile_key]} and {directory}"
             )
-        profiles[world_size] = directory
+        previous_spec = workload_specs.get(workload)
+        if previous_spec is not None and previous_spec != workload_spec:
+            raise ValueError(
+                f"inconsistent workload metadata for {workload}: "
+                f"{previous_spec} and {workload_spec}"
+            )
+        workload_specs[workload] = workload_spec
+        profiles[profile_key] = directory
         routes.extend(profile_routes)
     if not routes:
         raise ValueError("profile inputs contain no Conv3D routes")
@@ -245,17 +282,25 @@ def build_summary(profile_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
         gfx, wgp, dtype, input_shape, weight_shape, output, stride, padding, dilation, groups = key
         identifier = contract_id(key)
         per_call = flops_per_call(input_shape, weight_shape, output)
-        rank_calls: dict[tuple[int, int], int] = defaultdict(int)
+        rank_calls: dict[tuple[str, int, int], int] = defaultdict(int)
         phases: set[str] = set()
         route_names: set[str] = set()
+        contract_workloads: set[str] = set()
         for route in contract_routes:
             calls = int(route["calls"])
-            rank_calls[(int(route["world_size"]), int(route["rank"]))] += calls
+            workload = str(route["workload"])
+            rank_calls[(workload, int(route["world_size"]), int(route["rank"]))] += calls
             phases.add(str(route["phase"]))
             route_names.add(str(route["route"]))
+            contract_workloads.add(workload)
             route_rows.append(
                 {
                     "contract_id": identifier,
+                    "workload": workload,
+                    "target_video_length": route["target_video_length"],
+                    "target_height": route["target_height"],
+                    "target_width": route["target_width"],
+                    "fps": route["fps"],
                     "world_size": route["world_size"],
                     "rank": route["rank"],
                     "phase": route["phase"],
@@ -272,7 +317,17 @@ def build_summary(profile_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
                     "dilation": shape_text(dilation),
                 }
             )
-        calls = max(rank_calls.values())
+        # GPU counts are alternative scale points for one workload, so retain
+        # their rank-critical maximum. Distinct workloads are additive inputs
+        # to the future hot-kernel coverage plan.
+        calls = sum(
+            max(
+                rank_calls[(candidate_workload, world_size, rank)]
+                for candidate_workload, world_size, rank in rank_calls
+                if candidate_workload == workload
+            )
+            for workload in contract_workloads
+        )
         projected = calls * per_call
         reasons = ["runtime_observed"]
         if any(route != "ck" for route in route_names):
@@ -280,6 +335,7 @@ def build_summary(profile_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
         plan_rows.append(
             {
                 "contract_id": identifier,
+                "workloads": ",".join(sorted(contract_workloads)),
                 "calls": calls,
                 "priority_score": f"{projected:.12g}",
                 "flops_per_call": per_call,
@@ -324,6 +380,7 @@ def build_summary(profile_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
         key=lambda row: (
             -int(row["projected_flops"]),
             row["contract_id"],
+            row["workload"],
             row["world_size"],
             row["rank"],
         )
@@ -334,7 +391,16 @@ def build_summary(profile_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
     manifest = {
         "kind": "wan22_ck_conv3d_v1_scale_sweep_summary",
         "profile_dirs": [str(path.resolve()) for path in profile_dirs],
-        "world_sizes": sorted(profiles),
+        "profiles": [
+            {
+                "workload": workload,
+                "world_size": world_size,
+                "path": str(path.resolve()),
+            }
+            for (workload, world_size), path in sorted(profiles.items())
+        ],
+        "workloads": [workload_specs[name] for name in sorted(workload_specs)],
+        "world_sizes": sorted({world_size for _, world_size in profiles}),
         "observed_route_count": len(routes),
         "contract_count": len(plan_rows),
         "ck_route_count": sum(int(route["calls"]) for route in routes if route.get("route") == "ck"),

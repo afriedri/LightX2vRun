@@ -19,6 +19,35 @@ if [[ ! "${profile_tag}" =~ ^[A-Za-z0-9._-]+$ ]]; then
     exit 1
 fi
 
+export TARGET_VIDEO_LENGTH="${TARGET_VIDEO_LENGTH:-81}"
+export TARGET_HEIGHT="${TARGET_HEIGHT:-720}"
+export TARGET_WIDTH="${TARGET_WIDTH:-1280}"
+export TARGET_FPS="${TARGET_FPS:-16}"
+for target_name in TARGET_VIDEO_LENGTH TARGET_HEIGHT TARGET_WIDTH TARGET_FPS; do
+    target_value="${!target_name}"
+    if [[ ! "${target_value}" =~ ^[1-9][0-9]*$ ]]; then
+        echo "ERROR: ${target_name} must be a positive integer, got ${target_value}" >&2
+        exit 1
+    fi
+done
+if (( (TARGET_VIDEO_LENGTH - 1) % 4 != 0 )); then
+    echo "ERROR: TARGET_VIDEO_LENGTH must satisfy the Wan VAE 4n+1 contract, got ${TARGET_VIDEO_LENGTH}" >&2
+    exit 1
+fi
+if [[ -n "${PROFILE_WORKLOAD:-}" ]]; then
+    export PROFILE_WORKLOAD
+elif [[ "${TARGET_HEIGHT}x${TARGET_WIDTH}x${TARGET_VIDEO_LENGTH}x${TARGET_FPS}" == "720x1280x81x16" ]]; then
+    export PROFILE_WORKLOAD=720p
+elif [[ "${TARGET_HEIGHT}x${TARGET_WIDTH}x${TARGET_VIDEO_LENGTH}x${TARGET_FPS}" == "480x832x81x16" ]]; then
+    export PROFILE_WORKLOAD=480p
+else
+    export PROFILE_WORKLOAD="${TARGET_HEIGHT}x${TARGET_WIDTH}_${TARGET_VIDEO_LENGTH}f_${TARGET_FPS}fps"
+fi
+if [[ ! "${PROFILE_WORKLOAD}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "ERROR: PROFILE_WORKLOAD may contain only letters, digits, dot, underscore, and dash" >&2
+    exit 1
+fi
+
 # Match the Wan2.1 CK release's VAE policy. This makes the captured shapes
 # independent of spatial tiling and keeps the VAE resident for the whole run.
 export LIGHTX2V_VAE_CONV3D_BACKEND=Aiter_CK_Conv3d_v1
@@ -37,6 +66,7 @@ export LIGHTX2V_CK_CONV3D_PROFILE_DIR="${LIGHTX2V_CK_CONV3D_PROFILE_DIR:-/worksp
 export SAVE_RESULT_PATH="${SAVE_RESULT_PATH:-${LIGHTX2V_CK_CONV3D_PROFILE_DIR}/output.mp4}"
 
 echo "Wan2.2 CK Conv3d v1 profile: ${expected_gpu_count} GPU(s)"
+echo "Workload: ${PROFILE_WORKLOAD}, ${TARGET_HEIGHT}x${TARGET_WIDTH}, ${TARGET_VIDEO_LENGTH} frames @ ${TARGET_FPS} fps"
 echo "Offload: DiT=block/${OFFLOAD_RATIO}, T5=${T5_CPU_OFFLOAD}; VAE resident, tiling=0"
 echo "VAE: MIOpen=0, channels_last_3d=0, spatial_parallel=$((expected_gpu_count > 1 ? 1 : 0))"
 echo "Profile: ${LIGHTX2V_CK_CONV3D_PROFILE_DIR}"
@@ -156,6 +186,12 @@ if missing_snapshots:
 manifest = {
     "kind": "wan22_ck_conv3d_v1_profile_manifest",
     "model": "wan2.2_moe_distill",
+    "workload": os.environ["PROFILE_WORKLOAD"],
+    "target_video_length": int(os.environ["TARGET_VIDEO_LENGTH"]),
+    "target_height": int(os.environ["TARGET_HEIGHT"]),
+    "target_width": int(os.environ["TARGET_WIDTH"]),
+    "fps": int(os.environ["TARGET_FPS"]),
+    "duration_seconds": (int(os.environ["TARGET_VIDEO_LENGTH"]) - 1) / int(os.environ["TARGET_FPS"]),
     "world_size": world_size,
     "vae_parallel": world_size > 1,
     "cpu_offload": True,

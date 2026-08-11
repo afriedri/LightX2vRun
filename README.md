@@ -105,10 +105,34 @@ The launcher accepts 1, 2, 4, 8, or 16 GPUs and selects the CK AOT image by defa
 GPU_DEVICES=0 ./lightx2vModelrun --wan21-ckconv3d-v1-release
 ```
 
+## Wan2.2 CK Conv3d v1 shape sweep
+
+The Wan2.2 shape sweep collects the resident, untiled VAE Conv3d contracts for
+both production resolutions by default: `720x1280` and Wan's `480x832`. Both
+workloads use 16 fps and 81 frames, which represents five seconds under Wan's
+`4n+1` VAE frame contract: the first frame plus 80 frame intervals. Each
+workload runs on 2, 4, 8, and 16 GPUs, with workload-specific profile tags and
+logs so snapshots cannot contaminate another resolution.
+
+```bash
+bash scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
+
+# Collect only the new 480P contracts when the 720P evidence already exists.
+SWEEP_WORKLOADS=480p \
+  bash scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
+```
+
+`SWEEP_WORKLOADS` accepts unique values from `720p,480p`, and `SWEEP_COUNTS`
+continues to select from `2,4,8,16`. The summary records workload metadata in
+its manifest and route CSV. For hot-kernel prioritization it keeps the
+rank-critical maximum across GPU scale points of one workload, then adds the
+critical counts of distinct workloads.
+
 ## Wan2.2 CK Conv3d v1 timing sweep
 
 The Wan2.2 timing sweep runs the same resident, untiled CK-v1 VAE workload used
-for shape collection, but explicitly disables the CK Conv3d profile directory.
+for the 720P shape collection row, but explicitly disables the CK Conv3d
+profile directory.
 It runs 2, 4, 8, and 16 GPUs sequentially and uses the Wan2.1 scale sweep's
 rank-critical-path calculation for encoder, four-step DiT, decoder, pipeline,
 and total timings. Results are written as `timings.csv` and `timings.md` beside
