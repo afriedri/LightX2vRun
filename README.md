@@ -107,26 +107,29 @@ GPU_DEVICES=0 ./lightx2vModelrun --wan21-ckconv3d-v1-release
 
 ## Wan2.2 CK Conv3d v1 shape sweep
 
-The Wan2.2 shape sweep collects the resident, untiled VAE Conv3d contracts for
-both production resolutions by default: `720x1280` and Wan's `480x832`. Both
-workloads use 16 fps and 81 frames, which represents five seconds under Wan's
-`4n+1` VAE frame contract: the first frame plus 80 frame intervals. Each
-workload runs on 2, 4, 8, and 16 GPUs, with workload-specific profile tags and
-logs so snapshots cannot contaminate another resolution.
+The Wan2.2 shape sweep collects resident, untiled VAE Conv3d contracts. Its
+existing `720p` and `480p` workloads use 81 frames at 16 fps. The additional
+`480p121f` workload uses `480x832`, 121 frames, and 24 fps. Each represents five
+seconds under Wan's `4n+1` VAE frame contract. Workloads run on 2, 4, 8, and 16
+GPUs with separate profile tags and logs.
 
 ```bash
+# Default: only 480P/121f/24fps on 2,4,8,16 GPUs.
 bash scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
 
-# Collect only the new 480P contracts when the 720P evidence already exists.
-SWEEP_WORKLOADS=480p \
+# Collect only 480P/121f/24fps; do not repeat either existing 81f workload.
+SWEEP_WORKLOADS=480p121f SWEEP_COUNTS=2,4,8,16 \
   bash scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
 ```
 
-`SWEEP_WORKLOADS` accepts unique values from `720p,480p`, and `SWEEP_COUNTS`
-continues to select from `2,4,8,16`. The summary records workload metadata in
-its manifest and route CSV. For hot-kernel prioritization it keeps the
-rank-critical maximum across GPU scale points of one workload, then adds the
-critical counts of distinct workloads.
+`SWEEP_WORKLOADS` accepts unique values from `720p,480p,480p121f`; its default
+is `480p121f` so an ordinary run cannot repeat the completed 81f profiles.
+`SWEEP_COUNTS` selects from `2,4,8,16`.
+Use `SWEEP_RESULT_DIR` and `SWEEP_SUMMARY_DIR` for explicit output overrides;
+generic `RESULT_DIR` and `SUMMARY_DIR` values left by another task are ignored.
+The summary records workload metadata in its manifest and route CSV. For hot
+kernel prioritization it keeps the rank-critical maximum across GPU scale
+points of one workload, then adds the critical counts of distinct workloads.
 
 ## Wan2.2 CK Conv3d v1 timing sweep
 

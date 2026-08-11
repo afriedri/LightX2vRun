@@ -10,8 +10,10 @@ IMAGE can also be supplied as an exported environment variable or as:
   IMAGE=registry/image:tag bash scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
 
 SWEEP_COUNTS may select from 2,4,8,16. A legacy 1-GPU entry is ignored.
-SWEEP_WORKLOADS may select unique values from 720p,480p and defaults to both.
-The 480p workload is 480x832, 81 frames, and 16 fps (5 seconds).
+SWEEP_WORKLOADS may select unique values from 720p,480p,480p121f.
+The default is 480p121f so completed 81f workloads are not repeated.
+480p121f is 480x832, 121 frames, and 24 fps (5 seconds).
+Use SWEEP_RESULT_DIR and SWEEP_SUMMARY_DIR for task-specific output overrides.
 EOF
 }
 
@@ -79,13 +81,13 @@ if (( ${#counts[@]} == 0 )); then
 else
     sweep_tag="${SWEEP_TAG:-${default_sweep_tag}}"
 fi
-requested_sweep_workloads="${SWEEP_WORKLOADS:-720p,480p}"
+requested_sweep_workloads="${SWEEP_WORKLOADS:-480p121f}"
 IFS=',' read -r -a requested_workloads <<<"${requested_sweep_workloads}"
 workloads=()
 declare -A seen_workloads=()
 for workload in "${requested_workloads[@]}"; do
     case "${workload}" in
-        720p | 480p) ;;
+        720p | 480p | 480p121f) ;;
         *)
             echo "ERROR: SWEEP_WORKLOADS contains unsupported workload ${workload}" >&2
             exit 1
@@ -101,15 +103,25 @@ done
 declare -A target_height_by_workload=(
     [720p]=720
     [480p]=480
+    [480p121f]=480
 )
 declare -A target_width_by_workload=(
     [720p]=1280
     [480p]=832
+    [480p121f]=832
 )
-target_video_length=81
-target_fps=16
-result_dir="${RESULT_DIR:-${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${sweep_tag}}"
+declare -A target_video_length_by_workload=(
+    [720p]=81
+    [480p]=81
+    [480p121f]=121
+)
+declare -A target_fps_by_workload=(
+    [720p]=16
+    [480p]=16
+    [480p121f]=24
+)
 host_output_dir="${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}"
+result_dir="${SWEEP_RESULT_DIR:-${host_output_dir}/${sweep_tag}}"
 scale_gpu_groups="${SCALE_GPU_GROUPS:-1,2;15,14,13,12;0,1,2,3,4,5,6,7;0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
 
 [[ -x "${model_run}" ]] || { echo "ERROR: launcher is not executable: ${model_run}" >&2; exit 1; }
@@ -176,6 +188,8 @@ profile_roots=()
 for workload in "${workloads[@]}"; do
     target_height="${target_height_by_workload[${workload}]}"
     target_width="${target_width_by_workload[${workload}]}"
+    target_video_length="${target_video_length_by_workload[${workload}]}"
+    target_fps="${target_fps_by_workload[${workload}]}"
     for count in "${counts[@]}"; do
         selected="${gpu_group_by_count[${count}]}"
         profile_tag="${sweep_tag}_${workload}_${count}gpu"
@@ -231,7 +245,7 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
     exit 0
 fi
 
-summary_dir="${SUMMARY_DIR:-${result_dir}/sweep_summary}"
+summary_dir="${SWEEP_SUMMARY_DIR:-${result_dir}/sweep_summary}"
 PYTHONDONTWRITEBYTECODE=1 python3 -B "${summary_script}" \
     --inputs "${profile_roots[@]}" \
     --output-dir "${summary_dir}"
