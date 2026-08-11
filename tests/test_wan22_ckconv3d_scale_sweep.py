@@ -199,7 +199,7 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
                     f"run_wan22_ckconv3d_v1_profile_{gpu_count}gpu.sh",
                     completed.stdout,
                 )
-                self.assertIn("CKConv3dV1-Hot26-AOTFinal", completed.stdout)
+                self.assertIn("CKConv3dV1-480P-Hot26-AOTFinal", completed.stdout)
 
     def test_planner_uses_rank_critical_path_without_summing_ranks(self):
         with tempfile.TemporaryDirectory() as temporary:

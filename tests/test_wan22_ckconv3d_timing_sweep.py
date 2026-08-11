@@ -13,6 +13,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MODEL_RUN = REPO_ROOT / "lightx2vModelrun"
 RELEASE = REPO_ROOT / "scripts/run_wan22_ckconv3d_v1_release.sh"
 SWEEP = REPO_ROOT / "scripts/run_wan22_ckconv3d_v1_timing_sweep.sh"
+DUAL_480P_SWEEP = (
+    REPO_ROOT / "scripts/run_wan22_ckconv3d_v1_480p_5s_timing_sweep.sh"
+)
 
 
 class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
@@ -94,7 +97,7 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
                     env=env,
                 )
                 self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-                self.assertIn("CKConv3dV1-Hot26-AOTFinal", completed.stdout)
+                self.assertIn("CKConv3dV1-480P-Hot26-AOTFinal", completed.stdout)
                 self.assertIn("run_wan22_ckconv3d_v1_release.sh", completed.stdout)
                 self.assertIn("Mode:           wan22_ckconv3d_v1_release", completed.stdout)
 
@@ -163,6 +166,123 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
         self.assertTrue(all(rows["DiT 4 steps"][str(scale)] == "4.000000" for scale in (2, 4, 8, 16)))
         self.assertIn("timing sweep complete", completed.stdout)
         self.assertIn("Image Encoder: N/A (disabled", completed.stdout)
+
+    def test_480p_five_second_sweep_separates_fps_and_frame_tables(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake_modelrun = root / "lightx2vModelrun"
+            call_log = root / "calls.log"
+            fake_modelrun.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\\n' "
+                '"$GPU_DEVICES" "$TARGET_WIDTH" "$TARGET_HEIGHT" "$TARGET_FPS" '
+                '"$TARGET_VIDEO_LENGTH" "${LIGHTX2V_CK_CONV3D_PROFILE_DIR-unset}" '
+                '"${PROFILE_TAG-unset}" "${PROFILE_WORKLOAD-unset}" "$*" "$IMAGE" '
+                '>> "$CALL_LOG"\n'
+                "echo '[Profile] Single GPU - Level1_Log Run VAE Encoder cost 2.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log Run Text Encoder cost 3.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level2_Log Run Encoders cost 6.100000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log Run VAE Decoder cost 7.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log RUN pipeline cost 18.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log Total Cost cost 20.000000 seconds'\n"
+                "echo 'DiT summary: status=complete, steps=4/4, total=4.000s, "
+                "average=1.000s/it, throughput=1.0000it/s'\n",
+                encoding="utf-8",
+            )
+            fake_modelrun.chmod(0o755)
+            output_dir = root / "outputs"
+            result_dir = output_dir / "test-wan22-480p-5s"
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(DUAL_480P_SWEEP),
+                    "--image",
+                    "registry.example/480p-hot26:test",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "MODEL_RUN": str(fake_modelrun),
+                    "CALL_LOG": str(call_log),
+                    "OUTPUT_DIR": str(output_dir),
+                    "TIMING_SWEEP_TAG": "test-wan22-480p-5s",
+                    "LIGHTX2V_CK_CONV3D_PROFILE_DIR": "must-not-pass",
+                    "PROFILE_TAG": "must-not-pass",
+                    "PROFILE_WORKLOAD": "must-not-pass",
+                },
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            calls = [
+                line.split("|")
+                for line in call_log.read_text(encoding="utf-8").splitlines()
+            ]
+            with (result_dir / "workloads.csv").open(
+                newline="", encoding="utf-8"
+            ) as source:
+                workload_rows = list(csv.DictReader(source))
+            with (
+                result_dir / "480p_16fps_81f" / "timings.csv"
+            ).open(newline="", encoding="utf-8") as source:
+                fps16_rows = {row["metric"]: row for row in csv.DictReader(source)}
+            with (
+                result_dir / "480p_24fps_121f" / "timings.csv"
+            ).open(newline="", encoding="utf-8") as source:
+                fps24_rows = {row["metric"]: row for row in csv.DictReader(source)}
+            combined_table = (result_dir / "timings.md").read_text(encoding="utf-8")
+
+        expected_groups = [
+            "1,2",
+            "15,14,13,12",
+            "0,1,2,3,4,5,6,7",
+            "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15",
+        ]
+        self.assertEqual([call[0] for call in calls], expected_groups * 2)
+        self.assertTrue(all(call[1:3] == ["832", "480"] for call in calls))
+        self.assertTrue(all(call[3:5] == ["16", "81"] for call in calls[:4]))
+        self.assertTrue(all(call[3:5] == ["24", "121"] for call in calls[4:]))
+        self.assertTrue(all(call[5:8] == ["unset", "unset", "unset"] for call in calls))
+        self.assertTrue(all(call[8] == "--wan22-ckconv3d-v1-release" for call in calls))
+        self.assertTrue(all(call[9] == "registry.example/480p-hot26:test" for call in calls))
+        self.assertEqual(
+            workload_rows,
+            [
+                {
+                    "workload": "480p_16fps_81f",
+                    "width": "832",
+                    "height": "480",
+                    "fps": "16",
+                    "frames": "81",
+                    "duration_seconds": "5",
+                },
+                {
+                    "workload": "480p_24fps_121f",
+                    "width": "832",
+                    "height": "480",
+                    "fps": "24",
+                    "frames": "121",
+                    "duration_seconds": "5",
+                },
+            ],
+        )
+        for rows in (fps16_rows, fps24_rows):
+            self.assertTrue(
+                all(
+                    rows["DiT 4 steps"][str(scale)] == "4.000000"
+                    for scale in (2, 4, 8, 16)
+                )
+            )
+            self.assertTrue(
+                all(
+                    rows["Total Cost"][str(scale)] == "20.000000"
+                    for scale in (2, 4, 8, 16)
+                )
+            )
+        self.assertIn("480P — 16 FPS — 81 frames — 5 seconds", combined_table)
+        self.assertIn("480P — 24 FPS — 121 frames — 5 seconds", combined_table)
+        self.assertEqual(combined_table.count("| metric | 2 | 4 | 8 | 16 |"), 2)
+        self.assertIn("Two tables", completed.stdout)
 
 
 if __name__ == "__main__":

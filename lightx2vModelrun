@@ -2,14 +2,14 @@
 set -Eeuo pipefail
 
 LEGACY_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1"
-CK_CONV3D_V1_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260810-CKConv3dV1-Hot26-AOTFinal"
+CK_CONV3D_V1_IMAGE="compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260811-CKConv3dV1-480P-Hot26-AOTFinal"
 IMAGE="${IMAGE:-${LEGACY_IMAGE}}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
 EXPECTED_SAGE_AITER_REV="${EXPECTED_SAGE_AITER_REV:-24aa37dd72f98be15ad21deb97ddfd4ab8fc09b1}"
 EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-14a87614f21f414e9e3a66339c3469640c550a4f}"
-EXPECTED_CK_AITER_REV="${EXPECTED_CK_AITER_REV:-df54d2dd97919f821fe8c05f0be540713be7d4ac}"
-EXPECTED_CK_LIGHTX2V_REV="${EXPECTED_CK_LIGHTX2V_REV:-9b72869c9a33f64f92cbab56e3449266eb130ce8}"
+EXPECTED_CK_AITER_REV="${EXPECTED_CK_AITER_REV:-2233789c20fffa7c79194af77ace22bd7392f1f0}"
+EXPECTED_CK_LIGHTX2V_REV="${EXPECTED_CK_LIGHTX2V_REV:-a1d27217970373bdab1e28771470a493b4c0f89d}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 
@@ -65,6 +65,8 @@ Usage:
                                       Run Wan2.2 with resident untiled CK-v1 VAE on 2/4/8/16 GPUs
   ./scripts/run_wan22_ckconv3d_v1_timing_sweep.sh
                                       Measure Wan2.2 CK-v1 stage timings on 2/4/8/16 GPUs
+  ./scripts/run_wan22_ckconv3d_v1_480p_5s_timing_sweep.sh
+                                      Measure 480P 16fps/81f and 24fps/121f on 2/4/8/16 GPUs
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
                                       Run the Wan2.1 720p workload behind the published 4090 171s result
   GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090-sage

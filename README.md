@@ -148,8 +148,31 @@ zero; image conditioning is measured by `VAE Encoder`.
 
 ```bash
 bash scripts/run_wan22_ckconv3d_v1_timing_sweep.sh \
-  --image ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260810-CKConv3dV1-Hot26-AOTFinal
+  --image compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260811-CKConv3dV1-480P-Hot26-AOTFinal
 ```
+
+### 480P five-second, two-frame-rate timing sweep
+
+The 480P five-second launcher runs two explicit workloads so FPS and frame
+count cannot be confused:
+
+| workload | resolution | FPS | frames | duration formula |
+| --- | --- | ---: | ---: | ---: |
+| `480p_16fps_81f` | 480×832 | 16 | 81 | `(81 - 1) / 16 = 5s` |
+| `480p_24fps_121f` | 480×832 | 24 | 121 | `(121 - 1) / 24 = 5s` |
+
+Each workload runs sequentially on 2, 4, 8, and 16 GPUs. Its raw logs, CSV,
+and Markdown table are kept in a workload-named subdirectory. The final
+`timings.md` contains two separately titled tables, and `workloads.csv` records
+the resolution, FPS, frame count, and duration metadata.
+
+```bash
+bash scripts/run_wan22_ckconv3d_v1_480p_5s_timing_sweep.sh \
+  --image compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260811-CKConv3dV1-480P-Hot26-AOTFinal
+```
+
+Use the existing `TIMING_SWEEP_COUNTS`, `TIMING_GPU_GROUPS`,
+`TIMING_SWEEP_TAG`, and `TIMING_RESULT_DIR` overrides when needed.
 
 ## Reproduce the RTX 4090 171-second workload
 

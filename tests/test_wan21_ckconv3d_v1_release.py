@@ -77,7 +77,10 @@ class Wan21CKConv3dV1ReleaseTest(unittest.TestCase):
             env=env,
         )
 
-        self.assertIn("gfx1201-R9600-FP8-260810-CKConv3dV1-Hot26-AOTFinal", result.stdout)
+        self.assertIn(
+            "gfx1201-R9600-FP8-260811-CKConv3dV1-480P-Hot26-AOTFinal",
+            result.stdout,
+        )
         self.assertIn("run_wan21_ckconv3d_v1_release.sh", result.stdout)
         self.assertIn("Mode:           wan21_ckconv3d_v1_release", result.stdout)
 
