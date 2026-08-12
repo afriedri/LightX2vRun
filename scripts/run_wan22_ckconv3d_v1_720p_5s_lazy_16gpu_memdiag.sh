@@ -30,6 +30,7 @@ repo_root="$(cd -- "${script_dir}/.." && pwd)"
 lazy_config_host="${repo_root}/configs/wan22_moe_i2v_distill_fp8_4step_sage_gfx1201_lazy.json"
 lazy_config_container="/workspace/LightX2VRun/configs/wan22_moe_i2v_distill_fp8_4step_sage_gfx1201_lazy.json"
 shared_launcher="${script_dir}/run_wan22_ckconv3d_v1_720p_5s_shape_sweep.sh"
+lazy_model_run="${script_dir}/run_wan22_lazy_16gpu_modelrun.sh"
 
 [[ -f "${lazy_config_host}" ]] || {
     echo "ERROR: lazy-load config not found: ${lazy_config_host}" >&2
@@ -37,6 +38,10 @@ shared_launcher="${script_dir}/run_wan22_ckconv3d_v1_720p_5s_shape_sweep.sh"
 }
 [[ -f "${shared_launcher}" ]] || {
     echo "ERROR: shared Wan2.2 launcher not found: ${shared_launcher}" >&2
+    exit 1
+}
+[[ -x "${lazy_model_run}" ]] || {
+    echo "ERROR: dedicated lazy model launcher is not executable: ${lazy_model_run}" >&2
     exit 1
 }
 
@@ -66,6 +71,9 @@ export SWEEP_COUNTS=16
 export SWEEP_WORKLOADS=720p121f
 export SWEEP_TAG="${SWEEP_TAG:-wan22_lazy16_memdiag_$(date +%Y%m%d_%H%M%S)}"
 export BASE_CONFIG_JSON="${lazy_config_container}"
+export LIGHTX2V_LAZY_REAL_MODEL_RUN="${MODEL_RUN:-${repo_root}/lightx2vModelrun}"
+export MODEL_RUN="${lazy_model_run}"
+export IMAGE="${IMAGE:-compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260812-CKConv3dV1-Hot28-AOTFinal}"
 
 # Keep this diagnostic isolated from inherited production offload settings.
 export CPU_OFFLOAD=1
@@ -83,6 +91,7 @@ export MEMORY_MONITOR_GPU_LIMIT_GIB="${MEMORY_MONITOR_GPU_LIMIT_GIB:-32}"
 echo "Wan2.2 dedicated lazy-load memory diagnostic"
 echo "Workload: 720x1280, 121 frames @ 24 FPS; 16 GPUs (${gpu_devices})"
 echo "Memory policy: DiT lazy=1, block offload=1.0; T5 CPU/lazy=1/0; VAE GPU phase-load"
+echo "Lazy compatibility: Run-only attention interface shim enabled"
 echo "Monitor thresholds: host=${MEMORY_MONITOR_HOST_LIMIT_GIB} GiB, per-GPU=${MEMORY_MONITOR_GPU_LIMIT_GIB} GiB"
 echo "Result tag: ${SWEEP_TAG}"
 

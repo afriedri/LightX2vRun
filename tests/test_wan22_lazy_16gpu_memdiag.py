@@ -11,6 +11,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = REPO_ROOT / "scripts/run_wan22_ckconv3d_v1_720p_5s_lazy_16gpu_memdiag.sh"
 CONFIG = REPO_ROOT / "configs/wan22_moe_i2v_distill_fp8_4step_sage_gfx1201_lazy.json"
+MODEL_RUN_WRAPPER = REPO_ROOT / "scripts/run_wan22_lazy_16gpu_modelrun.sh"
+COMPATIBILITY_ROOT = REPO_ROOT / "python_compat/wan22_lazy"
 
 
 class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
@@ -32,7 +34,7 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
             call_log = root / "calls.jsonl"
             fake_modelrun.write_text(
                 "#!/usr/bin/env bash\n"
-                "python3 -c 'import json, os; print(json.dumps({key: os.environ.get(key) for key in (\"GPU_DEVICES\", \"BASE_CONFIG_JSON\", \"PROFILE_WORKLOAD\", \"TARGET_VIDEO_LENGTH\", \"TARGET_HEIGHT\", \"TARGET_WIDTH\", \"TARGET_FPS\", \"MEMORY_MONITOR\", \"OFFLOAD_RATIO\")}, sort_keys=True))' >> \"$CALL_LOG\"\n",
+                "python3 -c 'import json, os, sys; print(json.dumps({**{key: os.environ.get(key) for key in (\"GPU_DEVICES\", \"BASE_CONFIG_JSON\", \"PROFILE_WORKLOAD\", \"TARGET_VIDEO_LENGTH\", \"TARGET_HEIGHT\", \"TARGET_WIDTH\", \"TARGET_FPS\", \"MEMORY_MONITOR\", \"OFFLOAD_RATIO\")}, \"argv\": sys.argv[1:]}, sort_keys=True))' \"$@\" >> \"$CALL_LOG\"\n",
                 encoding="utf-8",
             )
             fake_modelrun.chmod(0o755)
@@ -68,7 +70,50 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
         self.assertEqual(calls[0]["TARGET_FPS"], "24")
         self.assertEqual(calls[0]["MEMORY_MONITOR"], "1")
         self.assertEqual(calls[0]["OFFLOAD_RATIO"], "1.0")
+        self.assertEqual(
+            calls[0]["argv"],
+            [
+                "/bin/bash",
+                "/workspace/LightX2VRun/scripts/run_wan22_lazy_16gpu_inside.sh",
+            ],
+        )
         self.assertIn("Wan2.2 dedicated lazy-load memory diagnostic", completed.stdout)
+
+    def test_attention_compatibility_adds_noop_disk_loader(self):
+        completed = subprocess.run(
+            [
+                "python3",
+                "-S",
+                "-c",
+                "import runpy, sys, types; "
+                "template_module = types.ModuleType('lightx2v_platform.ops.attn.template'); "
+                "template_module.AttnWeightTemplate = type('AttnWeightTemplate', (), {}); "
+                "sys.modules['lightx2v_platform.ops.attn.template'] = template_module; "
+                "runpy.run_path(sys.argv[1]); "
+                "template = template_module.AttnWeightTemplate; "
+                "assert callable(getattr(template, 'load_state_dict_from_disk', None)); "
+                "assert template.load_state_dict_from_disk(object(), 0) is None",
+                str(COMPATIBILITY_ROOT / "sitecustomize.py"),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+    def test_dedicated_modelrun_rejects_other_modes(self):
+        completed = subprocess.run(
+            ["bash", str(MODEL_RUN_WRAPPER), "--wan22-ckconv3d-v1-release"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("only accepts --profile-wan22-ckconv3d-v1", completed.stderr)
 
     def test_launcher_rejects_non_16gpu_selection(self):
         completed = subprocess.run(
