@@ -150,6 +150,27 @@ The summary records workload metadata in its manifest and route CSV. For hot
 kernel prioritization it keeps the rank-critical maximum across GPU scale
 points of one workload, then adds the critical counts of distinct workloads.
 
+### Upload a Wan2.2 memory diagnostic bundle
+
+The memory uploader accepts the sweep result directory; no manual `tar` command
+is needed. It collects every `*_memory.jsonl`, its `.summary.json`, and the
+matching inference `.log`, builds a deterministic archive, uploads it with
+boto3, and verifies the remote size and SHA256 metadata with `head_object`.
+
+```bash
+export MINIO_ACCESS_KEY=...
+export MINIO_SECRET_KEY=...
+
+python3 scripts/upload_wan22_memory_bundle.py \
+  /disk/ssd/lightx2v-runtime/outputs/wan22_memdiag_hot28_20260812_081324
+```
+
+The default target is
+`s3://aitertunecollection/wan22/memory-diagnostics/<run>/<run>_memory_diagnostics.tar.gz`
+through `http://compiler.hvat-ai.com:9000`. Standard
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` credentials are also supported.
+Use `--package-only` to create and verify the local archive without uploading.
+
 ## Wan2.2 CK Conv3d v1 timing sweep
 
 The Wan2.2 timing sweep runs the same resident, untiled CK-v1 VAE workload used
