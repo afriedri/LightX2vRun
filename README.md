@@ -120,10 +120,29 @@ bash scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
 # Collect only 480P/121f/24fps; do not repeat either existing 81f workload.
 SWEEP_WORKLOADS=480p121f SWEEP_COUNTS=2,4,8,16 \
   bash scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
+
+# Collect the new 720P/121f/24fps workload only.
+bash scripts/run_wan22_ckconv3d_v1_720p_5s_shape_sweep.sh
 ```
 
-`SWEEP_WORKLOADS` accepts unique values from `720p,480p,480p121f`; its default
-is `480p121f` so an ordinary run cannot repeat the completed 81f profiles.
+`SWEEP_WORKLOADS` accepts unique values from `720p,480p,480p121f,720p121f`; its
+default is `480p121f` so an ordinary run cannot repeat the completed 81f
+profiles. The dedicated `run_wan22_ckconv3d_v1_720p_5s_shape_sweep.sh` wrapper
+selects only `720p121f`, namely `720x1280`, 121 frames, and 24 fps.
+
+The unified 720P five-second entry exposes an explicit mode switch. `shape`
+is the default and collects Conv3D contracts; `timing` runs the same
+`720x1280`, 121-frame, 24-FPS workload through the release path with shape
+collection disabled:
+
+```bash
+bash scripts/run_wan22_ckconv3d_v1_720p_5s_sweep.sh --mode shape
+bash scripts/run_wan22_ckconv3d_v1_720p_5s_sweep.sh --mode timing
+```
+
+`SWEEP_MODE=timing` is equivalent to `--mode timing`. Shape and timing use
+separate `SWEEP_*` and `TIMING_*` output overrides, so their results cannot
+accidentally overwrite each other.
 `SWEEP_COUNTS` selects from `2,4,8,16`.
 Use `SWEEP_RESULT_DIR` and `SWEEP_SUMMARY_DIR` for explicit output overrides;
 generic `RESULT_DIR` and `SUMMARY_DIR` values left by another task are ignored.

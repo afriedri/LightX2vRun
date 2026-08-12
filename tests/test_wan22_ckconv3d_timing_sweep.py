@@ -16,6 +16,7 @@ SWEEP = REPO_ROOT / "scripts/run_wan22_ckconv3d_v1_timing_sweep.sh"
 DUAL_480P_SWEEP = (
     REPO_ROOT / "scripts/run_wan22_ckconv3d_v1_480p_5s_timing_sweep.sh"
 )
+UNIFIED_720P_SWEEP = REPO_ROOT / "scripts/run_wan22_ckconv3d_v1_720p_5s_sweep.sh"
 
 
 class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
@@ -284,6 +285,86 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
         self.assertEqual(combined_table.count("| metric | 2 | 4 | 8 | 16 |"), 2)
         self.assertIn("Two tables", completed.stdout)
 
+    def test_720p_unified_sweep_timing_mode_passes_121f_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fake_modelrun = root / "lightx2vModelrun"
+            call_log = root / "calls.log"
+            fake_modelrun.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\\n' "
+                '"$GPU_DEVICES" "$TARGET_WIDTH" "$TARGET_HEIGHT" "$TARGET_FPS" '
+                '"$TARGET_VIDEO_LENGTH" "${LIGHTX2V_CK_CONV3D_PROFILE_DIR-unset}" '
+                '"${PROFILE_TAG-unset}" "${PROFILE_WORKLOAD-unset}" "$*" "$IMAGE" '
+                '>> "$CALL_LOG"\n'
+                "echo '[Profile] Single GPU - Level1_Log Run VAE Encoder cost 2.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log Run Text Encoder cost 3.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level2_Log Run Encoders cost 6.100000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log Run VAE Decoder cost 7.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log RUN pipeline cost 18.000000 seconds'\n"
+                "echo '[Profile] Single GPU - Level1_Log Total Cost cost 20.000000 seconds'\n"
+                "echo 'DiT summary: status=complete, steps=4/4, total=4.000s, "
+                "average=1.000s/it, throughput=1.0000it/s'\n",
+                encoding="utf-8",
+            )
+            fake_modelrun.chmod(0o755)
+            output_dir = root / "outputs"
+            result_dir = output_dir / "test-wan22-720p-switch-timing"
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(UNIFIED_720P_SWEEP),
+                    "--mode",
+                    "timing",
+                    "--image",
+                    "registry.example/720p-hot26:test",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "MODEL_RUN": str(fake_modelrun),
+                    "CALL_LOG": str(call_log),
+                    "OUTPUT_DIR": str(output_dir),
+                    "TIMING_SWEEP_TAG": "test-wan22-720p-switch-timing",
+                    "LIGHTX2V_CK_CONV3D_PROFILE_DIR": "must-not-pass",
+                    "PROFILE_TAG": "must-not-pass",
+                    "PROFILE_WORKLOAD": "must-not-pass",
+                },
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            calls = [
+                line.split("|")
+                for line in call_log.read_text(encoding="utf-8").splitlines()
+            ]
+            with (result_dir / "workloads.csv").open(
+                newline="", encoding="utf-8"
+            ) as source:
+                workload_rows = list(csv.DictReader(source))
+            manifest = json.loads(
+                (result_dir / "timing_manifest.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(len(calls), 4)
+        self.assertTrue(all(call[1:5] == ["1280", "720", "24", "121"] for call in calls))
+        self.assertTrue(all(call[5:8] == ["unset", "unset", "unset"] for call in calls))
+        self.assertTrue(all(call[8] == "--wan22-ckconv3d-v1-release" for call in calls))
+        self.assertTrue(all(call[9] == "registry.example/720p-hot26:test" for call in calls))
+        self.assertEqual(
+            workload_rows,
+            [
+                {
+                    "workload": "720p_24fps_121f",
+                    "width": "1280",
+                    "height": "720",
+                    "fps": "24",
+                    "frames": "121",
+                    "duration_seconds": "5",
+                }
+            ],
+        )
+        self.assertEqual(manifest["kind"], "wan22_720p_24fps_5s_timing_sweep")
 
 if __name__ == "__main__":
     unittest.main()

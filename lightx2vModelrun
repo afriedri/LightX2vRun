@@ -61,6 +61,10 @@ Usage:
                                       Profile real Wan2.2 CK-v1 VAE shapes on 1/2/4/8/16 GPUs
   ./scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
                                       Collect Wan2.2 CK-v1 shapes on 2/4/8/16 GPUs sequentially
+  ./scripts/run_wan22_ckconv3d_v1_720p_5s_shape_sweep.sh
+                                      Collect 720P/24fps/121f shapes on 2/4/8/16 GPUs
+  ./scripts/run_wan22_ckconv3d_v1_720p_5s_sweep.sh --mode timing
+                                      Measure the same 720P/24fps/121f workload
   GPU_DEVICES=0,1,2,3 ./lightx2vModelrun --wan22-ckconv3d-v1-release
                                       Run Wan2.2 with resident untiled CK-v1 VAE on 2/4/8/16 GPUs
   ./scripts/run_wan22_ckconv3d_v1_timing_sweep.sh

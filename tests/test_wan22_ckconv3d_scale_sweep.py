@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MODEL_RUN = REPO_ROOT / "lightx2vModelrun"
 SUMMARY = REPO_ROOT / "scripts/summarize_wan22_ckconv3d_scale.py"
 SWEEP = REPO_ROOT / "scripts/run_wan22_ckconv3d_v1_scale_sweep.sh"
+SHAPE_SWEEP_720P_5S = REPO_ROOT / "scripts/run_wan22_ckconv3d_v1_720p_5s_shape_sweep.sh"
 SCRIPTS = REPO_ROOT / "scripts"
 
 
@@ -178,6 +179,24 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
         self.assertEqual(config["target_width"], 832)
         self.assertEqual(config["fps"], 24)
         self.assertIn("Workload: 480p121f, 480x832, 121 frames @ 24 fps", output)
+
+    def test_720p121f_profile_is_explicit_24fps_five_second_workload(self):
+        config, output = self.run_config(
+            2,
+            {
+                "PROFILE_WORKLOAD": "",
+                "TARGET_VIDEO_LENGTH": "121",
+                "TARGET_HEIGHT": "720",
+                "TARGET_WIDTH": "1280",
+                "TARGET_FPS": "24",
+            },
+        )
+
+        self.assertEqual(config["target_video_length"], 121)
+        self.assertEqual(config["target_height"], 720)
+        self.assertEqual(config["target_width"], 1280)
+        self.assertEqual(config["fps"], 24)
+        self.assertIn("Workload: 720p121f, 720x1280, 121 frames @ 24 fps", output)
 
     def test_modelrun_selects_wan22_profile_wrapper_from_gpu_count(self):
         for gpu_count in (1, 2, 4, 8, 16):
@@ -482,6 +501,43 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("WORKLOAD=480p HEIGHT=480 WIDTH=832 FRAMES=81 FPS=16", completed.stdout)
+
+    def test_720p_five_second_shape_wrapper_passes_121f_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            model_run = root / "model-run"
+            model_run.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf 'WORKLOAD=%s HEIGHT=%s WIDTH=%s FRAMES=%s FPS=%s\\n' "
+                '"${PROFILE_WORKLOAD}" "${TARGET_HEIGHT}" "${TARGET_WIDTH}" '
+                '"${TARGET_VIDEO_LENGTH}" "${TARGET_FPS}"\n',
+                encoding="utf-8",
+            )
+            model_run.chmod(0o755)
+            completed = subprocess.run(
+                [str(SHAPE_SWEEP_720P_5S)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "DRY_RUN": "1",
+                    "MODEL_RUN": str(model_run),
+                    "SWEEP_COUNTS": "2",
+                    "SWEEP_TAG": "test_720p121f_contract",
+                    "OUTPUT_DIR": str(root / "outputs"),
+                    "SWEEP_RESULT_DIR": str(root / "results"),
+                },
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertEqual(
+            completed.stdout.count(
+                "WORKLOAD=720p121f HEIGHT=720 WIDTH=1280 FRAMES=121 FPS=24"
+            ),
+            1,
+        )
+        self.assertIn("scale sweep dry-run complete", completed.stdout)
 
     def test_scale_sweep_defaults_to_only_480p121f_without_repeating_81f(self):
         with tempfile.TemporaryDirectory() as temporary:

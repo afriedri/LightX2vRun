@@ -10,9 +10,10 @@ IMAGE can also be supplied as an exported environment variable or as:
   IMAGE=registry/image:tag bash scripts/run_wan22_ckconv3d_v1_scale_sweep.sh
 
 SWEEP_COUNTS may select from 2,4,8,16. A legacy 1-GPU entry is ignored.
-SWEEP_WORKLOADS may select unique values from 720p,480p,480p121f.
+SWEEP_WORKLOADS may select unique values from 720p,480p,480p121f,720p121f.
 The default is 480p121f so completed 81f workloads are not repeated.
 480p121f is 480x832, 121 frames, and 24 fps (5 seconds).
+720p121f is 720x1280, 121 frames, and 24 fps (5 seconds).
 Use SWEEP_RESULT_DIR and SWEEP_SUMMARY_DIR for task-specific output overrides.
 EOF
 }
@@ -87,7 +88,7 @@ workloads=()
 declare -A seen_workloads=()
 for workload in "${requested_workloads[@]}"; do
     case "${workload}" in
-        720p | 480p | 480p121f) ;;
+        720p | 480p | 480p121f | 720p121f) ;;
         *)
             echo "ERROR: SWEEP_WORKLOADS contains unsupported workload ${workload}" >&2
             exit 1
@@ -104,21 +105,25 @@ declare -A target_height_by_workload=(
     [720p]=720
     [480p]=480
     [480p121f]=480
+    [720p121f]=720
 )
 declare -A target_width_by_workload=(
     [720p]=1280
     [480p]=832
     [480p121f]=832
+    [720p121f]=1280
 )
 declare -A target_video_length_by_workload=(
     [720p]=81
     [480p]=81
     [480p121f]=121
+    [720p121f]=121
 )
 declare -A target_fps_by_workload=(
     [720p]=16
     [480p]=16
     [480p121f]=24
+    [720p121f]=24
 )
 host_output_dir="${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}"
 result_dir="${SWEEP_RESULT_DIR:-${host_output_dir}/${sweep_tag}}"
