@@ -105,6 +105,39 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
+    def test_lazy_fp8_compatibility_casts_cuda_bias_to_infer_dtype(self):
+        completed = subprocess.run(
+            [
+                "python3",
+                "-S",
+                "-c",
+                "import runpy, sys, types; "
+                "attention_module = types.ModuleType('lightx2v_platform.ops.attn.template'); "
+                "attention_module.AttnWeightTemplate = type('AttnWeightTemplate', (), {}); "
+                "mm_module = types.ModuleType('lightx2v.common.ops.mm.mm_weight'); "
+                "mm_module.torch = types.SimpleNamespace(float32='fp32'); "
+                "calls = []; "
+                "mm_module.MMWeightQuantTemplate = type('MMWeightQuantTemplate', (), {'post_process': lambda self: calls.append('original')}); "
+                "sys.modules['lightx2v_platform.ops.attn.template'] = attention_module; "
+                "sys.modules['lightx2v.common.ops.mm.mm_weight'] = mm_module; "
+                "runpy.run_path(sys.argv[1]); "
+                "buffer = types.SimpleNamespace(dtype='fp32', to=lambda dtype: calls.append(('cast', dtype)) or types.SimpleNamespace(dtype=dtype)); "
+                "weight = types.SimpleNamespace(lazy_load=True, bias_force_fp32=False, infer_dtype='bf16', bias_cuda_buffer=buffer); "
+                "mm_module.MMWeightQuantTemplate.post_process(weight); "
+                "assert calls == ['original', ('cast', 'bf16')], calls; "
+                "assert weight.bias_cuda_buffer.dtype == 'bf16'",
+                str(COMPATIBILITY_ROOT / "sitecustomize.py"),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
     def test_dedicated_modelrun_rejects_other_modes(self):
         completed = subprocess.run(
             ["bash", str(MODEL_RUN_WRAPPER), "--wan22-ckconv3d-v1-release"],
