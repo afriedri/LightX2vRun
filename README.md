@@ -167,7 +167,7 @@ zero; image conditioning is measured by `VAE Encoder`.
 
 ```bash
 bash scripts/run_wan22_ckconv3d_v1_timing_sweep.sh \
-  --image compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260811-CKConv3dV1-480P-Hot26-AOTFinal
+  --image compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260812-CKConv3dV1-Hot28-AOTFinal
 ```
 
 ### 480P five-second, two-frame-rate timing sweep
@@ -187,7 +187,7 @@ the resolution, FPS, frame count, and duration metadata.
 
 ```bash
 bash scripts/run_wan22_ckconv3d_v1_480p_5s_timing_sweep.sh \
-  --image compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260811-CKConv3dV1-480P-Hot26-AOTFinal
+  --image compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260812-CKConv3dV1-Hot28-AOTFinal
 ```
 
 Use the existing `TIMING_SWEEP_COUNTS`, `TIMING_GPU_GROUPS`,

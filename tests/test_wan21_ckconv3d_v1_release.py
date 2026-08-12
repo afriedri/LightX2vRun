@@ -78,7 +78,7 @@ class Wan21CKConv3dV1ReleaseTest(unittest.TestCase):
         )
 
         self.assertIn(
-            "gfx1201-R9600-FP8-260811-CKConv3dV1-480P-Hot26-AOTFinal",
+            "gfx1201-R9600-FP8-260812-CKConv3dV1-Hot28-AOTFinal",
             result.stdout,
         )
         self.assertIn("run_wan21_ckconv3d_v1_release.sh", result.stdout)

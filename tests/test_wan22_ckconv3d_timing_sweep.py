@@ -98,7 +98,7 @@ class Wan22CKConv3dTimingSweepTest(unittest.TestCase):
                     env=env,
                 )
                 self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-                self.assertIn("CKConv3dV1-480P-Hot26-AOTFinal", completed.stdout)
+                self.assertIn("CKConv3dV1-Hot28-AOTFinal", completed.stdout)
                 self.assertIn("run_wan22_ckconv3d_v1_release.sh", completed.stdout)
                 self.assertIn("Mode:           wan22_ckconv3d_v1_release", completed.stdout)
 
