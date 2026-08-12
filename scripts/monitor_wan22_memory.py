@@ -280,9 +280,20 @@ def read_optional_text(path: Path) -> str | None:
         return None
 
 
+def drm_card_index(name: str) -> int | None:
+    """Return a DRM card index while rejecting connector entries."""
+    match = re.fullmatch(r"card([0-9]+)", name)
+    return int(match.group(1)) if match else None
+
+
 def sample_gpus() -> list[dict[str, Any]]:
     cards = []
-    for card_path in sorted(Path("/sys/class/drm").glob("card[0-9]*"), key=lambda path: int(path.name[4:])):
+    indexed_card_paths = [
+        (index, path)
+        for path in Path("/sys/class/drm").glob("card*")
+        if (index := drm_card_index(path.name)) is not None
+    ]
+    for _, card_path in sorted(indexed_card_paths):
         device_path = card_path / "device"
         vendor = read_optional_int(device_path / "vendor")
         if vendor != 0x1002:
