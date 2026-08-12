@@ -13,7 +13,8 @@ and 16 GPUs:
 This is a workload-specific wrapper around the Wan2.2 shape sweep. It reuses
 the existing GPU groups, profile collection, and rank-critical hot-contract
 summary. SWEEP_COUNTS, SCALE_GPU_GROUPS, SWEEP_TAG, SWEEP_RESULT_DIR, and
-SWEEP_SUMMARY_DIR are passed through to the shared sweep.
+SWEEP_SUMMARY_DIR are passed through to the shared sweep. Per-run memory
+sampling starts automatically; set MEMORY_MONITOR=0 to disable it.
 EOF
 }
 

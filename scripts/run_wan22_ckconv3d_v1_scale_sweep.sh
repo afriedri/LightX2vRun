@@ -15,6 +15,7 @@ The default is 480p121f so completed 81f workloads are not repeated.
 480p121f is 480x832, 121 frames, and 24 fps (5 seconds).
 720p121f is 720x1280, 121 frames, and 24 fps (5 seconds).
 Use SWEEP_RESULT_DIR and SWEEP_SUMMARY_DIR for task-specific output overrides.
+Set MEMORY_MONITOR=0 to disable the per-run RSS/PSS/cgroup/VRAM sampler.
 EOF
 }
 
@@ -50,6 +51,20 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/.." && pwd)"
 model_run="${MODEL_RUN:-${repo_root}/lightx2vModelrun}"
 summary_script="${SUMMARY_SCRIPT:-${script_dir}/summarize_wan22_ckconv3d_scale.py}"
+memory_monitor_script="${MEMORY_MONITOR_SCRIPT:-${script_dir}/monitor_wan22_memory.py}"
+memory_monitor_enabled="${MEMORY_MONITOR:-1}"
+memory_monitor_interval="${MEMORY_MONITOR_INTERVAL:-1.0}"
+memory_monitor_start_timeout="${MEMORY_MONITOR_START_TIMEOUT:-900}"
+memory_monitor_host_limit_gib="${MEMORY_MONITOR_HOST_LIMIT_GIB:-512}"
+memory_monitor_gpu_limit_gib="${MEMORY_MONITOR_GPU_LIMIT_GIB:-32}"
+memory_monitor_container="${MEMORY_MONITOR_CONTAINER:-${CONTAINER_NAME:-lightx2v-gfx1201}}"
+case "${memory_monitor_enabled}" in
+    0 | 1) ;;
+    *)
+        echo "ERROR: MEMORY_MONITOR must be 0 or 1, got ${memory_monitor_enabled}" >&2
+        exit 2
+        ;;
+esac
 requested_sweep_counts="${SWEEP_COUNTS:-2,4,8,16}"
 IFS=',' read -r -a requested_counts <<<"${requested_sweep_counts}"
 counts=()
@@ -131,6 +146,9 @@ scale_gpu_groups="${SCALE_GPU_GROUPS:-1,2;15,14,13,12;0,1,2,3,4,5,6,7;0,1,2,3,4,
 
 [[ -x "${model_run}" ]] || { echo "ERROR: launcher is not executable: ${model_run}" >&2; exit 1; }
 [[ -f "${summary_script}" ]] || { echo "ERROR: Wan2.2 sweep summary not found: ${summary_script}" >&2; exit 1; }
+if [[ "${memory_monitor_enabled}" == "1" ]]; then
+    [[ -f "${memory_monitor_script}" ]] || { echo "ERROR: Wan2.2 memory monitor not found: ${memory_monitor_script}" >&2; exit 1; }
+fi
 if [[ -d "${result_dir}" ]] && [[ -n "$(find "${result_dir}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
     echo "ERROR: result directory is not empty: ${result_dir}" >&2
     exit 1
@@ -189,6 +207,56 @@ for count in "${counts[@]}"; do
     seen_counts["${count}"]=1
 done
 
+memory_monitor_pid=
+stop_memory_monitor() {
+    local monitor_pid="${memory_monitor_pid:-}"
+    if [[ -n "${monitor_pid}" ]]; then
+        if kill -0 "${monitor_pid}" 2>/dev/null; then
+            kill "${monitor_pid}" 2>/dev/null || true
+        fi
+        wait "${monitor_pid}" 2>/dev/null || true
+    fi
+    memory_monitor_pid=
+}
+trap stop_memory_monitor EXIT
+
+start_memory_monitor() {
+    local ranks="$1"
+    local inference_log="$2"
+    local memory_output="$3"
+    if [[ "${memory_monitor_enabled}" != "1" || "${DRY_RUN:-0}" == "1" ]]; then
+        return
+    fi
+    PYTHONDONTWRITEBYTECODE=1 python3 -B "${memory_monitor_script}" \
+        --container "${memory_monitor_container}" \
+        --log "${inference_log}" \
+        --output "${memory_output}" \
+        --interval "${memory_monitor_interval}" \
+        --start-timeout "${memory_monitor_start_timeout}" \
+        --expected-ranks "${ranks}" \
+        --host-limit-gib "${memory_monitor_host_limit_gib}" \
+        --gpu-limit-gib "${memory_monitor_gpu_limit_gib}" &
+    memory_monitor_pid=$!
+    echo "Memory monitor: pid=${memory_monitor_pid}, output=${memory_output}"
+}
+
+wait_memory_monitor() {
+    local monitor_pid="${memory_monitor_pid:-}"
+    local monitor_status=0
+    if [[ -z "${monitor_pid}" ]]; then
+        return
+    fi
+    set +e
+    wait "${monitor_pid}"
+    monitor_status=$?
+    set -e
+    memory_monitor_pid=
+    if (( monitor_status != 0 )); then
+        echo "ERROR: memory monitor failed with status ${monitor_status}" >&2
+        return "${monitor_status}"
+    fi
+}
+
 profile_roots=()
 for workload in "${workloads[@]}"; do
     target_height="${target_height_by_workload[${workload}]}"
@@ -201,6 +269,7 @@ for workload in "${workloads[@]}"; do
         profile_dir="${host_output_dir}/ck_conv3d_profiles/${profile_tag}"
         output_path="/workspace/LightX2V/save_results/${profile_tag}.mp4"
         log_path="${result_dir}/${workload}_${count}gpu.log"
+        memory_output_path="${result_dir}/${workload}_${count}gpu_memory.jsonl"
         if [[ "${DRY_RUN:-0}" != "1" && -e "${profile_dir}" ]]; then
             echo "ERROR: profile directory already exists: ${profile_dir}" >&2
             echo "Use a fresh SWEEP_TAG so old rank snapshots cannot contaminate this sweep." >&2
@@ -221,22 +290,26 @@ for workload in "${workloads[@]}"; do
         if [[ -n "${image_override}" ]]; then
             run_environment+=(IMAGE="${image_override}")
         fi
+        start_memory_monitor "${count}" "${log_path}" "${memory_output_path}"
         set +e
         env "${run_environment[@]}" \
             "${model_run}" --profile-wan22-ckconv3d-v1 2>&1 | tee "${log_path}"
         pipeline_status=("${PIPESTATUS[@]}")
         set -e
         if (( pipeline_status[0] != 0 )); then
+            stop_memory_monitor
             echo "ERROR: ${workload}/${count}-GPU profile failed; see ${log_path}" >&2
             exit "${pipeline_status[0]}"
         fi
         if (( pipeline_status[1] != 0 )); then
+            stop_memory_monitor
             echo "ERROR: could not write ${log_path}" >&2
             exit "${pipeline_status[1]}"
         fi
         if [[ "${DRY_RUN:-0}" == "1" ]]; then
             continue
         fi
+        wait_memory_monitor
         [[ -f "${profile_dir}/manifest.json" ]] || {
             echo "ERROR: profile manifest missing: ${profile_dir}/manifest.json" >&2
             exit 1
@@ -258,3 +331,6 @@ echo "Wan2.2 CK Conv3d scale sweep complete: ${sweep_tag}"
 echo "Logs: ${result_dir}"
 echo "Profiles: ${host_output_dir}/ck_conv3d_profiles/${sweep_tag}_<workload>_*gpu"
 echo "Summary: ${summary_dir}"
+if [[ "${memory_monitor_enabled}" == "1" ]]; then
+    echo "Memory: ${result_dir}/<workload>_<count>gpu_memory.jsonl"
+fi
