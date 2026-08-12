@@ -18,7 +18,12 @@ def _patch_if_loaded() -> bool:
     module = sys.modules.get(_TARGET_MODULE)
     if module is None:
         return False
-    template = module.AttnWeightTemplate
+    # During import, Python inserts a partially initialized module into
+    # sys.modules before executing its class definitions. Do not inspect the
+    # class until the module body has finished.
+    template = getattr(module, "AttnWeightTemplate", None)
+    if template is None:
+        return False
     if not hasattr(template, "load_state_dict_from_disk"):
 
         def _load_state_dict_from_disk(
