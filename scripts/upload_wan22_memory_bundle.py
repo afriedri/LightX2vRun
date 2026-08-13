@@ -20,6 +20,7 @@ DEFAULT_ENDPOINT = "http://compiler.hvat-ai.com:9000"
 DEFAULT_BUCKET = "aitertunecollection"
 DEFAULT_PREFIX = "wan22/memory-diagnostics"
 EXPERIMENT_A_PREFIX = "wan22/experiment-a"
+B0_B1_PREFIX = "wan22/experiment-b0-b1"
 MEMORY_SUFFIX = "_memory.jsonl"
 SUMMARY_SUFFIX = ".summary.json"
 
@@ -120,6 +121,26 @@ def experiment_a_paths(
     return result_dir, artifacts
 
 
+def b0_b1_paths(
+    result_dir: Path, expected_ranks: int
+) -> tuple[Path, list[Path]]:
+    result_dir = result_dir.expanduser().resolve()
+    if not result_dir.is_dir():
+        raise ValueError(f"B0/B1 result directory not found: {result_dir}")
+
+    artifacts: list[Path] = []
+    for arm in ("b0", "b1"):
+        _, arm_artifacts = experiment_a_paths(result_dir / arm, expected_ranks)
+        artifacts.extend(arm_artifacts)
+
+    for required_name in ("b0_b1_comparison.json", "b0_b1_comparison.log"):
+        path = result_dir / required_name
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f"missing or empty B0/B1 artifact: {path}")
+        artifacts.append(path)
+    return result_dir, artifacts
+
+
 def _add_regular_file(archive: tarfile.TarFile, source: Path, arcname: str) -> None:
     info = tarfile.TarInfo(arcname)
     info.size = source.stat().st_size
@@ -139,9 +160,14 @@ def build_archive(
     overwrite: bool = False,
     *,
     experiment_a: bool = False,
+    b0_b1: bool = False,
     expected_ranks: int = 16,
 ) -> tuple[Path, int]:
-    if experiment_a:
+    if experiment_a and b0_b1:
+        raise ValueError("experiment_a and b0_b1 archive modes are mutually exclusive")
+    if b0_b1:
+        result_dir, artifacts = b0_b1_paths(result_dir, expected_ranks)
+    elif experiment_a:
         result_dir, artifacts = experiment_a_paths(result_dir, expected_ranks)
     else:
         result_dir, artifacts = diagnostic_paths(result_dir)
@@ -263,10 +289,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--object-key", help="exact destination object key")
     parser.add_argument("--archive", type=Path, help="local archive path")
     parser.add_argument("--overwrite", action="store_true", help="replace an existing --archive path")
-    parser.add_argument(
+    archive_mode = parser.add_mutually_exclusive_group()
+    archive_mode.add_argument(
         "--experiment-a",
         action="store_true",
         help="also require and package the complete per-rank Experiment-A reports",
+    )
+    archive_mode.add_argument(
+        "--b0-b1",
+        action="store_true",
+        help="package paired b0/b1 report directories and their comparison",
     )
     parser.add_argument(
         "--expected-ranks",
@@ -287,17 +319,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result_dir = args.result_dir.expanduser().resolve()
         custom_archive = args.archive is not None
-        archive_suffix = (
-            "_experiment_a.tar.gz"
-            if args.experiment_a
-            else "_memory_diagnostics.tar.gz"
-        )
+        if args.b0_b1:
+            archive_suffix = "_b0_b1.tar.gz"
+        elif args.experiment_a:
+            archive_suffix = "_experiment_a.tar.gz"
+        else:
+            archive_suffix = "_memory_diagnostics.tar.gz"
         archive_path = args.archive or result_dir.parent / f"{result_dir.name}{archive_suffix}"
         archive_path, artifact_count = build_archive(
             result_dir,
             archive_path,
             overwrite=args.overwrite or not custom_archive,
             experiment_a=args.experiment_a,
+            b0_b1=args.b0_b1,
             expected_ranks=args.expected_ranks,
         )
         digest = sha256_file(archive_path)
@@ -306,7 +340,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not bucket:
             raise ValueError("bucket must not be empty")
         prefix = args.prefix.strip().strip("/")
-        if args.experiment_a and args.prefix == DEFAULT_PREFIX:
+        if args.b0_b1 and args.prefix == DEFAULT_PREFIX:
+            prefix = B0_B1_PREFIX
+        elif args.experiment_a and args.prefix == DEFAULT_PREFIX:
             prefix = EXPERIMENT_A_PREFIX
         object_key = (
             args.object_key.strip().strip("/")

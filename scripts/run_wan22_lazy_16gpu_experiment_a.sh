@@ -19,6 +19,14 @@ case "${cache_state}" in
         exit 2
         ;;
 esac
+offload_schedule="${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE:-baseline}"
+case "${offload_schedule}" in
+    baseline | b0 | b1) ;;
+    *)
+        echo "ERROR: LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE must be baseline, b0, or b1" >&2
+        exit 2
+        ;;
+esac
 [[ -x "${memdiag_launcher}" ]] || { echo "ERROR: missing launcher: ${memdiag_launcher}" >&2; exit 1; }
 [[ -f "${summarizer}" ]] || { echo "ERROR: missing summarizer: ${summarizer}" >&2; exit 1; }
 upload_enabled="${WAN22_UPLOAD:-1}"
@@ -44,10 +52,12 @@ if [[ -n "${SWEEP_RESULT_DIR:-}" && "${SWEEP_RESULT_DIR}" != "${host_output_root
 fi
 
 export LIGHTX2V_WAN_RUNTUNE=1
-export LIGHTX2V_WAN_RUNTUNE_BACKEND="wan22-lazy-full-offload-baseline-${cache_state}-cache"
+export LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE="${offload_schedule}"
+export LIGHTX2V_WAN_RUNTUNE_BACKEND="wan22-lazy-full-offload-${offload_schedule}-${cache_state}-cache"
 export LIGHTX2V_WAN_RUNTUNE_OUTPUT="${container_result_dir}/runtune/rank{rank:03d}.json"
 
 echo "Experiment A instrumentation: enabled (schema 2, one report per rank)"
+echo "Wan block-offload schedule: ${offload_schedule}"
 echo "Experiment A cache state: ${cache_state} (label only; page cache is not modified)"
 echo "Experiment A result directory: ${host_result_dir}"
 echo "Experiment A rank reports: ${host_result_dir}/runtune/rankNNN.json"
@@ -75,6 +85,14 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         echo "ERROR: image does not contain the complete Experiment-A Wan request instrumentation: ${IMAGE}" >&2
         exit 1
     }
+    if [[ "${offload_schedule}" != "baseline" ]]; then
+        docker run --rm --network=none --entrypoint /bin/bash "${IMAGE}" -c \
+            'grep -q '\''wan_block_offload_schedule'\'' /workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py &&
+             grep -q '\''def _finish_block_compute'\'' /workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py' || {
+            echo "ERROR: image does not contain the Wan B0/B1 block-offload schedules: ${IMAGE}" >&2
+            exit 1
+        }
+    fi
 fi
 
 bash "${memdiag_launcher}" "$@"

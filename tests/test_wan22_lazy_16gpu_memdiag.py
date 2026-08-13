@@ -14,6 +14,8 @@ CONFIG = REPO_ROOT / "configs/wan22_moe_i2v_distill_fp8_4step_sage_gfx1201_lazy.
 MODEL_RUN_WRAPPER = REPO_ROOT / "scripts/run_wan22_lazy_16gpu_modelrun.sh"
 EXPERIMENT_A_LAUNCHER = REPO_ROOT / "scripts/run_wan22_lazy_16gpu_experiment_a.sh"
 EXPERIMENT_A_SUMMARIZER = REPO_ROOT / "scripts/summarize_wan22_lazy_experiment_a.py"
+B0_B1_LAUNCHER = REPO_ROOT / "scripts/run_wan22_lazy_16gpu_b0_b1.sh"
+B0_B1_COMPARATOR = REPO_ROOT / "scripts/compare_wan22_lazy_b0_b1.py"
 COMPATIBILITY_ROOT = REPO_ROOT / "python_compat/wan22_lazy"
 
 
@@ -270,6 +272,15 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
         self.assertEqual(summary["scopes"]["transformer_lifecycle"]["max_ms"], 6001.0)
         self.assertEqual(summary["scopes"]["request_end_to_end"]["max_ms"], 8001.0)
         self.assertEqual(summary["runtuner_step_wall"]["critical_path_total_ms"], 4010.0)
+        self.assertEqual(summary["schema_version"], 2)
+        self.assertIn(
+            "max_bytes",
+            summary["component_bytes"]["cpu"]["offload.host_fill"],
+        )
+        self.assertIn(
+            "max_calls",
+            summary["component_calls"]["gpu"]["offload.prefetch_copy"],
+        )
 
     def test_experiment_a_missing_scope_error_identifies_rank(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -324,6 +335,183 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
             completed.stderr,
         )
         self.assertIn("available=['transformer_lifecycle:True']", completed.stderr)
+
+    def test_b0_b1_launcher_dry_run_runs_both_arms(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            completed = subprocess.run(
+                ["bash", str(B0_B1_LAUNCHER)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "IMAGE": "example.invalid/lightx2v:b0-b1",
+                    "WAN22_CACHE_STATE": "warm",
+                    "OUTPUT_DIR": str(root),
+                    "B0_B1_TAG": "paired_test",
+                    "MODEL_RUN": "/bin/true",
+                    "DRY_RUN": "1",
+                },
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Starting B0 16-GPU arm", completed.stdout)
+        self.assertIn("Starting B1 16-GPU arm", completed.stdout)
+        self.assertIn("Wan block-offload schedule: b0", completed.stdout)
+        self.assertIn("Wan block-offload schedule: b1", completed.stdout)
+        self.assertIn("B0/B1 dry-run complete", completed.stdout)
+
+    def test_b0_b1_comparator_validates_counts_timings_and_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            videos = {}
+            for mode, lifecycle_ms, request_ms, wait_ms in (
+                ("b0", 90_000.0, 120_000.0, 12_000.0),
+                ("b1", 80_000.0, 108_000.0, 2_000.0),
+            ):
+                result = root / mode
+                reports = result / "runtune"
+                reports.mkdir(parents=True)
+                backend = f"wan22-lazy-full-offload-{mode}-warm-cache"
+                for rank in range(2):
+                    payload = {
+                        "schema_version": 2,
+                        "backend": backend,
+                        "environment": {"rank": rank, "world_size": 2},
+                        "steps": [
+                            {"success": True, "wall_ms": 20_000.0 + step}
+                            for step in range(4)
+                        ],
+                        "scopes": [
+                            {
+                                "name": "transformer_lifecycle",
+                                "success": True,
+                                "wall_ms": lifecycle_ms + rank,
+                            },
+                            {
+                                "name": "request_end_to_end",
+                                "success": True,
+                                "wall_ms": request_ms + rank,
+                            },
+                        ],
+                        "summary": {
+                            "cpu": {
+                                "offload.host_fill": {
+                                    "calls": 156,
+                                    "details": [
+                                        {
+                                            "calls": 156,
+                                            "detail": {"bytes": 10},
+                                        }
+                                    ],
+                                },
+                                "offload.host_fill_wait": {
+                                    "calls": 156,
+                                    "total_ms": wait_ms,
+                                    "details": [
+                                        {
+                                            "calls": 156,
+                                            "detail": {
+                                                "already_done": mode == "b1"
+                                            },
+                                        }
+                                    ],
+                                },
+                            },
+                            "gpu": {
+                                "offload.initial_copy": {
+                                    "calls": 0,
+                                    "details": [],
+                                },
+                                "offload.prefetch_copy": {
+                                    "calls": 156,
+                                    "details": [
+                                        {
+                                            "calls": 156,
+                                            "detail": {"bytes": 10},
+                                        }
+                                    ],
+                                },
+                                "offload.block_compute": {
+                                    "calls": 160,
+                                    "details": [
+                                        {
+                                            "calls": 4,
+                                            "total_ms": 400.0,
+                                            "detail": {"h2d_enqueued": False},
+                                        },
+                                        {
+                                            "calls": 156,
+                                            "total_ms": 15_600.0,
+                                            "detail": {"h2d_enqueued": True},
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                    }
+                    (reports / f"rank{rank:03d}.json").write_text(
+                        json.dumps(payload), encoding="utf-8"
+                    )
+                summary = {
+                    "legacy_four_step_denoising": {
+                        "critical_path_seconds": lifecycle_ms / 1000 - 1,
+                    },
+                    "runtuner_step_wall": {
+                        "critical_path_total_ms": lifecycle_ms - 1000,
+                    },
+                    "scopes": {
+                        "transformer_lifecycle": {"max_ms": lifecycle_ms + 1},
+                        "request_end_to_end": {"max_ms": request_ms + 1},
+                    },
+                    "components": {
+                        "cpu": {
+                            "offload.host_fill_wait": {"max_ms": wait_ms},
+                        }
+                    },
+                }
+                (result / "experiment_a_summary.json").write_text(
+                    json.dumps(summary), encoding="utf-8"
+                )
+                videos[mode] = root / f"{mode}.mp4"
+                videos[mode].write_bytes(b"identical-output")
+
+            output = root / "comparison.json"
+            completed = subprocess.run(
+                [
+                    "python3",
+                    str(B0_B1_COMPARATOR),
+                    "--b0-dir",
+                    str(root / "b0"),
+                    "--b1-dir",
+                    str(root / "b1"),
+                    "--b0-video",
+                    str(videos["b0"]),
+                    "--b1-video",
+                    str(videos["b1"]),
+                    "--output",
+                    str(output),
+                    "--expected-ranks",
+                    "2",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            comparison = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertTrue(comparison["accepted"])
+        self.assertTrue(comparison["transfer_contracts"]["b0"]["passed"])
+        self.assertTrue(comparison["transfer_contracts"]["b1"]["passed"])
+        self.assertTrue(comparison["outputs"]["exact_file_match"])
+        self.assertGreater(
+            comparison["timings"]["request_end_to_end_max_ms"][
+                "b1_speedup_percent"
+            ],
+            0,
+        )
 
 
 if __name__ == "__main__":

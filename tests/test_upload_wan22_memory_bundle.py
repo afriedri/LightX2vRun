@@ -43,6 +43,38 @@ class UploadWan22MemoryBundleTests(unittest.TestCase):
         (result / "unrelated.txt").write_text("ignore me\n", encoding="utf-8")
         return result
 
+    def _experiment_arm(self, pair: Path, name: str, ranks: int = 2) -> Path:
+        result = pair / name
+        result.mkdir()
+        workload = "720p121f_16gpu"
+        (result / f"{workload}.log").write_text(
+            "inference log\n", encoding="utf-8"
+        )
+        memory = result / f"{workload}_memory.jsonl"
+        memory.write_text('{"sample": "dit"}\n', encoding="utf-8")
+        (result / f"{memory.name}.summary.json").write_text(
+            '{"peak": 1}\n', encoding="utf-8"
+        )
+        runtune = result / "runtune"
+        runtune.mkdir()
+        for rank in range(ranks):
+            (runtune / f"rank{rank:03d}.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "environment": {"rank": rank, "world_size": ranks},
+                    }
+                ),
+                encoding="utf-8",
+            )
+        (result / "experiment_a_summary.json").write_text(
+            json.dumps({"arm": name}), encoding="utf-8"
+        )
+        (result / "experiment_a_summarizer.log").write_text(
+            "summary complete\n", encoding="utf-8"
+        )
+        return result
+
     def test_build_archive_collects_complete_diagnostic_groups(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -173,6 +205,35 @@ class UploadWan22MemoryBundleTests(unittest.TestCase):
         self.assertEqual(artifact_count, 5)
         self.assertIn(f"{result.name}/experiment_a_summarizer.log", names)
         self.assertNotIn(f"{result.name}/experiment_a_summary.json", names)
+
+    def test_b0_b1_archive_contains_both_complete_arms_and_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pair = root / "paired"
+            pair.mkdir()
+            self._experiment_arm(pair, "b0")
+            self._experiment_arm(pair, "b1")
+            (pair / "b0_b1_comparison.json").write_text(
+                '{"accepted": true}\n', encoding="utf-8"
+            )
+            (pair / "b0_b1_comparison.log").write_text(
+                "comparison complete\n", encoding="utf-8"
+            )
+
+            archive_path, artifact_count = MODULE.build_archive(
+                pair,
+                root / "paired.tar.gz",
+                b0_b1=True,
+                expected_ranks=2,
+            )
+            with tarfile.open(archive_path, "r:gz") as archive:
+                names = archive.getnames()
+
+        self.assertEqual(artifact_count, 16)
+        self.assertIn("paired/b0/runtune/rank000.json", names)
+        self.assertIn("paired/b1/runtune/rank001.json", names)
+        self.assertIn("paired/b0_b1_comparison.json", names)
+        self.assertIn("paired/b0_b1_comparison.log", names)
 
     def test_missing_summary_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -17,6 +17,7 @@ VAE_CPU_OFFLOAD="${VAE_CPU_OFFLOAD:-1}"
 USE_TILING_VAE="${USE_TILING_VAE:-1}"
 LIGHTX2V_AMD_MIOPEN="${LIGHTX2V_AMD_MIOPEN:-0}"
 USE_CHANNELS_LAST_3D="${USE_CHANNELS_LAST_3D:-0}"
+LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE="${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE:-baseline}"
 for flag_name in \
     CPU_OFFLOAD T5_CPU_OFFLOAD VAE_CPU_OFFLOAD USE_TILING_VAE \
     LIGHTX2V_AMD_MIOPEN USE_CHANNELS_LAST_3D; do
@@ -40,9 +41,23 @@ if [[ ! "${OFFLOAD_RATIO}" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]; then
     echo "ERROR: OFFLOAD_RATIO must be a number in [0, 1], got ${OFFLOAD_RATIO}" >&2
     exit 1
 fi
+case "${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}" in
+    baseline | b0 | b1) ;;
+    *)
+        echo "ERROR: LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE must be baseline, b0, or b1, got ${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}" >&2
+        exit 1
+        ;;
+esac
+if [[ "${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}" != "baseline" ]]; then
+    if [[ "${CPU_OFFLOAD}" != "1" || "${OFFLOAD_GRANULARITY}" != "block" || "${OFFLOAD_RATIO}" != "1.0" ]]; then
+        echo "ERROR: Wan ${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE} requires CPU_OFFLOAD=1, OFFLOAD_GRANULARITY=block, OFFLOAD_RATIO=1.0" >&2
+        exit 1
+    fi
+fi
 export CPU_OFFLOAD OFFLOAD_GRANULARITY OFFLOAD_RATIO
 export T5_CPU_OFFLOAD VAE_CPU_OFFLOAD USE_TILING_VAE
 export LIGHTX2V_AMD_MIOPEN USE_CHANNELS_LAST_3D
+export LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE
 
 export PLATFORM=amd_rocm
 export DTYPE=BF16
@@ -177,6 +192,9 @@ config.update(
         "t5_cpu_offload": os.environ["T5_CPU_OFFLOAD"] == "1",
         "vae_cpu_offload": os.environ["VAE_CPU_OFFLOAD"] == "1",
         "use_tiling_vae": os.environ["USE_TILING_VAE"] == "1",
+        "wan_block_offload_schedule": os.environ[
+            "LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE"
+        ],
     }
 )
 
@@ -214,6 +232,7 @@ save_result_path="${SAVE_RESULT_PATH:-${lightx2v_path}/save_results/output_light
 echo "GPUs: ${HIP_VISIBLE_DEVICES} (${expected_gpu_count} ranks)"
 echo "Parallel: SP=${seq_p_size}, attention=${seq_p_attn_type}, CFG=disabled"
 echo "Offload: ${OFFLOAD_GRANULARITY}; ratio=${OFFLOAD_RATIO}, DiT=${CPU_OFFLOAD}, T5=${T5_CPU_OFFLOAD}, VAE=${VAE_CPU_OFFLOAD}"
+echo "Wan block-offload schedule: ${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}"
 echo "VAE: tiling=${USE_TILING_VAE}, parallel=$((expected_gpu_count > 1 ? 1 : 0)), MIOpen=${LIGHTX2V_AMD_MIOPEN}, channels_last_3d=${USE_CHANNELS_LAST_3D}"
 if (( rope_chunk_size > 0 )); then
     echo "RoPE: chunked at ${rope_chunk_size} sequence rows"

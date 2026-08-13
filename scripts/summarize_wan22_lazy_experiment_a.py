@@ -29,15 +29,17 @@ def percentile(values: list[float], quantile: float) -> float:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
 
 
-def distribution(by_rank: dict[int, float]) -> dict[str, Any]:
+def distribution(by_rank: dict[int, float], unit: str = "ms") -> dict[str, Any]:
     values = list(by_rank.values())
     max_rank = max(by_rank, key=by_rank.get) if by_rank else None
     return {
-        "p50_ms": percentile(values, 0.50),
-        "p95_ms": percentile(values, 0.95),
-        "max_ms": max(values, default=0.0),
+        f"p50_{unit}": percentile(values, 0.50),
+        f"p95_{unit}": percentile(values, 0.95),
+        f"max_{unit}": max(values, default=0.0),
         "max_rank": max_rank,
-        "by_rank_ms": {str(rank): value for rank, value in sorted(by_rank.items())},
+        f"by_rank_{unit}": {
+            str(rank): value for rank, value in sorted(by_rank.items())
+        },
     }
 
 
@@ -67,6 +69,12 @@ def category_bytes(report: dict[str, Any], kind: str, name: str) -> float:
             int(entry.get("calls", 0)) * int(entry.get("detail", {}).get("bytes", 0))
             for entry in category.get("details", [])
         )
+    )
+
+
+def category_calls(report: dict[str, Any], kind: str, name: str) -> float:
+    return float(
+        report.get("summary", {}).get(kind, {}).get(name, {}).get("calls", 0)
     )
 
 
@@ -124,7 +132,7 @@ def main() -> int:
         for step_index in range(4)
     ]
     summary: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "wan22_lazy_experiment_a_summary",
         "ranks": args.expected_ranks,
         "backend_and_cache_state": next(iter(backends)),
@@ -137,6 +145,7 @@ def main() -> int:
         "scopes": {},
         "components": {"cpu": {}, "gpu": {}, "events": {}},
         "component_bytes": {"cpu": {}, "gpu": {}},
+        "component_calls": {"cpu": {}, "gpu": {}},
         "device_memory": {},
         "component_timing_note": "Component times can overlap and must not be summed to derive latency.",
     }
@@ -163,11 +172,33 @@ def main() -> int:
         )
     for name in ("offload.host_fill",):
         summary["component_bytes"]["cpu"][name] = distribution(
-            {rank: category_bytes(report, "cpu", name) for rank, report in reports.items()}
+            {
+                rank: category_bytes(report, "cpu", name)
+                for rank, report in reports.items()
+            },
+            "bytes",
+        )
+        summary["component_calls"]["cpu"][name] = distribution(
+            {
+                rank: category_calls(report, "cpu", name)
+                for rank, report in reports.items()
+            },
+            "calls",
         )
     for name in ("offload.initial_copy", "offload.prefetch_copy"):
         summary["component_bytes"]["gpu"][name] = distribution(
-            {rank: category_bytes(report, "gpu", name) for rank, report in reports.items()}
+            {
+                rank: category_bytes(report, "gpu", name)
+                for rank, report in reports.items()
+            },
+            "bytes",
+        )
+        summary["component_calls"]["gpu"][name] = distribution(
+            {
+                rank: category_calls(report, "gpu", name)
+                for rank, report in reports.items()
+            },
+            "calls",
         )
     summary["components"]["events"]["transformer.release"] = distribution(
         {
