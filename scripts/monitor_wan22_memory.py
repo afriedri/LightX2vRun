@@ -458,6 +458,7 @@ class Summary:
         self.reported_cgroup_peak = 0
         self.max_host_used = 0
         self.gpu_peaks: dict[str, int] = {}
+        self.gpu_totals: dict[str, int] = {}
         self.phase_maxima: dict[str, dict[str, int]] = {}
         self.rank_lifecycle: dict[str, dict[str, Any]] = {}
         self.active_rank_keys: set[str] = set()
@@ -529,6 +530,15 @@ class Summary:
         for gpu in sample.get("gpus", []):
             key = f"{gpu.get('card')}@{gpu.get('pci_address')}"
             self.gpu_peaks[key] = max(self.gpu_peaks.get(key, 0), gpu.get("used_bytes") or 0)
+            total_bytes = gpu.get("total_bytes") or 0
+            if total_bytes:
+                previous_total = self.gpu_totals.get(key)
+                if previous_total is not None and previous_total != total_bytes:
+                    raise ValueError(
+                        f"physical GPU total changed for {key}: "
+                        f"{previous_total} -> {total_bytes}"
+                    )
+                self.gpu_totals[key] = total_bytes
 
         phase = sample.get("phase", "unknown")
         phase_max = self.phase_maxima.setdefault(phase, {})
@@ -553,6 +563,7 @@ class Summary:
             "kernel_reported_cgroup_peak_bytes": self.reported_cgroup_peak,
             "max_observed_host_used_bytes": self.max_host_used,
             "physical_gpu_peak_used_bytes": self.gpu_peaks,
+            "physical_gpu_total_bytes": self.gpu_totals,
             "phase_maxima": self.phase_maxima,
             "rank_lifecycle": self.rank_lifecycle,
         }

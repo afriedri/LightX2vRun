@@ -47,6 +47,10 @@ def memory_accounting(
         str(card): int(value)
         for card, value in physical.get("physical_gpu_peak_used_bytes", {}).items()
     }
+    physical_totals = {
+        str(card): int(value)
+        for card, value in physical.get("physical_gpu_total_bytes", {}).items()
+    }
     device_memory = summary.get("device_memory", {})
     expected_ranks = {str(rank) for rank in range(count)}
     allocator_by_rank: dict[str, dict[str, int]] = {}
@@ -70,14 +74,40 @@ def memory_accounting(
         (item["max_reserved_bytes"] for item in allocator_by_rank.values()),
         default=0,
     )
-    usable_limit = budget_bytes - minimum_headroom_bytes
+    usable_limits = {
+        card: min(budget_bytes, physical_totals.get(card, 0))
+        - minimum_headroom_bytes
+        for card in physical_peaks
+    }
+    per_card = {
+        card: {
+            "peak_used_bytes": peak,
+            "physical_total_bytes": physical_totals.get(card, 0),
+            "effective_budget_bytes": min(
+                budget_bytes, physical_totals.get(card, 0)
+            ),
+            "headroom_bytes": min(
+                budget_bytes, physical_totals.get(card, 0)
+            )
+            - peak,
+            "passed": peak <= usable_limits[card],
+        }
+        for card, peak in physical_peaks.items()
+    }
+    minimum_usable_limit = min(usable_limits.values(), default=0)
+    minimum_physical_headroom = min(
+        (item["headroom_bytes"] for item in per_card.values()), default=0
+    )
     monitoring_complete = (
-        len(physical_peaks) == count and set(allocator_by_rank) == expected_ranks
+        len(physical_peaks) == count
+        and set(physical_totals) == set(physical_peaks)
+        and all(total > 0 for total in physical_totals.values())
+        and set(allocator_by_rank) == expected_ranks
     )
     within_budget = (
         monitoring_complete
-        and physical_peak <= usable_limit
-        and allocator_reserved_peak <= usable_limit
+        and all(item["passed"] for item in per_card.values())
+        and allocator_reserved_peak <= minimum_usable_limit
     )
     return {
         "passed": within_budget,
@@ -87,17 +117,19 @@ def memory_accounting(
         "instrumented_rank_count": len(allocator_by_rank),
         "budget_bytes_per_gpu": budget_bytes,
         "minimum_required_headroom_bytes": minimum_headroom_bytes,
-        "usable_limit_bytes_per_gpu": usable_limit,
+        "minimum_usable_limit_bytes_per_gpu": minimum_usable_limit,
         "physical_peak_used_bytes": physical_peak,
         "physical_min_of_card_peaks_bytes": physical_min,
         "physical_peak_skew_bytes": physical_peak - physical_min,
-        "physical_headroom_bytes": budget_bytes - physical_peak,
+        "minimum_physical_headroom_bytes": minimum_physical_headroom,
         "physical_peak_fraction_of_budget": (
             physical_peak / budget_bytes if budget_bytes else 0.0
         ),
         "allocator_max_allocated_bytes": allocator_allocated_peak,
         "allocator_max_reserved_bytes": allocator_reserved_peak,
         "physical_peaks_by_card_bytes": physical_peaks,
+        "physical_totals_by_card_bytes": physical_totals,
+        "physical_accounting_by_card": per_card,
         "allocator_peaks_by_rank_bytes": allocator_by_rank,
         "host_peak": {
             "simultaneous_rank_pss_bytes": int(
@@ -243,7 +275,7 @@ def main() -> int:
             f"B1 {count} GPU: DiT={run['timings_ms']['legacy_four_step_denoising'] / 1000:.3f}s, "
             f"request={run['timings_ms']['request_end_to_end_max'] / 1000:.3f}s, "
             f"physical VRAM peak={memory['physical_peak_used_bytes'] / GIB:.3f} GiB, "
-            f"headroom={memory['physical_headroom_bytes'] / GIB:.3f} GiB, "
+            f"minimum headroom={memory['minimum_physical_headroom_bytes'] / GIB:.3f} GiB, "
             f"memory_passed={memory['passed']}"
         )
     print(f"Exact cross-scale MP4 match (informational): {exact_cross_scale_match}")

@@ -41,7 +41,11 @@ class Wan22LazyB1ScaleTest(unittest.TestCase):
         self.assertIn("B1 scale dry-run complete", completed.stdout)
 
     @staticmethod
-    def _write_scale_result(root: Path, physical_peak_bytes: int) -> None:
+    def _write_scale_result(
+        root: Path,
+        physical_peak_bytes: int,
+        physical_total_bytes: int = 32 * GIB,
+    ) -> None:
         for count in (2, 4, 8):
             arm = root / f"{count}gpu"
             runtune = arm / "runtune"
@@ -113,6 +117,9 @@ class Wan22LazyB1ScaleTest(unittest.TestCase):
                         f"card{rank}": physical_peak_bytes
                         for rank in range(count)
                     },
+                    "physical_gpu_total_bytes": {
+                        f"card{rank}": physical_total_bytes for rank in range(count)
+                    },
                     "max_simultaneous_rank_sums_bytes": {
                         "Pss_bytes": count * GIB,
                         "Rss_bytes": count * 2 * GIB,
@@ -160,7 +167,10 @@ class Wan22LazyB1ScaleTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertTrue(summary["accepted"])
         self.assertTrue(summary["acceptance"]["all_gpu_memory_budgets"])
-        self.assertEqual(summary["runs"]["2"]["memory"]["physical_headroom_bytes"], 2 * GIB)
+        self.assertEqual(
+            summary["runs"]["2"]["memory"]["minimum_physical_headroom_bytes"],
+            2 * GIB,
+        )
 
     def test_summarizer_rejects_peak_inside_budget_but_below_headroom(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -172,6 +182,21 @@ class Wan22LazyB1ScaleTest(unittest.TestCase):
         self.assertFalse(summary["accepted"])
         self.assertFalse(summary["acceptance"]["all_gpu_memory_budgets"])
         self.assertFalse(summary["runs"]["2"]["memory"]["passed"])
+
+    def test_summarizer_uses_measured_card_total_below_nominal_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._write_scale_result(
+                root,
+                physical_peak_bytes=int(30.9 * GIB),
+                physical_total_bytes=int(31.5 * GIB),
+            )
+            completed, summary = self._run_summarizer(root)
+
+        self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
+        memory = summary["runs"]["2"]["memory"]
+        self.assertFalse(memory["passed"])
+        self.assertLess(memory["minimum_physical_headroom_bytes"], GIB)
 
 
 if __name__ == "__main__":

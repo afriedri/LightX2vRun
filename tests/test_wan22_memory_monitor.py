@@ -64,6 +64,7 @@ def test_zero_kernel_peak_keeps_sampled_current_separate():
 
     assert payload["kernel_reported_cgroup_peak_bytes"] == 0
     assert payload["max_observed_cgroup_current_bytes"] == 1234
+    assert payload["physical_gpu_total_bytes"] == {}
 
 
 def test_gpu_index_parser_rejects_duplicates_and_preserves_order():
