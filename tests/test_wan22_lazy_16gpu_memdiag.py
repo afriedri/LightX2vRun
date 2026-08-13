@@ -79,6 +79,7 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
             [
                 "/bin/bash",
                 "/workspace/LightX2VRun/scripts/run_wan22_lazy_16gpu_inside.sh",
+                "16",
             ],
         )
         self.assertIn("Wan2.2 dedicated lazy-load memory diagnostic", completed.stdout)

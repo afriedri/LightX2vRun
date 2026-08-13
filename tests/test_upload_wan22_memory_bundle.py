@@ -235,6 +235,36 @@ class UploadWan22MemoryBundleTests(unittest.TestCase):
         self.assertIn("paired/b0_b1_comparison.json", names)
         self.assertIn("paired/b0_b1_comparison.log", names)
 
+    def test_b1_scale_archive_contains_each_count_and_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scale = root / "b1-scale"
+            scale.mkdir()
+            for count in (2, 4, 8):
+                self._experiment_arm(scale, f"{count}gpu", ranks=count)
+            (scale / "b1_scale_summary.json").write_text(
+                '{"accepted": true}\n', encoding="utf-8"
+            )
+            (scale / "b1_scale_summary.log").write_text(
+                "scale summary complete\n", encoding="utf-8"
+            )
+
+            archive_path, artifact_count = MODULE.build_archive(
+                scale,
+                root / "b1-scale.tar.gz",
+                b1_scale=True,
+                b1_scale_counts=(2, 4, 8),
+            )
+            with tarfile.open(archive_path, "r:gz") as archive:
+                names = archive.getnames()
+
+        self.assertEqual(artifact_count, 31)
+        self.assertIn("b1-scale/2gpu/runtune/rank001.json", names)
+        self.assertIn("b1-scale/4gpu/runtune/rank003.json", names)
+        self.assertIn("b1-scale/8gpu/runtune/rank007.json", names)
+        self.assertIn("b1-scale/b1_scale_summary.json", names)
+        self.assertIn("b1-scale/b1_scale_summary.log", names)
+
     def test_missing_summary_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

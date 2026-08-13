@@ -224,6 +224,7 @@ start_memory_monitor() {
     local ranks="$1"
     local inference_log="$2"
     local memory_output="$3"
+    local gpu_indices="$4"
     if [[ "${memory_monitor_enabled}" != "1" || "${DRY_RUN:-0}" == "1" ]]; then
         return
     fi
@@ -234,6 +235,7 @@ start_memory_monitor() {
         --interval "${memory_monitor_interval}" \
         --start-timeout "${memory_monitor_start_timeout}" \
         --expected-ranks "${ranks}" \
+        --gpu-indices "${gpu_indices}" \
         --host-limit-gib "${memory_monitor_host_limit_gib}" \
         --gpu-limit-gib "${memory_monitor_gpu_limit_gib}" &
     memory_monitor_pid=$!
@@ -290,7 +292,7 @@ for workload in "${workloads[@]}"; do
         if [[ -n "${image_override}" ]]; then
             run_environment+=(IMAGE="${image_override}")
         fi
-        start_memory_monitor "${count}" "${log_path}" "${memory_output_path}"
+        start_memory_monitor "${count}" "${log_path}" "${memory_output_path}" "${selected}"
         set +e
         env "${run_environment[@]}" \
             "${model_run}" --profile-wan22-ckconv3d-v1 2>&1 | tee "${log_path}"

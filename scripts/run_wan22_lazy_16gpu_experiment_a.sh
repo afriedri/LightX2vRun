@@ -27,6 +27,14 @@ case "${offload_schedule}" in
         exit 2
         ;;
 esac
+gpu_count="${WAN22_GPU_COUNT:-16}"
+case "${gpu_count}" in
+    2 | 4 | 8 | 16) ;;
+    *)
+        echo "ERROR: WAN22_GPU_COUNT must be 2, 4, 8, or 16, got ${gpu_count}" >&2
+        exit 2
+        ;;
+esac
 [[ -x "${memdiag_launcher}" ]] || { echo "ERROR: missing launcher: ${memdiag_launcher}" >&2; exit 1; }
 [[ -f "${summarizer}" ]] || { echo "ERROR: missing summarizer: ${summarizer}" >&2; exit 1; }
 upload_enabled="${WAN22_UPLOAD:-1}"
@@ -42,7 +50,8 @@ if [[ "${upload_enabled}" == "1" ]]; then
     [[ -f "${uploader}" ]] || { echo "ERROR: missing uploader: ${uploader}" >&2; exit 1; }
 fi
 
-export SWEEP_TAG="${SWEEP_TAG:-wan22_lazy16_experiment_a_$(date +%Y%m%d_%H%M%S)}"
+export SWEEP_TAG="${SWEEP_TAG:-wan22_lazy${gpu_count}_experiment_a_$(date +%Y%m%d_%H%M%S)}"
+export WAN22_GPU_COUNT="${gpu_count}"
 host_output_root="${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}"
 host_result_dir="${SWEEP_RESULT_DIR:-${host_output_root}/${SWEEP_TAG}}"
 container_result_dir="/workspace/LightX2V/save_results/${SWEEP_TAG}"
@@ -57,6 +66,7 @@ export LIGHTX2V_WAN_RUNTUNE_BACKEND="wan22-lazy-full-offload-${offload_schedule}
 export LIGHTX2V_WAN_RUNTUNE_OUTPUT="${container_result_dir}/runtune/rank{rank:03d}.json"
 
 echo "Experiment A instrumentation: enabled (schema 2, one report per rank)"
+echo "Experiment A GPU count: ${gpu_count}"
 echo "Wan block-offload schedule: ${offload_schedule}"
 echo "Experiment A cache state: ${cache_state} (label only; page cache is not modified)"
 echo "Experiment A result directory: ${host_result_dir}"
@@ -112,10 +122,10 @@ summarizer_log="${host_result_dir}/experiment_a_summarizer.log"
 set +e
 python3 "${summarizer}" \
     --input-dir "${host_result_dir}/runtune" \
-    --log "${host_result_dir}/720p121f_16gpu.log" \
-    --memory-summary "${host_result_dir}/720p121f_16gpu_memory.jsonl.summary.json" \
+    --log "${host_result_dir}/720p121f_${gpu_count}gpu.log" \
+    --memory-summary "${host_result_dir}/720p121f_${gpu_count}gpu_memory.jsonl.summary.json" \
     --output "${host_result_dir}/experiment_a_summary.json" \
-    --expected-ranks 16 2>&1 | tee "${summarizer_log}"
+    --expected-ranks "${gpu_count}" 2>&1 | tee "${summarizer_log}"
 summarizer_status=${PIPESTATUS[0]}
 set -e
 
@@ -124,7 +134,7 @@ if [[ "${upload_enabled}" == "1" ]]; then
     python3 "${uploader}" \
         "${host_result_dir}" \
         --experiment-a \
-        --expected-ranks 16 \
+        --expected-ranks "${gpu_count}" \
         --prefix "${upload_prefix}" || upload_status=$?
 fi
 

@@ -66,6 +66,16 @@ def test_zero_kernel_peak_keeps_sampled_current_separate():
     assert payload["max_observed_cgroup_current_bytes"] == 1234
 
 
+def test_gpu_index_parser_rejects_duplicates_and_preserves_order():
+    assert MONITOR.parse_gpu_indices("15,14,13,12") == (15, 14, 13, 12)
+    try:
+        MONITOR.parse_gpu_indices("0,0")
+    except Exception as exc:
+        assert "unique" in str(exc)
+    else:
+        raise AssertionError("duplicate GPU indices were accepted")
+
+
 def test_phase_tracker_uses_all_rank_memory_boundaries(tmp_path):
     log = tmp_path / "run.log"
     tracker = MONITOR.PhaseTracker(log, expected_ranks=2)

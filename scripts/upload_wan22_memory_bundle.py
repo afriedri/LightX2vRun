@@ -21,6 +21,7 @@ DEFAULT_BUCKET = "aitertunecollection"
 DEFAULT_PREFIX = "wan22/memory-diagnostics"
 EXPERIMENT_A_PREFIX = "wan22/experiment-a"
 B0_B1_PREFIX = "wan22/experiment-b0-b1"
+B1_SCALE_PREFIX = "wan22/experiment-b1-scale"
 MEMORY_SUFFIX = "_memory.jsonl"
 SUMMARY_SUFFIX = ".summary.json"
 
@@ -141,6 +142,38 @@ def b0_b1_paths(
     return result_dir, artifacts
 
 
+def parse_counts(value: str) -> tuple[int, ...]:
+    try:
+        counts = tuple(int(item) for item in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("counts must be comma-separated integers") from exc
+    if not counts or len(set(counts)) != len(counts):
+        raise argparse.ArgumentTypeError("counts must be non-empty and unique")
+    if any(count not in (2, 4, 8, 16) for count in counts):
+        raise argparse.ArgumentTypeError("counts may contain only 2, 4, 8, and 16")
+    return counts
+
+
+def b1_scale_paths(
+    result_dir: Path, counts: Sequence[int]
+) -> tuple[Path, list[Path]]:
+    result_dir = result_dir.expanduser().resolve()
+    if not result_dir.is_dir():
+        raise ValueError(f"B1 scale result directory not found: {result_dir}")
+
+    artifacts: list[Path] = []
+    for count in counts:
+        _, arm_artifacts = experiment_a_paths(result_dir / f"{count}gpu", count)
+        artifacts.extend(arm_artifacts)
+
+    for required_name in ("b1_scale_summary.json", "b1_scale_summary.log"):
+        path = result_dir / required_name
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f"missing or empty B1 scale artifact: {path}")
+        artifacts.append(path)
+    return result_dir, artifacts
+
+
 def _add_regular_file(archive: tarfile.TarFile, source: Path, arcname: str) -> None:
     info = tarfile.TarInfo(arcname)
     info.size = source.stat().st_size
@@ -161,11 +194,15 @@ def build_archive(
     *,
     experiment_a: bool = False,
     b0_b1: bool = False,
+    b1_scale: bool = False,
     expected_ranks: int = 16,
+    b1_scale_counts: Sequence[int] = (2, 4, 8),
 ) -> tuple[Path, int]:
-    if experiment_a and b0_b1:
-        raise ValueError("experiment_a and b0_b1 archive modes are mutually exclusive")
-    if b0_b1:
+    if sum((experiment_a, b0_b1, b1_scale)) > 1:
+        raise ValueError("archive modes are mutually exclusive")
+    if b1_scale:
+        result_dir, artifacts = b1_scale_paths(result_dir, b1_scale_counts)
+    elif b0_b1:
         result_dir, artifacts = b0_b1_paths(result_dir, expected_ranks)
     elif experiment_a:
         result_dir, artifacts = experiment_a_paths(result_dir, expected_ranks)
@@ -300,11 +337,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="package paired b0/b1 report directories and their comparison",
     )
+    archive_mode.add_argument(
+        "--b1-scale",
+        action="store_true",
+        help="package complete B1 report directories for several GPU counts",
+    )
     parser.add_argument(
         "--expected-ranks",
         type=int,
         default=16,
         help="expected Experiment-A rank count (default: 16)",
+    )
+    parser.add_argument(
+        "--counts",
+        type=parse_counts,
+        default=(2, 4, 8),
+        help="GPU counts for --b1-scale (default: 2,4,8)",
     )
     parser.add_argument(
         "--package-only",
@@ -319,7 +367,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result_dir = args.result_dir.expanduser().resolve()
         custom_archive = args.archive is not None
-        if args.b0_b1:
+        if args.b1_scale:
+            archive_suffix = "_b1_scale.tar.gz"
+        elif args.b0_b1:
             archive_suffix = "_b0_b1.tar.gz"
         elif args.experiment_a:
             archive_suffix = "_experiment_a.tar.gz"
@@ -332,7 +382,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             overwrite=args.overwrite or not custom_archive,
             experiment_a=args.experiment_a,
             b0_b1=args.b0_b1,
+            b1_scale=args.b1_scale,
             expected_ranks=args.expected_ranks,
+            b1_scale_counts=args.counts,
         )
         digest = sha256_file(archive_path)
 
@@ -340,7 +392,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not bucket:
             raise ValueError("bucket must not be empty")
         prefix = args.prefix.strip().strip("/")
-        if args.b0_b1 and args.prefix == DEFAULT_PREFIX:
+        if args.b1_scale and args.prefix == DEFAULT_PREFIX:
+            prefix = B1_SCALE_PREFIX
+        elif args.b0_b1 and args.prefix == DEFAULT_PREFIX:
             prefix = B0_B1_PREFIX
         elif args.experiment_a and args.prefix == DEFAULT_PREFIX:
             prefix = EXPERIMENT_A_PREFIX

@@ -216,6 +216,28 @@ def main() -> int:
         summary["device_memory"][str(rank)] = {
             "max_allocated_bytes": max((int(item["allocated_bytes"]) for item in snapshots), default=0),
             "max_reserved_bytes": max((int(item["reserved_bytes"]) for item in snapshots), default=0),
+            "max_snapshot_allocated_bytes": max(
+                (int(item.get("allocated_bytes", 0)) for item in snapshots),
+                default=0,
+            ),
+            "max_snapshot_reserved_bytes": max(
+                (int(item.get("reserved_bytes", 0)) for item in snapshots),
+                default=0,
+            ),
+            "max_allocator_allocated_bytes": max(
+                (
+                    int(item.get("max_allocated_bytes", item.get("allocated_bytes", 0)))
+                    for item in snapshots
+                ),
+                default=0,
+            ),
+            "max_allocator_reserved_bytes": max(
+                (
+                    int(item.get("max_reserved_bytes", item.get("reserved_bytes", 0)))
+                    for item in snapshots
+                ),
+                default=0,
+            ),
             "snapshots": snapshots,
         }
 

@@ -11,7 +11,7 @@ The JSONL samples keep the memory scopes separate:
 * simultaneous sums across ranks (not sums of per-rank historical peaks);
 * the container cgroup's actual anon/file/shmem charge and peak;
 * host MemTotal/MemAvailable/Cached/AnonPages/Shmem;
-* physical VRAM used/total for every AMD DRM card.
+* physical VRAM used/total for the selected ROCm-indexed AMD DRM cards.
 
 The external probe cannot see PyTorch's per-process allocator counters.  Those
 are distinct from physical VRAM used and must be logged in-process with
@@ -300,7 +300,7 @@ def drm_card_index(name: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def sample_gpus() -> list[dict[str, Any]]:
+def sample_gpus(selected_indices: set[int] | None = None) -> list[dict[str, Any]]:
     cards = []
     indexed_card_paths = [
         (index, path)
@@ -318,6 +318,7 @@ def sample_gpus() -> list[dict[str, Any]]:
             continue
         cards.append(
             {
+                "rocm_index": len(cards),
                 "card": card_path.name,
                 "pci_address": Path(os.path.realpath(device_path)).name,
                 "device_id": read_optional_text(device_path / "device"),
@@ -327,7 +328,18 @@ def sample_gpus() -> list[dict[str, Any]]:
                 "used_bytes": used,
             }
         )
-    return cards
+    if selected_indices is None:
+        return cards
+    return [card for card in cards if card["rocm_index"] in selected_indices]
+
+
+def parse_gpu_indices(value: str) -> tuple[int, ...]:
+    if not re.fullmatch(r"[0-9]+(?:,[0-9]+)*", value):
+        raise argparse.ArgumentTypeError("GPU indices must be comma-separated integers")
+    indices = tuple(int(item) for item in value.split(","))
+    if len(set(indices)) != len(indices):
+        raise argparse.ArgumentTypeError("GPU indices must be unique")
+    return indices
 
 
 class PhaseTracker:
@@ -556,6 +568,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-ranks", type=int, default=16, help="Warn unless this many rank processes are found")
     parser.add_argument("--host-limit-gib", type=float, default=512.0, help="Diagnostic threshold for cgroup memory")
     parser.add_argument("--gpu-limit-gib", type=float, default=32.0, help="Diagnostic threshold for per-card VRAM")
+    parser.add_argument(
+        "--gpu-indices",
+        type=parse_gpu_indices,
+        help="comma-separated host ROCm indices to sample (default: all AMD cards)",
+    )
     parser.add_argument("--once", action="store_true", help="Take one sample and exit")
     return parser
 
@@ -606,7 +623,9 @@ def main() -> int:
                 "container_name": args.container,
                 "container": sample_container(args.container),
                 "host": sample_host_memory(),
-                "gpus": sample_gpus(),
+                "gpus": sample_gpus(
+                    set(args.gpu_indices) if args.gpu_indices is not None else None
+                ),
             }
             add_host_pids(args.container, sample["container"])
             add_rank_totals(sample)

@@ -4,14 +4,16 @@ set -Eeuo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  bash scripts/run_wan22_ckconv3d_v1_720p_5s_lazy_16gpu_memdiag.sh [--image IMAGE]
+  WAN22_GPU_COUNT=8 GPU_DEVICES=0,1,2,3,4,5,6,7 \
+    bash scripts/run_wan22_ckconv3d_v1_720p_5s_lazy_16gpu_memdiag.sh [--image IMAGE]
 
-Runs only the Wan2.2 720p, 121-frame, 24-FPS workload on 16 GPUs with
-DiT safetensors lazy loading. RSS/PSS/private/cgroup and physical VRAM
-sampling is always enabled. The regular 2/4/8/16-GPU sweep is unchanged.
+Runs one Wan2.2 720p, 121-frame, 24-FPS workload on 2, 4, 8, or 16 GPUs
+with DiT safetensors lazy loading. RSS/PSS/private/cgroup and physical VRAM
+sampling is always enabled. The default remains the original 16-GPU run.
 
 Overrides:
-  GPU_DEVICES                    Exactly 16 physical GPU ids (default: 0..15)
+  WAN22_GPU_COUNT                2, 4, 8, or 16 (default: 16)
+  GPU_DEVICES                    Exactly WAN22_GPU_COUNT ids (default: 0..N-1)
   MEMORY_MONITOR_INTERVAL        Sampling interval in seconds (default: 1.0)
   MEMORY_MONITOR_HOST_LIMIT_GIB  Diagnostic warning threshold (default: 512)
   MEMORY_MONITOR_GPU_LIMIT_GIB   Per-GPU warning threshold (default: 32)
@@ -45,14 +47,26 @@ lazy_model_run="${script_dir}/run_wan22_lazy_16gpu_modelrun.sh"
     exit 1
 }
 
-gpu_devices="${GPU_DEVICES:-0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
+gpu_count="${WAN22_GPU_COUNT:-16}"
+case "${gpu_count}" in
+    2 | 4 | 8 | 16) ;;
+    *)
+        echo "ERROR: WAN22_GPU_COUNT must be 2, 4, 8, or 16, got ${gpu_count}" >&2
+        exit 2
+        ;;
+esac
+default_gpu_devices=""
+for ((gpu_index = 0; gpu_index < gpu_count; gpu_index++)); do
+    default_gpu_devices+="${default_gpu_devices:+,}${gpu_index}"
+done
+gpu_devices="${GPU_DEVICES:-${default_gpu_devices}}"
 if [[ ! "${gpu_devices}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
     echo "ERROR: GPU_DEVICES must be comma-separated physical GPU ids" >&2
     exit 2
 fi
 IFS=',' read -r -a selected_gpus <<<"${gpu_devices}"
-if [[ "${#selected_gpus[@]}" -ne 16 ]]; then
-    echo "ERROR: lazy memory diagnostic requires exactly 16 GPU_DEVICES, got ${#selected_gpus[@]}: ${gpu_devices}" >&2
+if [[ "${#selected_gpus[@]}" -ne "${gpu_count}" ]]; then
+    echo "ERROR: lazy memory diagnostic requires exactly ${gpu_count} GPU_DEVICES, got ${#selected_gpus[@]}: ${gpu_devices}" >&2
     exit 2
 fi
 declare -A seen_gpus=()
@@ -64,12 +78,25 @@ for gpu in "${selected_gpus[@]}"; do
     seen_gpus["${gpu}"]=1
 done
 
-# The shared sweep still validates its four GPU-group slots even though this
-# launcher selects only the 16-GPU slot. The first three groups are inert.
-export SCALE_GPU_GROUPS="0,1;0,1,2,3;0,1,2,3,4,5,6,7;${gpu_devices}"
-export SWEEP_COUNTS=16
+# The shared sweep validates all four slots. Replace only the selected slot;
+# the other groups are inert defaults.
+gpu_groups=(
+    "0,1"
+    "0,1,2,3"
+    "0,1,2,3,4,5,6,7"
+    "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15"
+)
+case "${gpu_count}" in
+    2) gpu_groups[0]="${gpu_devices}" ;;
+    4) gpu_groups[1]="${gpu_devices}" ;;
+    8) gpu_groups[2]="${gpu_devices}" ;;
+    16) gpu_groups[3]="${gpu_devices}" ;;
+esac
+export SCALE_GPU_GROUPS="${gpu_groups[0]};${gpu_groups[1]};${gpu_groups[2]};${gpu_groups[3]}"
+export SWEEP_COUNTS="${gpu_count}"
 export SWEEP_WORKLOADS=720p121f
-export SWEEP_TAG="${SWEEP_TAG:-wan22_lazy16_memdiag_$(date +%Y%m%d_%H%M%S)}"
+export SWEEP_TAG="${SWEEP_TAG:-wan22_lazy${gpu_count}_memdiag_$(date +%Y%m%d_%H%M%S)}"
+export WAN22_GPU_COUNT="${gpu_count}"
 export BASE_CONFIG_JSON="${lazy_config_container}"
 export LIGHTX2V_LAZY_REAL_MODEL_RUN="${MODEL_RUN:-${repo_root}/lightx2vModelrun}"
 export MODEL_RUN="${lazy_model_run}"
@@ -89,7 +116,7 @@ export MEMORY_MONITOR_HOST_LIMIT_GIB="${MEMORY_MONITOR_HOST_LIMIT_GIB:-512}"
 export MEMORY_MONITOR_GPU_LIMIT_GIB="${MEMORY_MONITOR_GPU_LIMIT_GIB:-32}"
 
 echo "Wan2.2 dedicated lazy-load memory diagnostic"
-echo "Workload: 720x1280, 121 frames @ 24 FPS; 16 GPUs (${gpu_devices})"
+echo "Workload: 720x1280, 121 frames @ 24 FPS; ${gpu_count} GPUs (${gpu_devices})"
 echo "Memory policy: DiT lazy=1, block offload=1.0; T5 CPU/lazy=1/0; VAE GPU phase-load"
 echo "Lazy compatibility: Run-only attention interface shim enabled"
 echo "Monitor thresholds: host=${MEMORY_MONITOR_HOST_LIMIT_GIB} GiB, per-GPU=${MEMORY_MONITOR_GPU_LIMIT_GIB} GiB"
