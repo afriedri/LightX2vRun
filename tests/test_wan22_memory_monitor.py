@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MONITOR_PATH = REPO_ROOT / "scripts/monitor_wan22_memory.py"
+MONITOR_PATH = REPO_ROOT / "scripts/deprecated/diagnostics/monitor_wan22_memory.py"
 SPEC = importlib.util.spec_from_file_location("monitor_wan22_memory", MONITOR_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MONITOR = importlib.util.module_from_spec(SPEC)

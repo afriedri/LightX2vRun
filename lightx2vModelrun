@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-LEGACY_IMAGE="ccr.ccs.tencentyun.com/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260804-SageUtimateWithMM-T1"
-CK_CONV3D_V1_IMAGE="compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260812-CKConv3dV1-Hot28-AOTFinal"
-IMAGE="${IMAGE:-${LEGACY_IMAGE}}"
+CK_CONV3D_V1_IMAGE="compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260813-CKConv3dV1-Hot28-B0B1-Fix1"
+IMAGE="${IMAGE:-${CK_CONV3D_V1_IMAGE}}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
-EXPECTED_SAGE_AITER_REV="${EXPECTED_SAGE_AITER_REV:-24aa37dd72f98be15ad21deb97ddfd4ab8fc09b1}"
-EXPECTED_SAGE_LIGHTX2V_REV="${EXPECTED_SAGE_LIGHTX2V_REV:-14a87614f21f414e9e3a66339c3469640c550a4f}"
 EXPECTED_CK_AITER_REV="${EXPECTED_CK_AITER_REV:-0325656e2fa7370d372499c5350368aea33cafd7}"
-EXPECTED_CK_LIGHTX2V_REV="${EXPECTED_CK_LIGHTX2V_REV:-d03d027f36b9524278c5d36f68c8b59f7a1ce5a1}"
+EXPECTED_CK_LIGHTX2V_REV="${EXPECTED_CK_LIGHTX2V_REV:-4a36fe2907c11e3385d9e82aaccee39bfd5a131b}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 
@@ -18,9 +15,7 @@ RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 MODEL_STORE="${MODEL_STORE:-/disk/ssd/difumodels-Dis}"
 ENCODERS_DIR="${ENCODERS_DIR:-${MODEL_STORE}/Encoders}"
 DISTILL_MODELS_DIR="${DISTILL_MODELS_DIR:-${MODEL_STORE}/Wan2.2-Distill-Models}"
-DISTILL_LORAS_DIR="${DISTILL_LORAS_DIR:-${MODEL_STORE}/Wan2.2-Distill-Loras}"
 WAN22_BASE_DIR="${WAN22_BASE_DIR:-${MODEL_STORE}/Wan2.2-I2V-A14B}"
-LORA_FP8_OUTPUT_DIR="${LORA_FP8_OUTPUT_DIR:-${DISTILL_MODELS_DIR}/lora-fp8-strength1}"
 WAN21_DISTILL_DIR="${WAN21_DISTILL_DIR:-${MODEL_STORE}/Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v/distill_fp8}"
 
 RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd/lightx2v-runtime}"
@@ -30,16 +25,37 @@ CACHE_DIR="${CACHE_DIR:-${RUNTIME_ROOT}/cache}"
 
 readonly CONTAINER_MODELS_ROOT=/models
 readonly CONTAINER_BASE_MODEL=/models/Wan-AI/Wan2.2-I2V-A14B
-readonly CONTAINER_DISTILL_LORAS=/models/lightx2v/Wan2.2-Distill-Loras
-readonly CONTAINER_LORA_FP8_OUTPUT=/models/lightx2v/Wan2.2-Lora-FP8
 readonly CONTAINER_WAN21_DISTILL_MODEL=/models/lightx2v/Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v/distill_fp8
 readonly CONTAINER_RUN_ROOT=/workspace/LightX2VRun
 readonly FP8_RUN_SCRIPT_DIR=${CONTAINER_RUN_ROOT}/scripts
-readonly BF16_RUN_SCRIPT=/workspace/LightX2V/scripts/platforms/amd_rocm/run_wan22_moe_i2v_distill_bf16_4step_gfx1201.sh
 readonly T5_FP8_FILENAME=models_t5_umt5-xxl-enc-fp8.pth
-readonly T5_BF16_FILENAME=models_t5_umt5-xxl-enc-bf16.pth
 
 usage() {
+    cat <<'EOF'
+Usage:
+  ./lightx2vModelrun                         Open an interactive Wan2.2 container shell
+  ./lightx2vModelrun --run-wan21-gfx1201    Run the consolidated Wan2.1 container entry
+  ./lightx2vModelrun --run-wan22-gfx1201    Run the consolidated Wan2.2 lazy/B1 entry
+  ./lightx2vModelrun COMMAND [ARG...]        Run a command in the container
+
+Ordinary timing runs should use the six numbered scripts:
+  scripts/run_01_wan21_720p_81f_16fps_1gpu.sh
+  scripts/run_02_wan21_720p_81f_16fps_scale.sh
+  scripts/run_04_wan22_480p_81f_16fps_scale.sh
+  scripts/run_05_wan22_480p_121f_24fps_scale.sh
+  scripts/run_06_wan22_720p_81f_16fps_scale.sh
+  scripts/run_07_wan22_720p_121f_24fps_scale.sh
+
+Important overrides:
+  GPU_DEVICES, IMAGE, MODEL_STORE, OUTPUT_DIR, INPUT_DIR, CACHE_DIR
+  TARGET_HEIGHT, TARGET_WIDTH, TARGET_VIDEO_LENGTH, TARGET_FPS
+  LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE=auto|baseline|b1
+  DRY_RUN=1, SKIP_MODEL_CHECKS=1
+
+Legacy profile, runtune, LoRA, and Experiment-A/B launchers are retired under
+scripts/deprecated/ and are not part of the active production interface.
+EOF
+    return
     cat <<'EOF'
 Usage:
   ./lightx2vModelrun                 Open an interactive shell
@@ -49,6 +65,10 @@ Usage:
   ./lightx2vModelrun --infer-lora-fp8
                                       Merge LoRAs, quantize to FP8, then infer on 1/2/4/8/16 GPUs
   ./lightx2vModelrun --infer-bf16    Run the GFX1201 BF16 4-step I2V example
+  GPU_DEVICES=0,1 ./lightx2vModelrun --run-wan21-gfx1201
+                                      Run the consolidated Wan2.1 timing entry
+  GPU_DEVICES=0,1 ./lightx2vModelrun --run-wan22-gfx1201
+                                      Run the consolidated Wan2.2 lazy/B1 timing entry
   GPU_DEVICES=0,1 ./lightx2vModelrun --infer-wan21-sage-fp8
                                       Run Wan2.1 720p/81-frame FP8 with Sage on Ulysses SP=2
   GPU_DEVICES=0,1,2,3 ./lightx2vModelrun --wan21-ckconv3d-v1-release
@@ -153,54 +173,25 @@ require_file() {
     [[ -f "$1" ]] || die "Required file not found: $1"
 }
 
-require_safetensors_source() {
-    local source_dir=$1
-    local label=$2
-    require_dir "${source_dir}"
-    find "${source_dir}" -maxdepth 1 -type f -name '*.safetensors' -print -quit | grep -q . || \
-        die "${label} has no safetensors shards: ${source_dir}"
-}
-
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     usage
     exit 0
 fi
 
-if [[ "${1:-}" == "--runtune-wan21" ]]; then
-    runtune_script="${RUN_REPO_DIR}/scripts/run_wan21_i2v_runtune_gfx1201.sh"
-    require_file "${runtune_script}"
-    exec bash "${runtune_script}"
-fi
-
-if [[ "${1:-}" == "--runtune-wan21-vae" ]]; then
-    vae_runtune_script="${RUN_REPO_DIR}/scripts/run_wan21_vae_t0_runtune.sh"
-    require_file "${vae_runtune_script}"
-    export IMAGE MODEL_STORE WAN21_DISTILL_DIR OUTPUT_DIR RUN_REPO_DIR
-    export GPU_IDS="${GPU_DEVICES}"
-    exec bash "${vae_runtune_script}"
-fi
-
-if [[ "${1:-}" == "--runtune-wan21-ck-conv3d-v1" ]]; then
-    ck_conv3d_runtune_script="${RUN_REPO_DIR}/scripts/run_wan21_ck_conv3d_v1_runtune.sh"
-    require_file "${ck_conv3d_runtune_script}"
-    export IMAGE MODEL_STORE WAN21_DISTILL_DIR OUTPUT_DIR RUN_REPO_DIR
-    export GPU_IDS="${GPU_DEVICES}"
-    exec bash "${ck_conv3d_runtune_script}"
-fi
+case "${1:-}" in
+    --infer-lora-fp8 | --infer-bf16 | --runtune-wan21 | --runtune-wan21-vae | \
+        --runtune-wan21-ck-conv3d-v1 | --profile-wan21-ckconv3d-v1 | \
+        --profile-wan22-ckconv3d-v1)
+        die "this legacy mode was retired; use one of scripts/run_01_*.sh, run_02_*.sh, or run_04_*.sh through run_07_*.sh"
+        ;;
+esac
 
 inference_mode=shell
 case "${1:-}" in
-    --infer | --infer-fp8) inference_mode=fp8 ;;
-    --infer-sage-fp8) inference_mode=sage_fp8 ;;
-    --infer-lora-fp8) inference_mode=lora_fp8 ;;
-    --infer-bf16) inference_mode=bf16 ;;
-    --infer-wan21-sage-fp8) inference_mode=wan21_sage_fp8 ;;
-    --wan21-ckconv3d-v1-release) inference_mode=wan21_ckconv3d_v1_release ;;
-    --wan22-ckconv3d-v1-release) inference_mode=wan22_ckconv3d_v1_release ;;
-    --profile-wan21-ckconv3d-v1) inference_mode=wan21_ckconv3d_v1_profile ;;
-    --profile-wan22-ckconv3d-v1) inference_mode=wan22_ckconv3d_v1_profile ;;
-    --benchmark-wan21-4090) inference_mode=wan21_4090 ;;
-    --benchmark-wan21-4090-sage) inference_mode=wan21_4090_sage ;;
+    --infer | --infer-fp8 | --infer-sage-fp8 | --wan22-ckconv3d-v1-release) inference_mode=wan22_unified ;;
+    --infer-wan21-sage-fp8 | --wan21-ckconv3d-v1-release | --benchmark-wan21-4090 | --benchmark-wan21-4090-sage) inference_mode=wan21_unified ;;
+    --run-wan21-gfx1201) inference_mode=wan21_unified ;;
+    --run-wan22-gfx1201) inference_mode=wan22_unified ;;
 esac
 
 if [[ ! "${GPU_DEVICES}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
@@ -214,86 +205,29 @@ for gpu_device in "${gpu_devices[@]}"; do
 done
 gpu_count="${#gpu_devices[@]}"
 fp8_run_script=
-if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "lora_fp8" ]]; then
+if [[ "${inference_mode}" == "wan21_unified" ]]; then
     case "${gpu_count}" in
         1 | 2 | 4 | 8 | 16) ;;
-        *) die "GFX1201 FP8 supports exactly 1, 2, 4, 8, or 16 GPU_DEVICES" ;;
+        *) die "Wan2.1 timing supports exactly 1, 2, 4, 8, or 16 GPU_DEVICES" ;;
     esac
-    if [[ "${inference_mode}" == "lora_fp8" ]]; then
-        fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan22_moe_i2v_distill_lora_fp8_4step_gfx1201_${gpu_count}gpu.sh"
-    elif [[ "${inference_mode}" == "sage_fp8" ]]; then
-        fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan22_moe_i2v_distill_fp8_4step_sage_gfx1201_${gpu_count}gpu.sh"
-    else
-        fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_${gpu_count}gpu.sh"
-    fi
+    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_wan21_in_container.sh"
 fi
-if [[ "${inference_mode}" == "wan21_4090" ]]; then
-    [[ "${gpu_count}" -eq 1 ]] || die "the RTX 4090 comparison is a single-GPU workload; set GPU_DEVICES to one id"
-    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_i2v_distill_fp8_4step_gfx1201_1gpu_benchmark_4090.sh"
-fi
-if [[ "${inference_mode}" == "wan21_4090_sage" ]]; then
-    [[ "${gpu_count}" -eq 1 ]] || die "the Sage RTX 4090 comparison is a single-GPU workload; set GPU_DEVICES to one id"
-    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_i2v_distill_fp8_4step_sage_gfx1201_1gpu_benchmark_4090.sh"
-fi
-if [[ "${inference_mode}" == "wan21_sage_fp8" ]]; then
-    [[ "${gpu_count}" -eq 2 ]] || die "Wan2.1 Sage production inference requires exactly two GPU_DEVICES"
-    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_i2v_distill_fp8_4step_sage_gfx1201_2gpu.sh"
-fi
-if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" ]]; then
-    case "${gpu_count}" in
-        1 | 2 | 4 | 8 | 16) ;;
-        *) die "Wan2.1 CK Conv3d v1 release supports exactly 1, 2, 4, 8, or 16 GPU_DEVICES" ;;
-    esac
-    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_ckconv3d_v1_release.sh"
-    if [[ "${IMAGE}" == "${LEGACY_IMAGE}" ]]; then
-        IMAGE="${CK_CONV3D_V1_IMAGE}"
-    fi
-fi
-if [[ "${inference_mode}" == "wan22_ckconv3d_v1_release" ]]; then
+if [[ "${inference_mode}" == "wan22_unified" ]]; then
     case "${gpu_count}" in
         2 | 4 | 8 | 16) ;;
-        *) die "Wan2.2 CK Conv3d v1 release supports exactly 2, 4, 8, or 16 GPU_DEVICES" ;;
+        *) die "Wan2.2 timing supports exactly 2, 4, 8, or 16 GPU_DEVICES" ;;
     esac
-    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan22_ckconv3d_v1_release.sh"
-    if [[ "${IMAGE}" == "${LEGACY_IMAGE}" ]]; then
-        IMAGE="${CK_CONV3D_V1_IMAGE}"
-    fi
-fi
-if [[ "${inference_mode}" == "wan21_ckconv3d_v1_profile" ]]; then
-    case "${gpu_count}" in
-        1 | 2 | 4 | 8 | 16) ;;
-        *) die "Wan2.1 CK Conv3d profiling supports exactly 1, 2, 4, 8, or 16 GPU_DEVICES" ;;
-    esac
-    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan21_ckconv3d_v1_profile_${gpu_count}gpu.sh"
-    if [[ "${IMAGE}" == "${LEGACY_IMAGE}" ]]; then
-        IMAGE="${CK_CONV3D_V1_IMAGE}"
-    fi
-fi
-if [[ "${inference_mode}" == "wan22_ckconv3d_v1_profile" ]]; then
-    case "${gpu_count}" in
-        1 | 2 | 4 | 8 | 16) ;;
-        *) die "Wan2.2 CK Conv3d profiling supports exactly 1, 2, 4, 8, or 16 GPU_DEVICES" ;;
-    esac
-    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/run_wan22_ckconv3d_v1_profile_${gpu_count}gpu.sh"
-    if [[ "${IMAGE}" == "${LEGACY_IMAGE}" ]]; then
-        IMAGE="${CK_CONV3D_V1_IMAGE}"
-    fi
+    fp8_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_wan22_in_container.sh"
 fi
 
 is_wan21_mode=0
 uses_fp8_run_script=0
-needs_sage_image=0
 needs_ck_image=0
-case "${inference_mode}" in
-    wan21_*) is_wan21_mode=1 ;;
-esac
-case "${inference_mode}" in
-    fp8 | sage_fp8 | lora_fp8 | wan21_* | wan22_ckconv3d_v1_release | wan22_ckconv3d_v1_profile) uses_fp8_run_script=1 ;;
-esac
-case "${inference_mode}" in
-    sage_fp8 | wan21_4090_sage | wan21_sage_fp8) needs_sage_image=1 ;;
-esac
-if [[ "${inference_mode}" == "wan21_ckconv3d_v1_release" || "${inference_mode}" == "wan21_ckconv3d_v1_profile" || "${inference_mode}" == "wan22_ckconv3d_v1_release" || "${inference_mode}" == "wan22_ckconv3d_v1_profile" ]]; then
+if [[ "${inference_mode}" == wan21_unified ]]; then
+    is_wan21_mode=1
+fi
+if [[ "${inference_mode}" == wan21_unified || "${inference_mode}" == wan22_unified ]]; then
+    uses_fp8_run_script=1
     needs_ck_image=1
 fi
 
@@ -302,22 +236,6 @@ if [[ "${uses_fp8_run_script}" == 1 ]]; then
     require_file "${RUN_REPO_DIR}/${fp8_run_script#${CONTAINER_RUN_ROOT}/}"
     require_file "${RUN_REPO_DIR}/scripts/report_dit_progress.py"
 fi
-if [[ "${inference_mode}" == "wan21_ckconv3d_v1_profile" ]]; then
-    require_file "${RUN_REPO_DIR}/scripts/run_wan21_ckconv3d_v1_profile_common.sh"
-fi
-if [[ "${inference_mode}" == "wan22_ckconv3d_v1_profile" ]]; then
-    require_file "${RUN_REPO_DIR}/scripts/run_wan22_ckconv3d_v1_profile_common.sh"
-fi
-if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "lora_fp8" || "${inference_mode}" == "wan22_ckconv3d_v1_release" ]]; then
-    require_file "${RUN_REPO_DIR}/scripts/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_common.sh"
-fi
-if [[ "${inference_mode}" == "sage_fp8" ]]; then
-    require_file "${RUN_REPO_DIR}/scripts/run_wan22_moe_i2v_distill_fp8_4step_sage_gfx1201_common.sh"
-fi
-if [[ "${inference_mode}" == "lora_fp8" ]]; then
-    require_file "${RUN_REPO_DIR}/scripts/run_wan22_moe_i2v_distill_lora_fp8_4step_gfx1201_common.sh"
-fi
-
 encoder_mount_source="${ENCODERS_DIR}"
 encoder_mount_target="${CONTAINER_MODELS_ROOT}/encoders/t5"
 t5_fp8_path="${ENCODERS_DIR}/${T5_FP8_FILENAME}"
@@ -364,19 +282,10 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
             require_file "${WAN22_BASE_DIR}/low_noise_model/config.json"
             require_file "${WAN22_BASE_DIR}/Wan2.1_VAE.pth"
         fi
-        if [[ "${inference_mode}" == "fp8" || "${inference_mode}" == "sage_fp8" || "${inference_mode}" == "wan22_ckconv3d_v1_release" || "${inference_mode}" == "wan22_ckconv3d_v1_profile" ]]; then
+        if [[ "${inference_mode}" == "wan22_unified" ]]; then
             require_file "${t5_fp8_path}"
             require_file "${DISTILL_MODELS_DIR}/wan2.2_i2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"
             require_file "${DISTILL_MODELS_DIR}/wan2.2_i2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"
-        elif [[ "${inference_mode}" == "lora_fp8" ]]; then
-            require_file "${t5_fp8_path}"
-            require_dir "${DISTILL_LORAS_DIR}"
-            require_safetensors_source "${WAN22_BASE_DIR}/high_noise_model" high_noise_model
-            require_safetensors_source "${WAN22_BASE_DIR}/low_noise_model" low_noise_model
-        elif [[ "${inference_mode}" == "bf16" ]]; then
-            require_file "${WAN22_BASE_DIR}/${T5_BF16_FILENAME}"
-            require_file "${DISTILL_MODELS_DIR}/wan2.2_i2v_A14b_high_noise_lightx2v_4step.safetensors"
-            require_file "${DISTILL_MODELS_DIR}/wan2.2_i2v_A14b_low_noise_lightx2v_4step.safetensors"
         fi
     fi
 
@@ -387,19 +296,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         "${CACHE_DIR}/huggingface" \
         "${CACHE_DIR}/torch_extensions" \
         "${CACHE_DIR}/triton"
-    if [[ "${inference_mode}" == "lora_fp8" ]]; then
-        mkdir -p "${LORA_FP8_OUTPUT_DIR}"
-    fi
-
     docker image inspect "${IMAGE}" >/dev/null 2>&1 || die "Docker image is unavailable: ${IMAGE}"
-    if [[ "${needs_sage_image}" == 1 ]]; then
-        image_aiter_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.aiter.revision"}}' "${IMAGE}")"
-        image_lightx2v_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE}")"
-        [[ "${image_aiter_revision}" == "${EXPECTED_SAGE_AITER_REV}" ]] || \
-            die "Sage image Aiter revision ${image_aiter_revision:-missing} does not match ${EXPECTED_SAGE_AITER_REV}; rebuild the image"
-        [[ "${image_lightx2v_revision}" == "${EXPECTED_SAGE_LIGHTX2V_REV}" ]] || \
-            die "Sage image LightX2V revision ${image_lightx2v_revision:-missing} does not match ${EXPECTED_SAGE_LIGHTX2V_REV}; rebuild the image"
-    fi
     if [[ "${needs_ck_image}" == 1 ]]; then
         image_aiter_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.aiter.revision"}}' "${IMAGE}")"
         image_lightx2v_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE}")"
@@ -480,23 +377,6 @@ else
     )
 fi
 
-if [[ "${inference_mode}" == "lora_fp8" ]]; then
-    docker_args+=(
-        --mount "type=bind,source=${DISTILL_LORAS_DIR},target=${CONTAINER_DISTILL_LORAS},readonly"
-        --mount "type=bind,source=${LORA_FP8_OUTPUT_DIR},target=${CONTAINER_LORA_FP8_OUTPUT}"
-        --env "DISTILL_LORAS_DIR=${CONTAINER_DISTILL_LORAS}"
-        --env "LORA_FP8_OUTPUT_DIR=${CONTAINER_LORA_FP8_OUTPUT}"
-    )
-    if [[ -n "${HIGH_NOISE_LORA_FILENAME:-}" ]]; then
-        [[ "${HIGH_NOISE_LORA_FILENAME}" != */* ]] || die "HIGH_NOISE_LORA_FILENAME must be a file name, not a path"
-        docker_args+=(--env "HIGH_NOISE_LORA_PATH=${CONTAINER_DISTILL_LORAS}/${HIGH_NOISE_LORA_FILENAME}")
-    fi
-    if [[ -n "${LOW_NOISE_LORA_FILENAME:-}" ]]; then
-        [[ "${LOW_NOISE_LORA_FILENAME}" != */* ]] || die "LOW_NOISE_LORA_FILENAME must be a file name, not a path"
-        docker_args+=(--env "LOW_NOISE_LORA_PATH=${CONTAINER_DISTILL_LORAS}/${LOW_NOISE_LORA_FILENAME}")
-    fi
-fi
-
 if [[ "${AUTO_REMOVE:-1}" == "1" ]]; then
     docker_args+=(--rm)
 fi
@@ -525,16 +405,12 @@ for inference_env in \
     INFER_STEPS BASE_CONFIG_JSON LIGHTX2V_EXTRA_ARGS CONFIG_ONLY \
     CPU_OFFLOAD OFFLOAD_GRANULARITY OFFLOAD_RATIO \
     ROPE_TYPE LIGHTX2V_GFX1201_FUSED_QK_ROPE LIGHTX2V_AMD_FP8_GEMM_BACKEND \
-    LIGHTX2V_AMD_MIOPEN LIGHTX2V_VAE_CONV3D_BACKEND \
-    LIGHTX2V_CK_CONV3D_PROFILE_DIR PROFILE_TAG PROFILE_WORKLOAD \
+    LIGHTX2V_AMD_MIOPEN LIGHTX2V_VAE_CONV3D_BACKEND PROFILE_WORKLOAD \
     SEQ_P_ATTN_TYPE SELF_ATTN_TYPE \
     USE_TILING_VAE VAE_CPU_OFFLOAD T5_CPU_OFFLOAD \
     CLIP_CPU_OFFLOAD USE_CHANNELS_LAST_3D \
     LIGHTX2V_WARMUP LIGHTX2V_DIT_PROGRESS ROPE_CHUNK_SIZE \
-    LIGHTX2V_WAN_RUNTUNE LIGHTX2V_WAN_RUNTUNE_OUTPUT LIGHTX2V_WAN_RUNTUNE_BACKEND \
-    LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE \
-    LORA_STRENGTH LORA_CONVERT_DEVICE FORCE_LORA_CONVERT \
-    LORA_CONVERT_ONLY SKIP_LORA_CONVERT; do
+    LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE; do
     if [[ -n "${!inference_env:-}" ]]; then
         docker_args+=(--env "${inference_env}=${!inference_env}")
     fi
@@ -547,8 +423,6 @@ fi
 container_command=(/bin/bash)
 if [[ "${uses_fp8_run_script}" == 1 ]]; then
     container_command=(/bin/bash "${fp8_run_script}")
-elif [[ "${inference_mode}" == "bf16" ]]; then
-    container_command=(/bin/bash "${BF16_RUN_SCRIPT}")
 elif (( $# > 0 )); then
     container_command=("$@")
 fi
@@ -563,10 +437,6 @@ else
     printf 'Base model:     %s\n' "${WAN22_BASE_DIR}"
     printf 'Encoders:       %s -> %s\n' "${encoder_mount_source}" "${encoder_mount_target}"
     printf 'Distill models: %s\n' "${DISTILL_MODELS_DIR}"
-fi
-if [[ "${inference_mode}" == "lora_fp8" ]]; then
-    printf 'Distill LoRAs:  %s\n' "${DISTILL_LORAS_DIR}"
-    printf 'LoRA FP8 out:   %s\n' "${LORA_FP8_OUTPUT_DIR}"
 fi
 printf 'Inputs:         %s\n' "${INPUT_DIR}"
 printf 'Outputs:        %s\n' "${OUTPUT_DIR}"

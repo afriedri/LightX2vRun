@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "scripts/upload_wan22_memory_bundle.py"
+SCRIPT = REPO_ROOT / "scripts/deprecated/diagnostics/upload_wan22_memory_bundle.py"
 SPEC = importlib.util.spec_from_file_location("upload_wan22_memory_bundle", SCRIPT)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)

@@ -1,4 +1,67 @@
-# LightX2VRun
+# LightX2VRun — GFX1201 timing entries
+
+The active interface is intentionally limited to six numbered timing tasks.
+Every task uses the same host sweep implementation, the same model-specific
+container entry, and the same rank-critical timing summarizer.
+
+| No. | Entry | Workload | Default GPU counts |
+|---:|---|---|---|
+| 01 | `scripts/run_01_wan21_720p_81f_16fps_1gpu.sh` | Wan2.1, 720P, 81f, 16 FPS | 1 |
+| 02 | `scripts/run_02_wan21_720p_81f_16fps_scale.sh` | Wan2.1, 720P, 81f, 16 FPS | 1/2/4/8/16 |
+| 04 | `scripts/run_04_wan22_480p_81f_16fps_scale.sh` | Wan2.2, 480P, 81f, 16 FPS | 2/4/8/16 |
+| 05 | `scripts/run_05_wan22_480p_121f_24fps_scale.sh` | Wan2.2, 480P, 121f, 24 FPS | 2/4/8/16 |
+| 06 | `scripts/run_06_wan22_720p_81f_16fps_scale.sh` | Wan2.2, 720P, 81f, 16 FPS | 2/4/8/16 |
+| 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
+
+Run every configured GPU count:
+
+```bash
+bash scripts/run_07_wan22_720p_121f_24fps_scale.sh
+```
+
+Run only one scale point (both forms are supported):
+
+```bash
+bash scripts/run_07_wan22_720p_121f_24fps_scale.sh --gpu-count 2
+bash scripts/run_07_wan22_720p_121f_24fps_scale.sh 2
+```
+
+Run an explicit subset:
+
+```bash
+bash scripts/run_07_wan22_720p_121f_24fps_scale.sh --counts 2,8
+```
+
+The default physical groups use the first N GPUs. Override all groups in the
+task's supported-count order when the allocation is different:
+
+```bash
+WAN_GPU_GROUPS='14,15;12,13,14,15;8,9,10,11,12,13,14,15;0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15' \
+  bash scripts/run_07_wan22_720p_121f_24fps_scale.sh
+```
+
+Each run writes `<count>gpu.mp4`, `<count>gpu.log`, `run_manifest.json`,
+`timings.csv`, and `timings.md` under
+`/disk/ssd/lightx2v-runtime/outputs/<run-tag>/`. The final
+table keeps the previous metrics: Image Encoder, VAE Encoder, Text Encoder,
+Encoders total, four-step DiT, mean DiT step, VAE Decoder, RUN pipeline, and
+Total Cost.
+
+Wan2.2 uses full lazy block offload. Its default schedule request is `auto`:
+
+- 2/4 GPUs resolve to `baseline`;
+- 8/16 GPUs resolve to `b1`;
+- `LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE=b1` force-enables B1;
+- `LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE=baseline` force-disables B1.
+
+Shared implementation lives in `scripts/lib/`; it is not a user-facing task.
+Historical launchers are under `scripts/deprecated/` and are not called by the
+numbered entries or covered by the active production contract.
+
+<details>
+<summary>Historical documentation (deprecated)</summary>
+
+# Previous LightX2VRun documentation
 
 Docker launchers for the AMD ROCm GFX1201 LightX2V image. Scaled FP8 inference
 supports 1, 2, 4, 8, and 16 GPUs without enabling classifier-free guidance.
@@ -594,3 +657,5 @@ TARGET_HEIGHT=720 TARGET_WIDTH=1280 \
 ```
 
 Run `./lightx2vModelrun --help` for all supported overrides.
+
+</details>
