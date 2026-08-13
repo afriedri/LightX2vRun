@@ -184,6 +184,15 @@ def markdown_table(scales, results, *, model: str) -> str:
             for scale in scales
         ]
         lines.append(f"| {metric} | " + " | ".join(cells) + " |")
+    lines.extend(
+        (
+            "",
+            "> **Total Cost 口径：**LightX2V 内部从 `init_runner(config)` 调用前，"
+            "到 `runner.run_pipeline(input_info)` 返回后。Baseline 与 B1 使用完全"
+            "相同的起止边界；B1 可能把 eager 初始化工作延迟到 `RUN pipeline` 内，"
+            "因此 RUN 上升而 Total 下降并不表示漏计。",
+        )
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -223,6 +232,10 @@ def main() -> int:
     print(table, end="")
     if args.model == "wan22":
         print("Image Encoder: N/A (Wan2.2 use_image_encoder=false)")
+    print(
+        "Total Cost: LightX2V internal init_runner + run_pipeline; "
+        "identical boundary for Baseline and B1"
+    )
     print(f"CSV: {output_csv}")
     print(f"Table: {output_md}")
     if errors:

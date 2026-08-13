@@ -51,6 +51,12 @@ table keeps the previous metrics: Image Encoder, VAE Encoder, Text Encoder,
 Encoders total, four-step DiT, mean DiT step, VAE Decoder, RUN pipeline, and
 Total Cost.
 
+`Total Cost` keeps the original LightX2V internal definition: it starts before
+`init_runner(config)` and ends after `runner.run_pipeline(input_info)` returns.
+Baseline and B1 use exactly the same boundary. Lazy B1 may move work from eager
+runner initialization into `RUN pipeline`, so a higher pipeline time together
+with a lower Total Cost is valid redistribution rather than missing time.
+
 Wan2.2 uses full lazy block offload. Its default schedule request is `auto`:
 
 - 2/4 GPUs resolve to `baseline`;

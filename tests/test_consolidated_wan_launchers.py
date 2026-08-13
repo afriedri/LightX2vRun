@@ -164,6 +164,8 @@ DiT summary: status=complete, steps=4/4, total=40.000s, average=10.000s/it
             csv_text = (root / "timings.csv").read_text(encoding="utf-8")
         self.assertIn("| DiT 4 steps | 40.000s |", table)
         self.assertIn("| Total Cost | 55.000s |", table)
+        self.assertIn("Baseline 与 B1 使用完全相同的起止边界", table)
+        self.assertIn("RUN 上升而 Total 下降并不表示漏计", table)
         self.assertIn("Encoders 合计,6.100000", csv_text)
 
 
