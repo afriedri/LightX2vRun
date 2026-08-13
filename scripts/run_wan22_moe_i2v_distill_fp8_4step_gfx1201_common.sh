@@ -17,7 +17,7 @@ VAE_CPU_OFFLOAD="${VAE_CPU_OFFLOAD:-1}"
 USE_TILING_VAE="${USE_TILING_VAE:-1}"
 LIGHTX2V_AMD_MIOPEN="${LIGHTX2V_AMD_MIOPEN:-0}"
 USE_CHANNELS_LAST_3D="${USE_CHANNELS_LAST_3D:-0}"
-LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE="${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE:-baseline}"
+LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE="${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE:-auto}"
 for flag_name in \
     CPU_OFFLOAD T5_CPU_OFFLOAD VAE_CPU_OFFLOAD USE_TILING_VAE \
     LIGHTX2V_AMD_MIOPEN USE_CHANNELS_LAST_3D; do
@@ -42,13 +42,13 @@ if [[ ! "${OFFLOAD_RATIO}" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]]; then
     exit 1
 fi
 case "${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}" in
-    baseline | b0 | b1) ;;
+    auto | baseline | b0 | b1) ;;
     *)
-        echo "ERROR: LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE must be baseline, b0, or b1, got ${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}" >&2
+        echo "ERROR: LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE must be auto, baseline, b0, or b1, got ${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}" >&2
         exit 1
         ;;
 esac
-if [[ "${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}" != "baseline" ]]; then
+if [[ "${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}" == "b0" || "${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}" == "b1" ]]; then
     if [[ "${CPU_OFFLOAD}" != "1" || "${OFFLOAD_GRANULARITY}" != "block" || "${OFFLOAD_RATIO}" != "1.0" ]]; then
         echo "ERROR: Wan ${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE} requires CPU_OFFLOAD=1, OFFLOAD_GRANULARITY=block, OFFLOAD_RATIO=1.0" >&2
         exit 1
@@ -184,6 +184,31 @@ if not 0.0 <= offload_ratio <= 1.0:
     raise SystemExit(
         f"OFFLOAD_RATIO must be in [0, 1], got {os.environ['OFFLOAD_RATIO']!r}"
     )
+schedule_request = os.environ["LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE"]
+auto_b1_eligible = (
+    int(seq_p_size) in {8, 16}
+    and os.environ["CPU_OFFLOAD"] == "1"
+    and os.environ["OFFLOAD_GRANULARITY"] == "block"
+    and offload_ratio == 1.0
+    and config.get("lazy_load", False)
+    and config.get("feature_caching", "NoCaching") == "NoCaching"
+)
+schedule = (
+    "b1" if schedule_request == "auto" and auto_b1_eligible
+    else "baseline" if schedule_request == "auto"
+    else schedule_request
+)
+if schedule in {"b0", "b1"} and not (
+    os.environ["CPU_OFFLOAD"] == "1"
+    and os.environ["OFFLOAD_GRANULARITY"] == "block"
+    and offload_ratio == 1.0
+    and config.get("lazy_load", False)
+):
+    raise SystemExit(
+        f"Wan {schedule} requires CPU_OFFLOAD=1, OFFLOAD_GRANULARITY=block, "
+        "OFFLOAD_RATIO=1.0, and lazy_load=true"
+    )
+
 config.update(
     {
         "cpu_offload": os.environ["CPU_OFFLOAD"] == "1",
@@ -192,9 +217,8 @@ config.update(
         "t5_cpu_offload": os.environ["T5_CPU_OFFLOAD"] == "1",
         "vae_cpu_offload": os.environ["VAE_CPU_OFFLOAD"] == "1",
         "use_tiling_vae": os.environ["USE_TILING_VAE"] == "1",
-        "wan_block_offload_schedule": os.environ[
-            "LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE"
-        ],
+        "wan_block_offload_schedule_request": schedule_request,
+        "wan_block_offload_schedule": schedule,
     }
 )
 
@@ -224,6 +248,11 @@ with open(output_path, "w", encoding="utf-8") as output_file:
     output_file.write("\n")
 PY
 
+resolved_offload_schedule="$(
+    python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["wan_block_offload_schedule"])' \
+        "${runtime_config_json}"
+)"
+
 prompt="${PROMPT:-Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights intricate feline details and the refreshing atmosphere of the seaside.}"
 negative_prompt="${NEGATIVE_PROMPT:-色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走}"
 image_path="${IMAGE_PATH:-${lightx2v_path}/assets/inputs/imgs/img_0.jpg}"
@@ -232,7 +261,7 @@ save_result_path="${SAVE_RESULT_PATH:-${lightx2v_path}/save_results/output_light
 echo "GPUs: ${HIP_VISIBLE_DEVICES} (${expected_gpu_count} ranks)"
 echo "Parallel: SP=${seq_p_size}, attention=${seq_p_attn_type}, CFG=disabled"
 echo "Offload: ${OFFLOAD_GRANULARITY}; ratio=${OFFLOAD_RATIO}, DiT=${CPU_OFFLOAD}, T5=${T5_CPU_OFFLOAD}, VAE=${VAE_CPU_OFFLOAD}"
-echo "Wan block-offload schedule: ${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE}"
+echo "Wan block-offload schedule: ${resolved_offload_schedule} (request=${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE})"
 echo "VAE: tiling=${USE_TILING_VAE}, parallel=$((expected_gpu_count > 1 ? 1 : 0)), MIOpen=${LIGHTX2V_AMD_MIOPEN}, channels_last_3d=${USE_CHANNELS_LAST_3D}"
 if (( rope_chunk_size > 0 )); then
     echo "RoPE: chunked at ${rope_chunk_size} sequence rows"

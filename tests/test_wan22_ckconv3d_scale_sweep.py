@@ -94,11 +94,15 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
         self,
         gpu_count: int,
         overrides: dict[str, str] | None = None,
+        base_config_data: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], str]:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             base_config = root / "base.json"
-            base_config.write_text("{}\n", encoding="utf-8")
+            base_config.write_text(
+                json.dumps(base_config_data or {}) + "\n",
+                encoding="utf-8",
+            )
             completed = subprocess.run(
                 ["bash", str(SCRIPTS / f"run_wan22_ckconv3d_v1_profile_{gpu_count}gpu.sh")],
                 check=False,
@@ -115,6 +119,7 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
                     "RUNTIME_CONFIG_DIR": str(root / "runtime"),
                     "AITER_JIT_DIR": str(root / "aiter"),
                     "PROFILE_TAG": f"test_{gpu_count}gpu",
+                    "LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE": "auto",
                     **(overrides or {}),
                 },
             )
@@ -142,7 +147,56 @@ class Wan22CKConv3dScaleSweepTest(unittest.TestCase):
                 self.assertEqual(config["target_height"], 720)
                 self.assertEqual(config["target_width"], 1280)
                 self.assertEqual(config["fps"], 16)
+                self.assertEqual(config["wan_block_offload_schedule_request"], "auto")
+                self.assertEqual(config["wan_block_offload_schedule"], "baseline")
                 self.assertIn("VAE resident, tiling=0", output)
+
+    def test_full_lazy_auto_policy_enables_b1_only_at_8_and_16_gpus(self):
+        lazy_config = {
+            "lazy_load": True,
+            "feature_caching": "NoCaching",
+        }
+        expected_schedules = (
+            (1, "baseline"),
+            (2, "baseline"),
+            (4, "baseline"),
+            (8, "b1"),
+            (16, "b1"),
+        )
+        for gpu_count, expected in expected_schedules:
+            with self.subTest(gpu_count=gpu_count):
+                config, output = self.run_config(
+                    gpu_count,
+                    base_config_data=lazy_config,
+                )
+                self.assertEqual(config["wan_block_offload_schedule_request"], "auto")
+                self.assertEqual(config["wan_block_offload_schedule"], expected)
+                self.assertIn(
+                    f"Wan block-offload schedule: {expected} (request=auto)",
+                    output,
+                )
+
+    def test_full_lazy_policy_allows_explicit_enable_and_disable(self):
+        lazy_config = {
+            "lazy_load": True,
+            "feature_caching": "NoCaching",
+        }
+        for gpu_count in (2, 4):
+            with self.subTest(gpu_count=gpu_count, request="b1"):
+                config, _ = self.run_config(
+                    gpu_count,
+                    {"LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE": "b1"},
+                    base_config_data=lazy_config,
+                )
+                self.assertEqual(config["wan_block_offload_schedule"], "b1")
+        for gpu_count in (8, 16):
+            with self.subTest(gpu_count=gpu_count, request="baseline"):
+                config, _ = self.run_config(
+                    gpu_count,
+                    {"LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE": "baseline"},
+                    base_config_data=lazy_config,
+                )
+                self.assertEqual(config["wan_block_offload_schedule"], "baseline")
 
     def test_480p_profile_is_explicit_16fps_five_second_workload(self):
         config, output = self.run_config(
