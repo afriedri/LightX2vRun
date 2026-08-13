@@ -21,7 +21,9 @@ Overrides:
   WAN_RUN_TAG          Result directory name.
   WAN_RESULT_DIR       Exact result directory.
   MODEL_RUN            Host container launcher.
-  IMAGE                Container image.
+
+The inherited IMAGE environment variable is intentionally ignored. Use the
+explicit --image option when a numbered task must run another image.
 EOF
 }
 
@@ -51,7 +53,7 @@ case "${RUN_MODEL_VERSION}" in
 esac
 
 selected_counts="${WAN_GPU_COUNT:-${RUN_DEFAULT_COUNTS}}"
-image_override="${IMAGE:-}"
+image_override=
 while (( $# > 0 )); do
     case "$1" in
         --gpu-count)
@@ -210,6 +212,7 @@ for count in "${counts[@]}"; do
     echo "[$(date +%H:%M:%S)] ${RUN_MODEL_VERSION}: ${count} GPUs (${selected})"
     run_environment=(
         GPU_DEVICES="${selected}"
+        IMAGE="${image_override}"
         TARGET_HEIGHT="${RUN_TARGET_HEIGHT}"
         TARGET_WIDTH="${RUN_TARGET_WIDTH}"
         TARGET_VIDEO_LENGTH="${RUN_TARGET_FRAMES}"
@@ -219,9 +222,6 @@ for count in "${counts[@]}"; do
     )
     if [[ "${RUN_MODEL_VERSION}" == wan22 ]]; then
         run_environment+=(LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE="${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE:-auto}")
-    fi
-    if [[ -n "${image_override}" ]]; then
-        run_environment+=(IMAGE="${image_override}")
     fi
     set +e
     env "${run_environment[@]}" "${model_run}" "${model_run_mode}" 2>&1 | tee "${log_path}"

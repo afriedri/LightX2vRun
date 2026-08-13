@@ -43,6 +43,7 @@ class ConsolidatedWanLauncherTest(unittest.TestCase):
                         env={
                             **os.environ,
                             "DRY_RUN": "1",
+                            "IMAGE": "example.invalid/stale:hot26",
                             "WAN_RESULT_DIR": str(result_dir),
                             "RUN_REPO_DIR": str(REPO_ROOT),
                         },

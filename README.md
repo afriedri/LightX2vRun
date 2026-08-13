@@ -32,6 +32,10 @@ Run an explicit subset:
 bash scripts/run_07_wan22_720p_121f_24fps_scale.sh --counts 2,8
 ```
 
+Numbered tasks intentionally ignore an inherited `IMAGE` environment variable
+so a stale shell export cannot replace the production Fix1 default. Use the
+explicit `--image IMAGE` option when an alternate image is intentional.
+
 The default physical groups use the first N GPUs. Override all groups in the
 task's supported-count order when the allocation is different:
 
