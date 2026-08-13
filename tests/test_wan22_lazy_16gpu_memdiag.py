@@ -206,6 +206,9 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
         self.assertIn("--experiment-a", launcher)
         self.assertIn("diagnostic bundle upload was still attempted", launcher)
         self.assertIn("def activate_cuda_buffers", launcher)
+        self.assertIn(
+            "B1 computes block 0 outside the steady-state loop", launcher
+        )
         self.assertIn("run_status=$?", launcher)
         self.assertIn(
             "workload failed with status ${run_status}", launcher

@@ -90,8 +90,9 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
             'grep -q '\''wan_block_offload_schedule'\'' /workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py &&
              grep -q '\''def _finish_block_compute'\'' /workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py &&
              grep -q '\''activated = activate()'\'' /workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py &&
+             grep -q '\''B1 computes block 0 outside the steady-state loop'\'' /workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py &&
              grep -q '\''def activate_cuda_buffers'\'' /workspace/LightX2V/lightx2v/common/modules/weight_module.py' || {
-            echo "ERROR: image does not contain the fixed Wan B0/B1 block-offload schedules with CUDA-buffer activation: ${IMAGE}" >&2
+            echo "ERROR: image does not contain the fixed Wan B0/B1 schedules with CUDA-buffer activation and B1 block-index initialization: ${IMAGE}" >&2
             exit 1
         }
     fi
