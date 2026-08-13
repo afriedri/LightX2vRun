@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tarfile
 import tempfile
 import unittest
@@ -75,6 +76,103 @@ class UploadWan22MemoryBundleTests(unittest.TestCase):
             second_digest = MODULE.sha256_file(second)
 
         self.assertEqual(first_digest, second_digest)
+
+    def test_experiment_a_archive_includes_rank_reports_and_summary_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self._result_dir(root)
+            runtune = result / "runtune"
+            runtune.mkdir()
+            for rank in range(2):
+                (runtune / f"rank{rank:03d}.json").write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 2,
+                            "environment": {"rank": rank, "world_size": 2},
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            (result / "experiment_a_summary.json").write_text(
+                '{"kind": "wan22_lazy_experiment_a_summary"}\n',
+                encoding="utf-8",
+            )
+            (result / "experiment_a_summarizer.log").write_text(
+                "summary complete\n",
+                encoding="utf-8",
+            )
+
+            archive_path, artifact_count = MODULE.build_archive(
+                result,
+                root / "experiment-a.tar.gz",
+                experiment_a=True,
+                expected_ranks=2,
+            )
+            with tarfile.open(archive_path, "r:gz") as archive:
+                names = archive.getnames()
+
+        self.assertEqual(artifact_count, 7)
+        self.assertIn(f"{result.name}/runtune/rank000.json", names)
+        self.assertIn(f"{result.name}/runtune/rank001.json", names)
+        self.assertIn(f"{result.name}/experiment_a_summary.json", names)
+        self.assertIn(f"{result.name}/experiment_a_summarizer.log", names)
+
+    def test_experiment_a_archive_rejects_incomplete_rank_set(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self._result_dir(root)
+            runtune = result / "runtune"
+            runtune.mkdir()
+            (runtune / "rank000.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "environment": {"rank": 0, "world_size": 2},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "missing/unexpected"):
+                MODULE.build_archive(
+                    result,
+                    root / "experiment-a.tar.gz",
+                    experiment_a=True,
+                    expected_ranks=2,
+                )
+
+    def test_experiment_a_archive_allows_missing_final_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self._result_dir(root)
+            runtune = result / "runtune"
+            runtune.mkdir()
+            (runtune / "rank000.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "environment": {"rank": 0, "world_size": 1},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (result / "experiment_a_summarizer.log").write_text(
+                "ValueError: missing request scope\n",
+                encoding="utf-8",
+            )
+
+            archive_path, artifact_count = MODULE.build_archive(
+                result,
+                root / "failed-experiment-a.tar.gz",
+                experiment_a=True,
+                expected_ranks=1,
+            )
+            with tarfile.open(archive_path, "r:gz") as archive:
+                names = archive.getnames()
+
+        self.assertEqual(artifact_count, 5)
+        self.assertIn(f"{result.name}/experiment_a_summarizer.log", names)
+        self.assertNotIn(f"{result.name}/experiment_a_summary.json", names)
 
     def test_missing_summary_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

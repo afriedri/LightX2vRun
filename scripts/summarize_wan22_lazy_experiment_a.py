@@ -44,7 +44,15 @@ def distribution(by_rank: dict[int, float]) -> dict[str, Any]:
 def scope(report: dict[str, Any], name: str) -> dict[str, Any]:
     matches = [entry for entry in report.get("scopes", []) if entry.get("name") == name]
     if len(matches) != 1 or not matches[0].get("success"):
-        raise ValueError(f"rank report must contain one successful {name!r} scope")
+        rank = report.get("environment", {}).get("rank", "unknown")
+        available = [
+            f"{entry.get('name', '<unnamed>')}:{entry.get('success', False)}"
+            for entry in report.get("scopes", [])
+        ]
+        raise ValueError(
+            f"rank {rank} report must contain one successful {name!r} scope; "
+            f"found {len(matches)}, available={available}"
+        )
     return matches[0]
 
 

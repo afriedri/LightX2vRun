@@ -171,6 +171,26 @@ through `http://compiler.hvat-ai.com:9000`. Standard
 `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` credentials are also supported.
 Use `--package-only` to create and verify the local archive without uploading.
 
+The Experiment-A launcher enables automatic upload by default. After inference
+it runs the summarizer, then packages the inference log, raw and summarized
+memory diagnostics, all per-rank runtune reports, the summarizer log, and the
+final Experiment-A summary when available. The upload is still attempted when
+the summarizer fails, so the failure bundle is available for debugging.
+
+```bash
+export MINIO_ACCESS_KEY=...
+export MINIO_SECRET_KEY=...
+
+WAN22_CACHE_STATE=warm \
+IMAGE=<instrumented-image> \
+bash scripts/run_wan22_lazy_16gpu_experiment_a.sh
+```
+
+The default Experiment-A target is
+`s3://aitertunecollection/wan22/experiment-a/<run>/<run>_experiment_a.tar.gz`.
+Set `WAN22_UPLOAD=0` to disable automatic packaging/upload, or
+`WAN22_UPLOAD_PREFIX` to change the object-key prefix.
+
 ## Wan2.2 CK Conv3d v1 timing sweep
 
 The Wan2.2 timing sweep runs the same resident, untiled CK-v1 VAE workload used

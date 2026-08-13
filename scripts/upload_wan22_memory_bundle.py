@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import json
 import os
 import sys
 import tarfile
@@ -18,6 +19,7 @@ from urllib.parse import urlparse
 DEFAULT_ENDPOINT = "http://compiler.hvat-ai.com:9000"
 DEFAULT_BUCKET = "aitertunecollection"
 DEFAULT_PREFIX = "wan22/memory-diagnostics"
+EXPERIMENT_A_PREFIX = "wan22/experiment-a"
 MEMORY_SUFFIX = "_memory.jsonl"
 SUMMARY_SUFFIX = ".summary.json"
 
@@ -67,6 +69,57 @@ def diagnostic_paths(result_dir: Path) -> tuple[Path, list[Path]]:
     return result_dir, artifacts
 
 
+def experiment_a_paths(
+    result_dir: Path, expected_ranks: int
+) -> tuple[Path, list[Path]]:
+    result_dir, artifacts = diagnostic_paths(result_dir)
+    runtune_dir = result_dir / "runtune"
+    if not runtune_dir.is_dir():
+        raise ValueError(f"Experiment-A runtune directory not found: {runtune_dir}")
+
+    reports: dict[int, Path] = {}
+    for path in sorted(runtune_dir.glob("rank*.json")):
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f"empty Experiment-A rank report: {path}")
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            environment = report.get("environment", {})
+            rank = int(environment.get("rank", -1))
+            world_size = int(environment.get("world_size", -1))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid Experiment-A rank report {path}: {exc}") from exc
+        if report.get("schema_version") != 2:
+            raise ValueError(f"{path} is not an Experiment-A schema-2 report")
+        if world_size != expected_ranks:
+            raise ValueError(
+                f"{path} world_size={world_size}, expected {expected_ranks}"
+            )
+        if path.name != f"rank{rank:03d}.json":
+            raise ValueError(f"rank report filename does not match rank {rank}: {path}")
+        if rank in reports:
+            raise ValueError(f"duplicate Experiment-A rank {rank}: {path}")
+        reports[rank] = path
+
+    expected = set(range(expected_ranks))
+    if set(reports) != expected:
+        raise ValueError(
+            "missing/unexpected Experiment-A ranks: "
+            f"expected {sorted(expected)}, got {sorted(reports)}"
+        )
+    artifacts.extend(reports[rank] for rank in sorted(reports))
+
+    for optional_name in (
+        "experiment_a_summary.json",
+        "experiment_a_summarizer.log",
+    ):
+        path = result_dir / optional_name
+        if path.exists():
+            if not path.is_file() or path.stat().st_size == 0:
+                raise ValueError(f"empty Experiment-A artifact: {path}")
+            artifacts.append(path)
+    return result_dir, artifacts
+
+
 def _add_regular_file(archive: tarfile.TarFile, source: Path, arcname: str) -> None:
     info = tarfile.TarInfo(arcname)
     info.size = source.stat().st_size
@@ -80,8 +133,18 @@ def _add_regular_file(archive: tarfile.TarFile, source: Path, arcname: str) -> N
         archive.addfile(info, handle)
 
 
-def build_archive(result_dir: Path, archive_path: Path, overwrite: bool = False) -> tuple[Path, int]:
-    result_dir, artifacts = diagnostic_paths(result_dir)
+def build_archive(
+    result_dir: Path,
+    archive_path: Path,
+    overwrite: bool = False,
+    *,
+    experiment_a: bool = False,
+    expected_ranks: int = 16,
+) -> tuple[Path, int]:
+    if experiment_a:
+        result_dir, artifacts = experiment_a_paths(result_dir, expected_ranks)
+    else:
+        result_dir, artifacts = diagnostic_paths(result_dir)
     archive_path = archive_path.expanduser().resolve()
     if archive_path.exists() and not overwrite:
         raise ValueError(f"archive already exists: {archive_path}; pass --overwrite to replace it")
@@ -106,7 +169,7 @@ def build_archive(result_dir: Path, archive_path: Path, overwrite: bool = False)
                         _add_regular_file(
                             archive,
                             source,
-                            f"{result_dir.name}/{source.name}",
+                            f"{result_dir.name}/{source.relative_to(result_dir).as_posix()}",
                         )
         os.replace(temporary_path, archive_path)
         temporary_path = None
@@ -201,6 +264,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--archive", type=Path, help="local archive path")
     parser.add_argument("--overwrite", action="store_true", help="replace an existing --archive path")
     parser.add_argument(
+        "--experiment-a",
+        action="store_true",
+        help="also require and package the complete per-rank Experiment-A reports",
+    )
+    parser.add_argument(
+        "--expected-ranks",
+        type=int,
+        default=16,
+        help="expected Experiment-A rank count (default: 16)",
+    )
+    parser.add_argument(
         "--package-only",
         action="store_true",
         help="build and verify the local archive without uploading it",
@@ -213,11 +287,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result_dir = args.result_dir.expanduser().resolve()
         custom_archive = args.archive is not None
-        archive_path = args.archive or result_dir.parent / f"{result_dir.name}_memory_diagnostics.tar.gz"
+        archive_suffix = (
+            "_experiment_a.tar.gz"
+            if args.experiment_a
+            else "_memory_diagnostics.tar.gz"
+        )
+        archive_path = args.archive or result_dir.parent / f"{result_dir.name}{archive_suffix}"
         archive_path, artifact_count = build_archive(
             result_dir,
             archive_path,
             overwrite=args.overwrite or not custom_archive,
+            experiment_a=args.experiment_a,
+            expected_ranks=args.expected_ranks,
         )
         digest = sha256_file(archive_path)
 
@@ -225,6 +306,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not bucket:
             raise ValueError("bucket must not be empty")
         prefix = args.prefix.strip().strip("/")
+        if args.experiment_a and args.prefix == DEFAULT_PREFIX:
+            prefix = EXPERIMENT_A_PREFIX
         object_key = (
             args.object_key.strip().strip("/")
             if args.object_key is not None

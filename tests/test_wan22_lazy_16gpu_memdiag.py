@@ -193,7 +193,16 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("Experiment A instrumentation: enabled", completed.stdout)
+        self.assertIn("Experiment A upload: enabled", completed.stdout)
         self.assertIn("Experiment A dry-run complete", completed.stdout)
+
+    def test_experiment_a_preflight_checks_wan_override_and_uploads_bundle(self):
+        launcher = EXPERIMENT_A_LAUNCHER.read_text(encoding="utf-8")
+
+        self.assertIn("models/runners/wan/wan_runner.py", launcher)
+        self.assertIn('runtuner.begin_scope("request_end_to_end")', launcher)
+        self.assertIn("--experiment-a", launcher)
+        self.assertIn("diagnostic bundle upload was still attempted", launcher)
 
     def test_experiment_a_summarizes_all_three_timing_scopes(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -261,6 +270,60 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
         self.assertEqual(summary["scopes"]["transformer_lifecycle"]["max_ms"], 6001.0)
         self.assertEqual(summary["scopes"]["request_end_to_end"]["max_ms"], 8001.0)
         self.assertEqual(summary["runtuner_step_wall"]["critical_path_total_ms"], 4010.0)
+
+    def test_experiment_a_missing_scope_error_identifies_rank(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reports = root / "runtune"
+            reports.mkdir()
+            payload = {
+                "schema_version": 2,
+                "backend": "wan22-lazy-full-offload-baseline-warm-cache",
+                "environment": {"rank": 0, "world_size": 1},
+                "steps": [
+                    {"success": True, "wall_ms": 1000.0 + step}
+                    for step in range(4)
+                ],
+                "scopes": [
+                    {
+                        "name": "transformer_lifecycle",
+                        "success": True,
+                        "wall_ms": 6000.0,
+                    }
+                ],
+            }
+            (reports / "rank000.json").write_text(
+                json.dumps(payload), encoding="utf-8"
+            )
+            log = root / "run.log"
+            log.write_text(
+                "DiT summary: status=complete, steps=4/4, total=89.293s\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    "python3",
+                    str(EXPERIMENT_A_SUMMARIZER),
+                    "--input-dir",
+                    str(reports),
+                    "--log",
+                    str(log),
+                    "--output",
+                    str(root / "summary.json"),
+                    "--expected-ranks",
+                    "1",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "rank 0 report must contain one successful 'request_end_to_end' scope",
+            completed.stderr,
+        )
+        self.assertIn("available=['transformer_lifecycle:True']", completed.stderr)
 
 
 if __name__ == "__main__":
