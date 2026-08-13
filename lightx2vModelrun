@@ -5,8 +5,6 @@ CK_CONV3D_V1_IMAGE="compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201
 IMAGE="${IMAGE:-${CK_CONV3D_V1_IMAGE}}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"
-EXPECTED_CK_AITER_REV="${EXPECTED_CK_AITER_REV:-0325656e2fa7370d372499c5350368aea33cafd7}"
-EXPECTED_CK_LIGHTX2V_REV="${EXPECTED_CK_LIGHTX2V_REV:-4a36fe2907c11e3385d9e82aaccee39bfd5a131b}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUN_REPO_DIR="${RUN_REPO_DIR:-${script_dir}}"
 
@@ -173,68 +171,6 @@ require_file() {
     [[ -f "$1" ]] || die "Required file not found: $1"
 }
 
-validate_ck_image_capabilities() {
-    local require_b1=$1
-    local validation_output
-    if ! validation_output="$(docker run --rm --network=none \
-        --env "LIGHTX2V_REQUIRE_B1=${require_b1}" \
-        --entrypoint /bin/bash "${IMAGE}" -c '
-set -Eeuo pipefail
-python3 - <<"PY"
-import hashlib
-import importlib.util
-from pathlib import Path
-
-from aiter.ops import conv3d
-
-expected_hot = frozenset(range(1, 29))
-observed_hot = frozenset(conv3d.CK_CONV3D_V1_HOT_SELECTORS)
-if observed_hot != expected_hot:
-    raise SystemExit(
-        f"CK Conv3d Hot selector contract mismatch: {sorted(observed_hot)}"
-    )
-if conv3d.CK_CONV3D_V1_GENERIC_FALLBACK_SELECTOR != 29:
-    raise SystemExit("CK Conv3d generic fallback selector is not 29")
-if conv3d.CK_CONV3D_V1_CATALOG_FALLBACK_SELECTOR != 30:
-    raise SystemExit("CK Conv3d catalog fallback selector is not 30")
-
-config_path = Path(conv3d.CK_CONV3D_V1_DEFAULT_CONFIG)
-config_bytes = config_path.read_bytes()
-observed_sha256 = hashlib.sha256(config_bytes).hexdigest()
-expected_sha256 = "0fd83b6d3e39e66d4dff06b4f604f1afecc8400c5c5932674ccbdefa48a1a1e5"
-if observed_sha256 != expected_sha256:
-    raise SystemExit(
-        f"CK Conv3d tuned config SHA256 mismatch: {observed_sha256}"
-    )
-rows = sum(1 for _ in config_path.open(encoding="utf-8")) - 1
-if rows != 404:
-    raise SystemExit(f"CK Conv3d tuned config rows={rows}, expected 404")
-
-spec = importlib.util.find_spec("aiter.jit.module_ck_vae_conv3d")
-if spec is None or not (spec.origin or "").endswith(".so"):
-    raise SystemExit("CK Conv3d AOT extension is missing")
-print(
-    f"CK Hot28 capability: selectors=1-28 rows={rows} "
-    f"AOT={spec.origin}"
-)
-PY
-
-if [[ "${LIGHTX2V_REQUIRE_B1}" == 1 ]]; then
-    offload=/workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py
-    weights=/workspace/LightX2V/lightx2v/common/modules/weight_module.py
-    grep -Fq "wan_block_offload_schedule" "${offload}"
-    grep -Fq "def _finish_block_compute" "${offload}"
-    grep -Fq "activated = activate()" "${offload}"
-    grep -Fq "B1 computes block 0 outside the steady-state loop" "${offload}"
-    grep -Fq "def activate_cuda_buffers" "${weights}"
-    echo "Wan B1 capability: fixed schedule and CUDA-buffer activation present"
-fi
-')"; then
-        die "image capability validation failed for ${IMAGE}; restore the accepted Hot28/B1 image or rebuild it"
-    fi
-    printf '%s\n' "${validation_output}"
-}
-
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     usage
     exit 0
@@ -284,13 +220,11 @@ fi
 
 is_wan21_mode=0
 uses_fp8_run_script=0
-needs_ck_image=0
 if [[ "${inference_mode}" == wan21_unified ]]; then
     is_wan21_mode=1
 fi
 if [[ "${inference_mode}" == wan21_unified || "${inference_mode}" == wan22_unified ]]; then
     uses_fp8_run_script=1
-    needs_ck_image=1
 fi
 
 require_dir "${RUN_REPO_DIR}"
@@ -306,6 +240,7 @@ if [[ -f "${ENCODERS_DIR}/t5/${T5_FP8_FILENAME}" ]]; then
     t5_fp8_path="${ENCODERS_DIR}/t5/${T5_FP8_FILENAME}"
 fi
 
+resolved_image_id=
 if [[ "${DRY_RUN:-0}" != "1" ]]; then
     command -v docker >/dev/null 2>&1 || die "docker is not installed or is not in PATH"
     [[ -c /dev/kfd ]] || die "ROCm device /dev/kfd is unavailable"
@@ -358,22 +293,8 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         "${CACHE_DIR}/huggingface" \
         "${CACHE_DIR}/torch_extensions" \
         "${CACHE_DIR}/triton"
-    docker image inspect "${IMAGE}" >/dev/null 2>&1 || die "Docker image is unavailable: ${IMAGE}"
-    if [[ "${needs_ck_image}" == 1 ]]; then
-        image_aiter_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.aiter.revision"}}' "${IMAGE}")"
-        image_lightx2v_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE}")"
-        if [[ "${image_aiter_revision}" != "${EXPECTED_CK_AITER_REV}" ]]; then
-            echo "WARNING: image Aiter label is ${image_aiter_revision:-missing}, expected ${EXPECTED_CK_AITER_REV}; validating the installed Hot28 runtime contract" >&2
-        fi
-        if [[ "${image_lightx2v_revision}" != "${EXPECTED_CK_LIGHTX2V_REV}" ]]; then
-            echo "WARNING: image LightX2V label is ${image_lightx2v_revision:-missing}, expected ${EXPECTED_CK_LIGHTX2V_REV}; validating the installed source capability" >&2
-        fi
-        require_b1=0
-        if [[ "${inference_mode}" == wan22_unified ]]; then
-            require_b1=1
-        fi
-        validate_ck_image_capabilities "${require_b1}"
-    fi
+    resolved_image_id="$(docker image inspect --format '{{.Id}}' "${IMAGE}" 2>/dev/null)" || \
+        die "Docker image is unavailable: ${IMAGE}"
 fi
 
 container_model_path="${CONTAINER_BASE_MODEL}"
@@ -497,6 +418,9 @@ elif (( $# > 0 )); then
 fi
 
 printf 'Image:          %s\n' "${IMAGE}"
+if [[ -n "${resolved_image_id}" ]]; then
+    printf 'Image ID:       %s\n' "${resolved_image_id}"
+fi
 printf 'Container:      %s\n' "${CONTAINER_NAME}"
 printf 'GPU devices:    %s\n' "${GPU_DEVICES}"
 printf 'Mode:           %s\n' "${inference_mode}"

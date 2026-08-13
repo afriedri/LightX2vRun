@@ -12,6 +12,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 WAN22_INSIDE = SCRIPTS / "lib/run_wan22_in_container.sh"
 SUMMARY = SCRIPTS / "lib/summarize_timings.py"
+FIX1_IMAGE = (
+    "compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:"
+    "gfx1201-R9600-FP8-260813-CKConv3dV1-Hot28-B0B1-Fix1"
+)
 
 
 TASKS = {
@@ -62,6 +66,7 @@ class ConsolidatedWanLauncherTest(unittest.TestCase):
                         f"scripts/lib/run_{model}_in_container.sh",
                         completed.stdout,
                     )
+                    self.assertIn(f"Image:          {FIX1_IMAGE}", completed.stdout)
 
     def wan22_config(self, count: int, schedule: str = "auto") -> tuple[dict, str]:
         devices = ",".join(str(index) for index in range(count))
