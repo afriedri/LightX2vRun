@@ -1,10 +1,9 @@
 # Deprecated scripts
 
 Nothing under this directory is called by the six numbered timing entries.
+Completed profiling, runtune, and Experiment-A/B scripts were deleted after
+their conclusions were incorporated into the numbered workflows and notes.
 
-- `completed_wan21/` and `completed_wan22/` preserve completed profiling,
-  runtune, and Experiment-A/B evidence. They are reference-only and are not
-  maintained as executable workflows.
 - `wan22_legacy/` preserves the former general FP8, Sage, and LoRA launchers.
   They may still be useful for code archaeology, but do not implement the
   current lazy/B1 production policy.
