@@ -35,7 +35,7 @@ TARGET_SELF_SHAPE = {"sequence": 74592, "heads": 40, "head_dim": 128}
 def load_report(path):
     with Path(path).open(encoding="utf-8") as report_file:
         report = json.load(report_file)
-    if report.get("schema_version") != 1:
+    if report.get("schema_version") not in (1, 2):
         raise ValueError(f"unsupported runtune schema in {path}")
     if not report.get("steps"):
         raise ValueError(f"runtune report has no steps: {path}")

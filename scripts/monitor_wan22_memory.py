@@ -117,7 +117,20 @@ def parse_status(pid):
             result["namespace_pids"] = ids
         elif line.startswith("Threads:"):
             result["threads"] = int(line.split()[1])
+        elif line.startswith("Cpus_allowed_list:"):
+            result["cpus_allowed_list"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Mems_allowed_list:"):
+            result["mems_allowed_list"] = line.split(":", 1)[1].strip()
     return result
+
+def parse_numa_maps(pid):
+    text = read_text("/proc/{}/numa_maps".format(pid)) or ""
+    pages = {}
+    for line in text.splitlines():
+        for node, count in re.findall(r"\bN([0-9]+)=([0-9]+)\b", line):
+            key = "N{}".format(node)
+            pages[key] = pages.get(key, 0) + int(count)
+    return pages
 
 def find_ranks():
     ranks = []
@@ -143,6 +156,7 @@ def find_ranks():
             "cmdline": cmdline,
         }
         item.update(parse_status(pid))
+        item["numa_pages_by_node"] = parse_numa_maps(pid)
         smaps = parse_kib_file("/proc/{}/smaps_rollup".format(pid))
         if smaps is None:
             item["smaps_error"] = "unreadable"
@@ -308,6 +322,7 @@ def sample_gpus() -> list[dict[str, Any]]:
                 "pci_address": Path(os.path.realpath(device_path)).name,
                 "device_id": read_optional_text(device_path / "device"),
                 "unique_id": read_optional_text(device_path / "unique_id"),
+                "numa_node": read_optional_int(device_path / "numa_node"),
                 "total_bytes": total,
                 "used_bytes": used,
             }
@@ -318,7 +333,17 @@ def sample_gpus() -> list[dict[str, Any]]:
 class PhaseTracker:
     """Best-effort phase labels from the existing profile log."""
 
-    _ORDER = {"loading": 0, "vae_encode": 1, "post_vae_encode": 2, "dit": 3, "vae_decode": 4, "complete": 5}
+    _ORDER = {
+        "loading": 0,
+        "vae_encode": 1,
+        "post_vae_encode": 2,
+        "transformer_shell": 3,
+        "dit_high": 4,
+        "dit_low": 5,
+        "vae_decode": 6,
+        "transformer_released": 7,
+        "complete": 8,
+    }
 
     def __init__(self, log_path: Path | None, expected_ranks: int):
         self.log_path = log_path
@@ -327,6 +352,7 @@ class PhaseTracker:
         self.phase = "loading"
         self.load_done_ranks: set[int] = set()
         self.vae_encode_done_ranks: set[int] = set()
+        self.memory_label_ranks: dict[str, set[int]] = {}
 
     @staticmethod
     def _record_ranks(text: str, marker: str, destination: set[int]) -> None:
@@ -337,6 +363,20 @@ class PhaseTracker:
     def _advance(self, candidate: str) -> None:
         if self._ORDER[candidate] > self._ORDER[self.phase]:
             self.phase = candidate
+
+    def _record_memory_labels(self, text: str) -> None:
+        pattern = re.compile(
+            r"\[WanRunTune\] device_memory label=(?P<label>[a-z0-9_]+) "
+            r"rank=(?P<rank>\d+)",
+            re.IGNORECASE,
+        )
+        for match in pattern.finditer(text):
+            self.memory_label_ranks.setdefault(match.group("label"), set()).add(
+                int(match.group("rank"))
+            )
+
+    def _label_complete(self, label: str) -> bool:
+        return len(self.memory_label_ranks.get(label, ())) >= self.expected_ranks
 
     def update(self) -> str:
         if self.log_path is None:
@@ -351,14 +391,25 @@ class PhaseTracker:
 
         self._record_ranks(text, "Load models", self.load_done_ranks)
         self._record_ranks(text, "Run VAE Encoder", self.vae_encode_done_ranks)
+        self._record_memory_labels(text)
 
         # Only advance: rank-interleaved logs may contain delayed lines.
-        if re.search(r"Run VAE Decoder cost|RUN pipeline cost|Total Cost", text, re.IGNORECASE):
+        if re.search(r"RUN pipeline cost|Total Cost", text, re.IGNORECASE):
             self._advance("complete")
-        elif re.search(r"DiT denoising[^\n]*100%", text, re.IGNORECASE):
+        elif self._label_complete("transformer_released"):
+            self._advance("transformer_released")
+        elif self._label_complete("vae_decode_entry") or self._label_complete("vae_decode_stream_entry"):
             self._advance("vae_decode")
+        elif re.search(r"DiT denoising[^\n]*100%|Run VAE Decoder cost", text, re.IGNORECASE):
+            self._advance("vae_decode")
+        elif self._label_complete("transformer_low_ready"):
+            self._advance("dit_low")
+        elif self._label_complete("transformer_high_ready"):
+            self._advance("dit_high")
+        elif self._label_complete("transformer_shell_ready"):
+            self._advance("transformer_shell")
         elif re.search(r"==>\s*step_index:", text):
-            self._advance("dit")
+            self._advance("dit_high")
         elif len(self.vae_encode_done_ranks) >= self.expected_ranks:
             self._advance("post_vae_encode")
         elif len(self.load_done_ranks) >= self.expected_ranks:
@@ -396,14 +447,68 @@ class Summary:
         self.max_host_used = 0
         self.gpu_peaks: dict[str, int] = {}
         self.phase_maxima: dict[str, dict[str, int]] = {}
+        self.rank_lifecycle: dict[str, dict[str, Any]] = {}
+        self.active_rank_keys: set[str] = set()
+
+    @staticmethod
+    def _rank_key(rank: dict[str, Any]) -> str:
+        return str(rank.get("rank", rank.get("local_rank", rank.get("container_pid"))))
+
+    def _observe_rank_lifecycle(self, sample: dict[str, Any]) -> None:
+        container = sample.get("container", {})
+        if container.get("probe_error"):
+            return
+        timestamp = sample.get("timestamp_utc")
+        monotonic_seconds = sample.get("monotonic_seconds")
+        current_rank_keys: set[str] = set()
+        for rank in container.get("ranks", []):
+            rank_key = self._rank_key(rank)
+            current_rank_keys.add(rank_key)
+            lifecycle = self.rank_lifecycle.setdefault(
+                rank_key,
+                {
+                    "rank": rank.get("rank"),
+                    "local_rank": rank.get("local_rank"),
+                    "container_pid": rank.get("container_pid"),
+                    "host_pid": rank.get("host_pid"),
+                    "first_seen_utc": timestamp,
+                    "first_seen_monotonic_seconds": monotonic_seconds,
+                },
+            )
+            lifecycle["last_seen_utc"] = timestamp
+            lifecycle["last_seen_monotonic_seconds"] = monotonic_seconds
+            lifecycle["cpus_allowed_list"] = rank.get("cpus_allowed_list")
+            lifecycle["mems_allowed_list"] = rank.get("mems_allowed_list")
+            lifecycle["last_numa_pages_by_node"] = rank.get("numa_pages_by_node", {})
+
+        for rank_key in self.active_rank_keys - current_rank_keys:
+            lifecycle = self.rank_lifecycle[rank_key]
+            lifecycle.setdefault("exit_observed_utc", timestamp)
+            lifecycle.setdefault("exit_observed_monotonic_seconds", monotonic_seconds)
+            lifecycle.setdefault("exit_observation", "rank_missing_from_probe")
+        self.active_rank_keys = current_rank_keys
+
+    def close_active_ranks(
+        self,
+        timestamp: str,
+        monotonic_seconds: float,
+        observation: str,
+    ) -> None:
+        for rank_key in self.active_rank_keys:
+            lifecycle = self.rank_lifecycle[rank_key]
+            lifecycle.setdefault("exit_observed_utc", timestamp)
+            lifecycle.setdefault("exit_observed_monotonic_seconds", monotonic_seconds)
+            lifecycle.setdefault("exit_observation", observation)
+        self.active_rank_keys.clear()
 
     def add(self, sample: dict[str, Any]) -> None:
         self.samples += 1
+        self._observe_rank_lifecycle(sample)
         for key, value in sample.get("rank_sums", {}).items():
             if isinstance(value, int):
                 self.max_rank_sums[key] = max(self.max_rank_sums.get(key, 0), value)
         for rank in sample.get("container", {}).get("ranks", []):
-            rank_key = str(rank.get("local_rank", rank.get("container_pid")))
+            rank_key = self._rank_key(rank)
             self.rank_peak_rss[rank_key] = max(self.rank_peak_rss.get(rank_key, 0), rank.get("Rss_bytes", 0))
         cgroup = sample.get("container", {}).get("cgroup", {})
         self.max_cgroup_current = max(self.max_cgroup_current, cgroup.get("current_bytes") or 0)
@@ -437,6 +542,7 @@ class Summary:
             "max_observed_host_used_bytes": self.max_host_used,
             "physical_gpu_peak_used_bytes": self.gpu_peaks,
             "phase_maxima": self.phase_maxima,
+            "rank_lifecycle": self.rank_lifecycle,
         }
 
 
@@ -485,10 +591,12 @@ def main() -> int:
     previous_phase = None
     print(f"Writing samples to {args.output}", file=sys.stderr)
 
+    final_state = "unknown"
     with args.output.open("a", encoding="utf-8") as output:
         while not stop:
             state = container_state(args.container)
             if state != "running":
+                final_state = state
                 break
             sample: dict[str, Any] = {
                 "schema_version": 1,
@@ -529,14 +637,27 @@ def main() -> int:
                 break
             time.sleep(args.interval)
 
+    if summary.active_rank_keys:
+        observation = "monitor_stopped" if stop else f"container_{final_state}"
+        summary.close_active_ranks(utc_now(), time.monotonic(), observation)
+
     summary_data = summary.as_dict()
     summary_path.write_text(json.dumps(summary_data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Summary written to {summary_path}", file=sys.stderr)
+    kernel_peak = summary_data["kernel_reported_cgroup_peak_bytes"]
+    if kernel_peak > 0:
+        cgroup_peak_text = f"kernel cgroup peak={gib(kernel_peak)}"
+    else:
+        cgroup_peak_text = (
+            "kernel cgroup peak=unavailable; "
+            "sampled max cgroup current (lower bound)="
+            f"{gib(summary_data['max_observed_cgroup_current_bytes'])}"
+        )
     print(
         "Peak scopes: "
         f"simultaneous sumRSS={gib(summary_data['max_simultaneous_rank_sums_bytes'].get('Rss_bytes'))}, "
         f"simultaneous sumPSS={gib(summary_data['max_simultaneous_rank_sums_bytes'].get('Pss_bytes'))}, "
-        f"cgroup peak={gib(summary_data['kernel_reported_cgroup_peak_bytes'])}, "
+        f"{cgroup_peak_text}, "
         f"sum(individual rank peak RSS; invalid as host peak)={gib(summary_data['sum_of_individual_rank_peak_rss_bytes_do_not_use_as_host_peak'])}",
         file=sys.stderr,
     )

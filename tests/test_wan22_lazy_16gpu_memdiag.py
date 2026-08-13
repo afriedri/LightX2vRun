@@ -12,6 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = REPO_ROOT / "scripts/run_wan22_ckconv3d_v1_720p_5s_lazy_16gpu_memdiag.sh"
 CONFIG = REPO_ROOT / "configs/wan22_moe_i2v_distill_fp8_4step_sage_gfx1201_lazy.json"
 MODEL_RUN_WRAPPER = REPO_ROOT / "scripts/run_wan22_lazy_16gpu_modelrun.sh"
+EXPERIMENT_A_LAUNCHER = REPO_ROOT / "scripts/run_wan22_lazy_16gpu_experiment_a.sh"
+EXPERIMENT_A_SUMMARIZER = REPO_ROOT / "scripts/summarize_wan22_lazy_experiment_a.py"
 COMPATIBILITY_ROOT = REPO_ROOT / "python_compat/wan22_lazy"
 
 
@@ -158,6 +160,107 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
         )
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("requires exactly 16 GPU_DEVICES", completed.stderr)
+
+    def test_experiment_a_requires_instrumented_image(self):
+        completed = subprocess.run(
+            ["bash", str(EXPERIMENT_A_LAUNCHER)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={key: value for key, value in os.environ.items() if key != "IMAGE"},
+        )
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("IMAGE must name an image", completed.stderr)
+
+    def test_experiment_a_dry_run_enables_ranked_runtune_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            completed = subprocess.run(
+                ["bash", str(EXPERIMENT_A_LAUNCHER)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "IMAGE": "example.invalid/lightx2v:experiment-a",
+                    "DRY_RUN": "1",
+                    "MODEL_RUN": "/bin/true",
+                    "OUTPUT_DIR": str(root),
+                    "SWEEP_TAG": "experiment_a_test",
+                    "WAN22_CACHE_STATE": "warm",
+                },
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Experiment A instrumentation: enabled", completed.stdout)
+        self.assertIn("Experiment A dry-run complete", completed.stdout)
+
+    def test_experiment_a_summarizes_all_three_timing_scopes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reports = root / "runtune"
+            reports.mkdir()
+            for rank in range(2):
+                payload = {
+                    "schema_version": 2,
+                    "backend": "wan22-lazy-full-offload-baseline-warm-cache",
+                    "environment": {"rank": rank, "world_size": 2},
+                    "steps": [
+                        {"success": True, "wall_ms": 1000.0 + rank + step}
+                        for step in range(4)
+                    ],
+                    "scopes": [
+                        {"name": "transformer_lifecycle", "success": True, "wall_ms": 6000.0 + rank},
+                        {"name": "request_end_to_end", "success": True, "wall_ms": 8000.0 + rank},
+                    ],
+                    "events": [{"category": "transformer.release", "elapsed_ms": 10.0 + rank}],
+                    "device_memory_snapshots": [
+                        {"label": "request_start", "allocated_bytes": 10 + rank, "reserved_bytes": 20 + rank}
+                    ],
+                    "summary": {
+                        "cpu": {
+                            "offload.host_fill": {"total_ms": 100.0 + rank},
+                            "offload.host_fill_wait": {"total_ms": 50.0 + rank},
+                            "transformer.construct": {"total_ms": 25.0 + rank},
+                        },
+                        "gpu": {
+                            "offload.initial_copy": {"total_ms": 5.0 + rank},
+                            "offload.prefetch_copy": {"total_ms": 20.0 + rank},
+                            "offload.block_compute": {"total_ms": 900.0 + rank},
+                        },
+                    },
+                }
+                (reports / f"rank{rank:03d}.json").write_text(json.dumps(payload), encoding="utf-8")
+            log = root / "run.log"
+            log.write_text(
+                "DiT summary: status=complete, steps=4/4, total=89.293s, average=22.323s/it, throughput=0.0448it/s\n",
+                encoding="utf-8",
+            )
+            output = root / "summary.json"
+            completed = subprocess.run(
+                [
+                    "python3",
+                    str(EXPERIMENT_A_SUMMARIZER),
+                    "--input-dir",
+                    str(reports),
+                    "--log",
+                    str(log),
+                    "--output",
+                    str(output),
+                    "--expected-ranks",
+                    "2",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            summary = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(summary["legacy_four_step_denoising"]["critical_path_seconds"], 89.293)
+        self.assertEqual(summary["scopes"]["transformer_lifecycle"]["max_ms"], 6001.0)
+        self.assertEqual(summary["scopes"]["request_end_to_end"]["max_ms"], 8001.0)
+        self.assertEqual(summary["runtuner_step_wall"]["critical_path_total_ms"], 4010.0)
 
 
 if __name__ == "__main__":
