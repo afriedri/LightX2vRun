@@ -205,6 +205,11 @@ class Wan22Lazy16GpuMemoryDiagnosticTest(unittest.TestCase):
         self.assertIn('runtuner.begin_scope("request_end_to_end")', launcher)
         self.assertIn("--experiment-a", launcher)
         self.assertIn("diagnostic bundle upload was still attempted", launcher)
+        self.assertIn("def activate_cuda_buffers", launcher)
+        self.assertIn("run_status=$?", launcher)
+        self.assertIn(
+            "workload failed with status ${run_status}", launcher
+        )
 
     def test_experiment_a_summarizes_all_three_timing_scopes(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -88,14 +88,19 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     if [[ "${offload_schedule}" != "baseline" ]]; then
         docker run --rm --network=none --entrypoint /bin/bash "${IMAGE}" -c \
             'grep -q '\''wan_block_offload_schedule'\'' /workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py &&
-             grep -q '\''def _finish_block_compute'\'' /workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py' || {
-            echo "ERROR: image does not contain the Wan B0/B1 block-offload schedules: ${IMAGE}" >&2
+             grep -q '\''def _finish_block_compute'\'' /workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py &&
+             grep -q '\''activated = activate()'\'' /workspace/LightX2V/lightx2v/models/networks/wan/infer/offload/transformer_infer.py &&
+             grep -q '\''def activate_cuda_buffers'\'' /workspace/LightX2V/lightx2v/common/modules/weight_module.py' || {
+            echo "ERROR: image does not contain the fixed Wan B0/B1 block-offload schedules with CUDA-buffer activation: ${IMAGE}" >&2
             exit 1
         }
     fi
 fi
 
+set +e
 bash "${memdiag_launcher}" "$@"
+run_status=$?
+set -e
 
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
     echo "Experiment A dry-run complete; no per-rank reports were expected"
@@ -124,9 +129,17 @@ fi
 
 if (( summarizer_status != 0 )); then
     echo "ERROR: Experiment-A summarizer failed with status ${summarizer_status}; diagnostic bundle upload was still attempted" >&2
-    exit "${summarizer_status}"
 fi
 if (( upload_status != 0 )); then
     echo "ERROR: Experiment-A automatic upload failed with status ${upload_status}" >&2
+fi
+if (( run_status != 0 )); then
+    echo "ERROR: Experiment-A workload failed with status ${run_status}; summarization and diagnostic bundle upload were still attempted" >&2
+    exit "${run_status}"
+fi
+if (( summarizer_status != 0 )); then
+    exit "${summarizer_status}"
+fi
+if (( upload_status != 0 )); then
     exit "${upload_status}"
 fi
