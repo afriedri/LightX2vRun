@@ -301,9 +301,9 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         image_aiter_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.aiter.revision"}}' "${IMAGE}")"
         image_lightx2v_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE}")"
         [[ "${image_aiter_revision}" == "${EXPECTED_CK_AITER_REV}" ]] || \
-            die "CK release image Aiter revision ${image_aiter_revision:-missing} does not match ${EXPECTED_CK_AITER_REV}; rebuild the image"
+            die "local image tag resolves to Aiter ${image_aiter_revision:-missing}, expected accepted revision ${EXPECTED_CK_AITER_REV}; pull or restore the accepted image (do not override the expected revision)"
         [[ "${image_lightx2v_revision}" == "${EXPECTED_CK_LIGHTX2V_REV}" ]] || \
-            die "CK release image LightX2V revision ${image_lightx2v_revision:-missing} does not match ${EXPECTED_CK_LIGHTX2V_REV}; rebuild the image"
+            die "local image tag resolves to LightX2V ${image_lightx2v_revision:-missing}, expected accepted revision ${EXPECTED_CK_LIGHTX2V_REV}; pull or restore the accepted image (do not override the expected revision)"
     fi
 fi
 
