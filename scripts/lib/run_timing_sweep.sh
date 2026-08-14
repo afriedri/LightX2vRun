@@ -21,6 +21,9 @@ Overrides:
   WAN_RUN_TAG          Result directory name.
   WAN_RESULT_DIR       Exact result directory.
   MODEL_RUN            Host container launcher.
+  MEMORY_MONITOR       1 (default) enables host RAM/rank RSS/PSS/GPU VRAM sampling; 0 disables it.
+  MEMORY_MONITOR_INTERVAL        JSONL sampling interval in seconds (default: 2).
+  MEMORY_MONITOR_PRINT_INTERVAL  Terminal heartbeat interval in seconds (default: 30).
 
 The inherited IMAGE environment variable is intentionally ignored. Use the
 explicit --image option when a numbered task must run another image.
@@ -112,12 +115,33 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 model_run="${MODEL_RUN:-${repo_root}/lightx2vModelrun}"
 summary_script="${WAN_TIMING_SUMMARY_SCRIPT:-${script_dir}/summarize_timings.py}"
+memory_monitor_script="${MEMORY_MONITOR_SCRIPT:-${script_dir}/monitor_run_memory.py}"
+memory_monitor_enabled="${MEMORY_MONITOR:-1}"
+memory_monitor_interval="${MEMORY_MONITOR_INTERVAL:-2.0}"
+memory_monitor_print_interval="${MEMORY_MONITOR_PRINT_INTERVAL:-30.0}"
+memory_monitor_start_timeout="${MEMORY_MONITOR_START_TIMEOUT:-900}"
+memory_monitor_host_limit_gib="${MEMORY_MONITOR_HOST_LIMIT_GIB:-512}"
+memory_monitor_gpu_limit_gib="${MEMORY_MONITOR_GPU_LIMIT_GIB:-32}"
+memory_monitor_container="${MEMORY_MONITOR_CONTAINER:-${CONTAINER_NAME:-lightx2v-gfx1201}}"
 run_tag="${WAN_RUN_TAG:-${RUN_TASK_ID}_$(date +%Y%m%d_%H%M%S)}"
 result_dir="${WAN_RESULT_DIR:-${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}}"
 gpu_groups_value="${WAN_GPU_GROUPS:-${RUN_DEFAULT_GPU_GROUPS}}"
 
 [[ -x "${model_run}" ]] || { echo "ERROR: launcher is not executable: ${model_run}" >&2; exit 1; }
 [[ -f "${summary_script}" ]] || { echo "ERROR: timing summary not found: ${summary_script}" >&2; exit 1; }
+case "${memory_monitor_enabled}" in
+    0 | 1) ;;
+    *)
+        echo "ERROR: MEMORY_MONITOR must be 0 or 1, got ${memory_monitor_enabled}" >&2
+        exit 2
+        ;;
+esac
+if [[ "${memory_monitor_enabled}" == "1" ]]; then
+    [[ -f "${memory_monitor_script}" ]] || {
+        echo "ERROR: memory monitor not found: ${memory_monitor_script}" >&2
+        exit 1
+    }
+fi
 if [[ -d "${result_dir}" ]] && [[ -n "$(find "${result_dir}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
     echo "ERROR: result directory is not empty: ${result_dir}" >&2
     exit 1
@@ -172,6 +196,59 @@ for count in "${counts[@]}"; do
     count_seen["${count}"]=1
 done
 
+memory_monitor_pid=
+stop_memory_monitor() {
+    local monitor_pid="${memory_monitor_pid:-}"
+    if [[ -n "${monitor_pid}" ]]; then
+        if kill -0 "${monitor_pid}" 2>/dev/null; then
+            kill "${monitor_pid}" 2>/dev/null || true
+        fi
+        wait "${monitor_pid}" 2>/dev/null || true
+    fi
+    memory_monitor_pid=
+}
+trap stop_memory_monitor EXIT
+
+start_memory_monitor() {
+    local ranks="$1"
+    local gpu_indices="$2"
+    local inference_log="$3"
+    local memory_output="$4"
+    if [[ "${memory_monitor_enabled}" != "1" || "${DRY_RUN:-0}" == "1" ]]; then
+        return
+    fi
+    PYTHONDONTWRITEBYTECODE=1 python3 -B "${memory_monitor_script}" \
+        --container "${memory_monitor_container}" \
+        --log "${inference_log}" \
+        --output "${memory_output}" \
+        --interval "${memory_monitor_interval}" \
+        --print-interval "${memory_monitor_print_interval}" \
+        --start-timeout "${memory_monitor_start_timeout}" \
+        --expected-ranks "${ranks}" \
+        --gpu-indices "${gpu_indices}" \
+        --host-limit-gib "${memory_monitor_host_limit_gib}" \
+        --gpu-limit-gib "${memory_monitor_gpu_limit_gib}" &
+    memory_monitor_pid=$!
+    echo "Memory monitor: ${memory_output} (sample=${memory_monitor_interval}s, terminal=${memory_monitor_print_interval}s + phase changes)"
+}
+
+wait_memory_monitor() {
+    local monitor_pid="${memory_monitor_pid:-}"
+    local monitor_status=0
+    if [[ -z "${monitor_pid}" ]]; then
+        return
+    fi
+    set +e
+    wait "${monitor_pid}"
+    monitor_status=$?
+    set -e
+    memory_monitor_pid=
+    if (( monitor_status != 0 )); then
+        echo "ERROR: memory monitor failed with status ${monitor_status}" >&2
+        return "${monitor_status}"
+    fi
+}
+
 duration_seconds="$(( (RUN_TARGET_FRAMES - 1) / RUN_TARGET_FPS ))"
 python3 - "${result_dir}/run_manifest.json" <<PY
 import json
@@ -201,6 +278,11 @@ echo "Task: ${RUN_TASK_LABEL}"
 echo "Workload: ${RUN_TARGET_HEIGHT}x${RUN_TARGET_WIDTH}, ${RUN_TARGET_FRAMES} frames @ ${RUN_TARGET_FPS} FPS (${duration_seconds}s)"
 echo "GPU counts: ${selected_counts}"
 echo "Results: ${result_dir}"
+if [[ "${memory_monitor_enabled}" == "1" ]]; then
+    echo "Memory monitor: enabled (sample=${memory_monitor_interval}s, terminal=${memory_monitor_print_interval}s + phase changes)"
+else
+    echo "Memory monitor: disabled"
+fi
 if [[ "${RUN_MODEL_VERSION}" == wan22 ]]; then
     echo "Wan2.2 B1 policy: auto (2/4=baseline, 8/16=b1; explicit override remains available)"
 fi
@@ -209,6 +291,7 @@ for count in "${counts[@]}"; do
     selected="${gpu_group_by_count[${count}]}"
     output_path="/workspace/LightX2V/save_results/${run_tag}/${count}gpu.mp4"
     log_path="${result_dir}/${count}gpu.log"
+    memory_output_path="${result_dir}/${count}gpu_memory.jsonl"
     echo "[$(date +%H:%M:%S)] ${RUN_MODEL_VERSION}: ${count} GPUs (${selected})"
     run_environment=(
         GPU_DEVICES="${selected}"
@@ -223,18 +306,22 @@ for count in "${counts[@]}"; do
     if [[ "${RUN_MODEL_VERSION}" == wan22 ]]; then
         run_environment+=(LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE="${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE:-auto}")
     fi
+    start_memory_monitor "${count}" "${selected}" "${log_path}" "${memory_output_path}"
     set +e
     env "${run_environment[@]}" "${model_run}" "${model_run_mode}" 2>&1 | tee "${log_path}"
     pipeline_status=("${PIPESTATUS[@]}")
     set -e
     if (( pipeline_status[0] != 0 )); then
+        stop_memory_monitor
         echo "ERROR: ${count}-GPU inference failed; see ${log_path}" >&2
         exit "${pipeline_status[0]}"
     fi
     if (( pipeline_status[1] != 0 )); then
+        stop_memory_monitor
         echo "ERROR: could not write ${log_path}" >&2
         exit "${pipeline_status[1]}"
     fi
+    wait_memory_monitor
 done
 
 if [[ "${DRY_RUN:-0}" == 1 ]]; then
@@ -253,3 +340,6 @@ echo "Videos   : ${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}/<c
 echo "CSV      : ${result_dir}/timings.csv"
 echo "Table    : ${result_dir}/timings.md"
 echo "Manifest : ${result_dir}/run_manifest.json"
+if [[ "${memory_monitor_enabled}" == "1" ]]; then
+    echo "Memory   : ${result_dir}/<count>gpu_memory.jsonl (+ .summary.json)"
+fi

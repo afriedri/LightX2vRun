@@ -68,6 +68,10 @@ class ConsolidatedWanLauncherTest(unittest.TestCase):
                         completed.stdout,
                     )
                     self.assertIn(f"Image:          {FIX1_IMAGE}", completed.stdout)
+                    self.assertIn(
+                        "Memory monitor: enabled (sample=2.0s, terminal=30.0s + phase changes)",
+                        completed.stdout,
+                    )
 
     def wan22_config(self, count: int, schedule: str = "auto") -> tuple[dict, str]:
         devices = ",".join(str(index) for index in range(count))

@@ -44,12 +44,33 @@ WAN_GPU_GROUPS='14,15;12,13,14,15;8,9,10,11,12,13,14,15;0,1,2,3,4,5,6,7,8,9,10,1
   bash scripts/run_07_wan22_720p_121f_24fps_scale.sh
 ```
 
-Each run writes `<count>gpu.mp4`, `<count>gpu.log`, `run_manifest.json`,
-`timings.csv`, and `timings.md` under
+Each run writes `<count>gpu.mp4`, `<count>gpu.log`,
+`<count>gpu_memory.jsonl`, `<count>gpu_memory.jsonl.summary.json`,
+`run_manifest.json`, `timings.csv`, and `timings.md` under
 `/disk/ssd/lightx2v-runtime/outputs/<run-tag>/`. The final
 table keeps the previous metrics: Image Encoder, VAE Encoder, Text Encoder,
 Encoders total, four-step DiT, mean DiT step, VAE Decoder, RUN pipeline, and
 Total Cost.
+
+The shared launcher enables a read-only host memory monitor by default. It
+samples selected-rank RSS/PSS/private memory, the container cgroup, host memory,
+and physical VRAM for only the GPUs assigned to that scale point. Full samples
+are written to JSONL every 2 seconds, while the terminal prints only phase
+changes, a 30-second heartbeat, one warning per threshold, and the final peak
+summary. The monitor does not call `rocm-smi` or change GPU state.
+
+```bash
+# Disable collection for a pure timing-only repeat.
+MEMORY_MONITOR=0 bash scripts/run_07_wan22_720p_121f_24fps_scale.sh --counts 8,16
+
+# Keep 2-second samples but print terminal heartbeats only every 60 seconds.
+MEMORY_MONITOR_INTERVAL=2 MEMORY_MONITOR_PRINT_INTERVAL=60 \
+  bash scripts/run_07_wan22_720p_121f_24fps_scale.sh --gpu-count 16
+
+# Print only phase transitions and the final peak summary.
+MEMORY_MONITOR_PRINT_INTERVAL=0 \
+  bash scripts/run_07_wan22_720p_121f_24fps_scale.sh --gpu-count 16
+```
 
 `Total Cost` keeps the original LightX2V internal definition: it starts before
 `init_runner(config)` and ends after `runner.run_pipeline(input_info)` returns.

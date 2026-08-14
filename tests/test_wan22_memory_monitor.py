@@ -5,8 +5,8 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MONITOR_PATH = REPO_ROOT / "scripts/deprecated/diagnostics/monitor_wan22_memory.py"
-SPEC = importlib.util.spec_from_file_location("monitor_wan22_memory", MONITOR_PATH)
+MONITOR_PATH = REPO_ROOT / "scripts/lib/monitor_run_memory.py"
+SPEC = importlib.util.spec_from_file_location("monitor_run_memory", MONITOR_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MONITOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MONITOR)
@@ -75,6 +75,44 @@ def test_gpu_index_parser_rejects_duplicates_and_preserves_order():
         assert "unique" in str(exc)
     else:
         raise AssertionError("duplicate GPU indices were accepted")
+
+
+def test_status_output_is_phase_immediate_and_periodically_rate_limited():
+    assert MONITOR.should_emit_status(
+        phase="loading",
+        previous_phase=None,
+        monotonic_seconds=10.0,
+        last_status_time=None,
+        print_interval=30.0,
+    )
+    assert not MONITOR.should_emit_status(
+        phase="loading",
+        previous_phase="loading",
+        monotonic_seconds=20.0,
+        last_status_time=10.0,
+        print_interval=30.0,
+    )
+    assert MONITOR.should_emit_status(
+        phase="dit_high",
+        previous_phase="loading",
+        monotonic_seconds=20.0,
+        last_status_time=10.0,
+        print_interval=30.0,
+    )
+    assert MONITOR.should_emit_status(
+        phase="loading",
+        previous_phase="loading",
+        monotonic_seconds=40.0,
+        last_status_time=10.0,
+        print_interval=30.0,
+    )
+    assert not MONITOR.should_emit_status(
+        phase="loading",
+        previous_phase="loading",
+        monotonic_seconds=100.0,
+        last_status_time=10.0,
+        print_interval=0.0,
+    )
 
 
 def test_phase_tracker_uses_all_rank_memory_boundaries(tmp_path):
