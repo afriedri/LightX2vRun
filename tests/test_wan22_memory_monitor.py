@@ -77,6 +77,25 @@ def test_gpu_index_parser_rejects_duplicates_and_preserves_order():
         raise AssertionError("duplicate GPU indices were accepted")
 
 
+def test_single_process_infer_is_accounted_as_rank_zero():
+    assert 'local_rank = "0"' in MONITOR.CONTAINER_PROBE
+    assert 'rank = "0"' in MONITOR.CONTAINER_PROBE
+    assert '"inferred_single_process": inferred_single_process' in MONITOR.CONTAINER_PROBE
+
+
+def test_minimax_h3_phase_tracker_advances_without_touching_wan_regex(tmp_path):
+    log = tmp_path / "h3.log"
+    log.write_text("[H3Stage] H0 request prepared\n", encoding="utf-8")
+    tracker = MONITOR.MiniMaxH3PhaseTracker(log, expected_ranks=1)
+    assert tracker.update() == "h0"
+    with log.open("a", encoding="utf-8") as stream:
+        stream.write("[H3Stage] H3 packed joint DiT\n")
+    assert tracker.update() == "h3"
+    with log.open("a", encoding="utf-8") as stream:
+        stream.write("[Profile] Single GPU - Total Cost cost 10.0 seconds\n")
+    assert tracker.update() == "complete"
+
+
 def test_status_output_is_phase_immediate_and_periodically_rate_limited():
     assert MONITOR.should_emit_status(
         phase="loading",

@@ -147,12 +147,19 @@ def find_ranks():
         env = parse_environ(pid)
         local_rank = env.get("LOCAL_RANK")
         rank = env.get("RANK")
+        inferred_single_process = False
         if local_rank is None and rank is None:
-            continue
+            # Single-GPU launchers use ``python -m lightx2v.infer`` directly,
+            # without torchrun's rank environment. It is still rank 0 for
+            # process-memory accounting.
+            local_rank = "0"
+            rank = "0"
+            inferred_single_process = True
         item = {
             "container_pid": pid,
             "rank": int(rank) if rank is not None and rank.lstrip("-").isdigit() else rank,
             "local_rank": int(local_rank) if local_rank is not None and local_rank.lstrip("-").isdigit() else local_rank,
+            "inferred_single_process": inferred_single_process,
             "cmdline": cmdline,
         }
         item.update(parse_status(pid))
@@ -429,6 +436,58 @@ class PhaseTracker:
         return self.phase
 
 
+class MiniMaxH3PhaseTracker:
+    """Best-effort H0-H6 labels from MiniMax-H3 stage logs. Wan regex is unchanged."""
+
+    _ORDER = {
+        "loading": 0,
+        "h0": 1,
+        "h1": 2,
+        "h2": 3,
+        "h3": 4,
+        "h4": 5,
+        "h5": 6,
+        "h6": 7,
+        "complete": 8,
+    }
+
+    def __init__(self, log_path: Path | None, expected_ranks: int):
+        self.log_path = log_path
+        self.expected_ranks = expected_ranks
+        self.offset = 0
+        self.phase = "loading"
+
+    def _advance(self, candidate: str) -> None:
+        if self._ORDER[candidate] > self._ORDER[self.phase]:
+            self.phase = candidate
+
+    def update(self) -> str:
+        if self.log_path is None:
+            return "unknown"
+        try:
+            with self.log_path.open("r", encoding="utf-8", errors="replace") as stream:
+                stream.seek(self.offset)
+                text = stream.read()
+                self.offset = stream.tell()
+        except (FileNotFoundError, PermissionError, OSError):
+            return self.phase
+        if re.search(r"RUN pipeline cost|Total Cost", text, re.IGNORECASE):
+            self._advance("complete")
+        for stage, name in (
+            ("H6", "h6"),
+            ("H5", "h5"),
+            ("H4", "h4"),
+            ("H3", "h3"),
+            ("H2", "h2"),
+            ("H1", "h1"),
+            ("H0", "h0"),
+        ):
+            if re.search(rf"\[H3Stage\]\s+{stage}\b", text):
+                self._advance(name)
+                break
+        return self.phase
+
+
 def add_rank_totals(sample: dict[str, Any]) -> None:
     ranks = sample.get("container", {}).get("ranks", [])
     totals: dict[str, int] = {field + "_bytes": 0 for field in SMAPS_FIELDS}
@@ -614,6 +673,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated host ROCm indices to sample (default: all AMD cards)",
     )
     parser.add_argument("--once", action="store_true", help="Take one sample and exit")
+    parser.add_argument(
+        "--phase-schema",
+        choices=("wan", "minimax_h3"),
+        default="wan",
+        help="Log phase labels: wan keeps the existing Wan regex; minimax_h3 uses [H3Stage] H0-H6",
+    )
     return parser
 
 
@@ -645,7 +710,8 @@ def main() -> int:
             return 2
         time.sleep(min(args.interval, 2.0))
 
-    tracker = PhaseTracker(args.log, args.expected_ranks)
+    tracker_cls = MiniMaxH3PhaseTracker if args.phase_schema == "minimax_h3" else PhaseTracker
+    tracker = tracker_cls(args.log, args.expected_ranks)
     summary = Summary()
     previous_phase = None
     last_status_time: float | None = None

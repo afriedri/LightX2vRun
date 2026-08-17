@@ -24,6 +24,10 @@ CACHE_DIR="${CACHE_DIR:-${RUNTIME_ROOT}/cache}"
 readonly CONTAINER_MODELS_ROOT=/models
 readonly CONTAINER_BASE_MODEL=/models/Wan-AI/Wan2.2-I2V-A14B
 readonly CONTAINER_WAN21_DISTILL_MODEL=/models/lightx2v/Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v/distill_fp8
+readonly CONTAINER_H3_MODEL=/models/minimax_h3
+readonly CONTAINER_H3_TURBO=/models/minimax_h3_turbo
+readonly CONTAINER_H3_FIRST_FRAME=/inputs/minimax_h3_first_frame
+readonly CONTAINER_H3_LAST_FRAME=/inputs/minimax_h3_last_frame
 readonly CONTAINER_RUN_ROOT=/workspace/LightX2VRun
 readonly FP8_RUN_SCRIPT_DIR=${CONTAINER_RUN_ROOT}/scripts
 readonly T5_FP8_FILENAME=models_t5_umt5-xxl-enc-fp8.pth
@@ -34,6 +38,8 @@ Usage:
   ./lightx2vModelrun                         Open an interactive Wan2.2 container shell
   ./lightx2vModelrun --run-wan21-gfx1201    Run the consolidated Wan2.1 container entry
   ./lightx2vModelrun --run-wan22-gfx1201    Run the consolidated Wan2.2 lazy/B1 entry
+  ./lightx2vModelrun --run-minimax-h3-gfx1201
+                                            Run MiniMax-H3 FL2V on 1 GPU (H3 launcher only)
   ./lightx2vModelrun COMMAND [ARG...]        Run a command in the container
 
 Ordinary timing runs should use the six numbered scripts:
@@ -190,6 +196,7 @@ case "${1:-}" in
     --infer-wan21-sage-fp8 | --wan21-ckconv3d-v1-release | --benchmark-wan21-4090 | --benchmark-wan21-4090-sage) inference_mode=wan21_unified ;;
     --run-wan21-gfx1201) inference_mode=wan21_unified ;;
     --run-wan22-gfx1201) inference_mode=wan22_unified ;;
+    --run-minimax-h3-gfx1201) inference_mode=minimax_h3 ;;
 esac
 
 if [[ ! "${GPU_DEVICES}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
@@ -217,20 +224,45 @@ if [[ "${inference_mode}" == "wan22_unified" ]]; then
     esac
     fp8_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_wan22_in_container.sh"
 fi
+if [[ "${inference_mode}" == "minimax_h3" ]]; then
+    case "${gpu_count}" in
+        1) ;;
+        *) die "MiniMax-H3 Day0 supports exactly 1 GPU_DEVICES" ;;
+    esac
+    [[ "${LIGHTX2V_H3_EXPLICIT_IMAGE:-0}" == "1" ]] || \
+        die "MiniMax-H3 requires scripts/run_minimax_h3_fl2av_4step_768p_day0.sh --image IMAGE; the Wan default image is not an H3 source tree"
+    h3_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_minimax_h3_in_container.sh"
+fi
 
 is_wan21_mode=0
+is_minimax_h3_mode=0
 uses_fp8_run_script=0
 if [[ "${inference_mode}" == wan21_unified ]]; then
     is_wan21_mode=1
 fi
+if [[ "${inference_mode}" == minimax_h3 ]]; then
+    is_minimax_h3_mode=1
+fi
 if [[ "${inference_mode}" == wan21_unified || "${inference_mode}" == wan22_unified ]]; then
     uses_fp8_run_script=1
+fi
+if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+    [[ -n "${H3_MODEL_DIR:-}" ]] || die "H3_MODEL_DIR is required for MiniMax-H3"
+    [[ -n "${H3_TURBO_DIR:-}" ]] || die "H3_TURBO_DIR is required for MiniMax-H3"
+    [[ -n "${H3_FIRST_FRAME:-}" ]] || die "H3_FIRST_FRAME is required for MiniMax-H3"
+    [[ -n "${H3_LAST_FRAME:-}" ]] || die "H3_LAST_FRAME is required for MiniMax-H3"
+    readonly h3_source_mode=image
 fi
 
 require_dir "${RUN_REPO_DIR}"
 if [[ "${uses_fp8_run_script}" == 1 ]]; then
     require_file "${RUN_REPO_DIR}/${fp8_run_script#${CONTAINER_RUN_ROOT}/}"
     require_file "${RUN_REPO_DIR}/scripts/report_dit_progress.py"
+fi
+if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+    require_file "${RUN_REPO_DIR}/${h3_run_script#${CONTAINER_RUN_ROOT}/}"
+    require_file "${RUN_REPO_DIR}/scripts/lib/build_minimax_h3_runtime_config.py"
+    require_file "${RUN_REPO_DIR}/scripts/lib/preflight_minimax_h3_day0.py"
 fi
 encoder_mount_source="${ENCODERS_DIR}"
 encoder_mount_target="${CONTAINER_MODELS_ROOT}/encoders/t5"
@@ -246,7 +278,12 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     [[ -c /dev/kfd ]] || die "ROCm device /dev/kfd is unavailable"
     [[ -d /dev/dri ]] || die "DRM device directory /dev/dri is unavailable"
 
-    if [[ "${is_wan21_mode}" == 1 ]]; then
+    if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+        require_dir "${H3_MODEL_DIR:?H3_MODEL_DIR is required}"
+        require_dir "${H3_TURBO_DIR:?H3_TURBO_DIR is required}"
+        require_file "${H3_FIRST_FRAME:?H3_FIRST_FRAME is required}"
+        require_file "${H3_LAST_FRAME:?H3_LAST_FRAME is required}"
+    elif [[ "${is_wan21_mode}" == 1 ]]; then
         require_dir "${WAN21_DISTILL_DIR}"
     else
         require_dir "${ENCODERS_DIR}"
@@ -254,7 +291,9 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         require_dir "${WAN22_BASE_DIR}"
     fi
     if [[ "${SKIP_MODEL_CHECKS:-0}" != "1" ]]; then
-        if [[ "${is_wan21_mode}" == 1 ]]; then
+        if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+            require_file "${H3_TURBO_DIR}/minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
+        elif [[ "${is_wan21_mode}" == 1 ]]; then
             require_dir "${WAN21_DISTILL_DIR}/google/umt5-xxl"
             require_file "${WAN21_DISTILL_DIR}/google/umt5-xxl/special_tokens_map.json"
             require_file "${WAN21_DISTILL_DIR}/google/umt5-xxl/spiece.model"
@@ -269,7 +308,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
             for block_index in {0..39}; do
                 require_file "${WAN21_DISTILL_DIR}/block_${block_index}.safetensors"
             done
-        else
+        elif [[ "${is_wan21_mode}" != 1 ]]; then
             require_dir "${WAN22_BASE_DIR}/google/umt5-xxl"
             require_file "${WAN22_BASE_DIR}/google/umt5-xxl/special_tokens_map.json"
             require_file "${WAN22_BASE_DIR}/google/umt5-xxl/spiece.model"
@@ -298,7 +337,9 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
 fi
 
 container_model_path="${CONTAINER_BASE_MODEL}"
-if [[ "${is_wan21_mode}" == 1 ]]; then
+if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+    container_model_path="${CONTAINER_H3_MODEL}"
+elif [[ "${is_wan21_mode}" == 1 ]]; then
     container_model_path="${CONTAINER_WAN21_DISTILL_MODEL}"
 fi
 
@@ -336,7 +377,6 @@ docker_args=(
     --env HSA_ENABLE_IPC_MODE_LEGACY=1
     --env HIP_FORCE_DEV_KERNARG=1
     --env SAFETENSORS_FAST_GPU=1
-    --mount "type=bind,source=${MODEL_STORE},target=/data,readonly"
     --mount "type=bind,source=${RUN_REPO_DIR},target=${CONTAINER_RUN_ROOT},readonly"
     --mount "type=bind,source=${INPUT_DIR},target=/inputs"
     --mount "type=bind,source=${OUTPUT_DIR},target=/workspace/LightX2V/save_results"
@@ -355,12 +395,24 @@ if [[ -n "${CK_CONV3D_TUNED_CSV:-}" ]]; then
     )
 fi
 
-if [[ "${is_wan21_mode}" == 1 ]]; then
+if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     docker_args+=(
+        --mount "type=bind,source=${H3_MODEL_DIR},target=${CONTAINER_H3_MODEL},readonly"
+        --mount "type=bind,source=${H3_TURBO_DIR},target=${CONTAINER_H3_TURBO},readonly"
+        --mount "type=bind,source=${H3_FIRST_FRAME},target=${CONTAINER_H3_FIRST_FRAME},readonly"
+        --mount "type=bind,source=${H3_LAST_FRAME},target=${CONTAINER_H3_LAST_FRAME},readonly"
+        --env "H3_SOURCE_MODE=${h3_source_mode}"
+        --env "IMAGE_PATH=${CONTAINER_H3_FIRST_FRAME}"
+        --env "LAST_FRAME_PATH=${CONTAINER_H3_LAST_FRAME}"
+    )
+elif [[ "${is_wan21_mode}" == 1 ]]; then
+    docker_args+=(
+        --mount "type=bind,source=${MODEL_STORE},target=/data,readonly"
         --mount "type=bind,source=${WAN21_DISTILL_DIR},target=${CONTAINER_WAN21_DISTILL_MODEL},readonly"
     )
 else
     docker_args+=(
+        --mount "type=bind,source=${MODEL_STORE},target=/data,readonly"
         --mount "type=bind,source=${WAN22_BASE_DIR},target=${CONTAINER_BASE_MODEL},readonly"
         --mount "type=bind,source=${encoder_mount_source},target=${encoder_mount_target},readonly"
         --mount "type=bind,source=${DISTILL_MODELS_DIR},target=${CONTAINER_MODELS_ROOT}/lightx2v/Wan2.2-Distill-Models,readonly"
@@ -400,7 +452,8 @@ for inference_env in \
     USE_TILING_VAE VAE_CPU_OFFLOAD T5_CPU_OFFLOAD \
     CLIP_CPU_OFFLOAD USE_CHANNELS_LAST_3D \
     LIGHTX2V_WARMUP LIGHTX2V_DIT_PROGRESS ROPE_CHUNK_SIZE \
-    LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE; do
+    LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE LAST_FRAME_PATH H3_SMOKE H3_PREFLIGHT_ONLY \
+    H3_EVIDENCE_DIR; do
     if [[ -n "${!inference_env:-}" ]]; then
         docker_args+=(--env "${inference_env}=${!inference_env}")
     fi
@@ -413,6 +466,8 @@ fi
 container_command=(/bin/bash)
 if [[ "${uses_fp8_run_script}" == 1 ]]; then
     container_command=(/bin/bash "${fp8_run_script}")
+elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
+    container_command=(/bin/bash "${h3_run_script}")
 elif (( $# > 0 )); then
     container_command=("$@")
 fi
@@ -424,7 +479,14 @@ fi
 printf 'Container:      %s\n' "${CONTAINER_NAME}"
 printf 'GPU devices:    %s\n' "${GPU_DEVICES}"
 printf 'Mode:           %s\n' "${inference_mode}"
-if [[ "${is_wan21_mode}" == 1 ]]; then
+if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+    printf 'H3 model:       %s -> %s\n' "${H3_MODEL_DIR}" "${CONTAINER_H3_MODEL}"
+    printf 'H3 source mode: %s\n' "${h3_source_mode}"
+    printf 'H3 LightX2V:    /workspace/LightX2V (from image)\n'
+    printf 'H3 turbo:       %s -> %s\n' "${H3_TURBO_DIR}" "${CONTAINER_H3_TURBO}"
+    printf 'H3 first frame: %s\n' "${H3_FIRST_FRAME}"
+    printf 'H3 last frame:  %s\n' "${H3_LAST_FRAME}"
+elif [[ "${is_wan21_mode}" == 1 ]]; then
     printf 'Wan2.1 Distill: %s\n' "${WAN21_DISTILL_DIR}"
 else
     printf 'Base model:     %s\n' "${WAN22_BASE_DIR}"
@@ -440,6 +502,9 @@ fi
 printf 'Run scripts:    %s -> %s\n' "${RUN_REPO_DIR}" "${CONTAINER_RUN_ROOT}"
 if [[ "${uses_fp8_run_script}" == 1 ]]; then
     printf 'FP8 launcher:   %s\n' "${fp8_run_script}"
+fi
+if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+    printf 'H3 launcher:    %s\n' "${h3_run_script}"
 fi
 
 docker_command=(docker "${docker_args[@]}" "${IMAGE}" "${container_command[@]}")
