@@ -8,19 +8,21 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY = REPO_ROOT / "scripts/run_minimax_h3_fl2av_4step_768p_day0.sh"
+DEFAULT_MODEL_DIR = "/disk/ssd1/difumodels/MiniMax-h3"
+DEFAULT_TURBO_DIR = "/disk/ssd/difumodels-Dis/Minimax-h3-Turbo"
 
 
-def run_dry(tmp_path: Path, *extra: str) -> tuple[subprocess.CompletedProcess[str], Path]:
+def run_dry(
+    tmp_path: Path,
+    *extra: str,
+    include_model_paths: bool = True,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
     result_dir = tmp_path / "image-result"
     arguments = [
         "bash",
         str(ENTRY),
         "--image",
         "example.invalid/minimax-h3:day0",
-        "--model-dir",
-        str(tmp_path / "MiniMax-H3"),
-        "--turbo-dir",
-        str(tmp_path / "Minimax-h3-Turbo"),
         "--first-frame",
         str(tmp_path / "first.png"),
         "--last-frame",
@@ -30,6 +32,13 @@ def run_dry(tmp_path: Path, *extra: str) -> tuple[subprocess.CompletedProcess[st
         "--preflight-only",
         *extra,
     ]
+    if include_model_paths:
+        arguments[4:4] = [
+            "--model-dir",
+            str(tmp_path / "MiniMax-H3"),
+            "--turbo-dir",
+            str(tmp_path / "Minimax-h3-Turbo"),
+        ]
     completed = subprocess.run(
         arguments,
         check=False,
@@ -40,6 +49,8 @@ def run_dry(tmp_path: Path, *extra: str) -> tuple[subprocess.CompletedProcess[st
             "DRY_RUN": "1",
             "RUN_REPO_DIR": str(REPO_ROOT),
             "MODEL_RUN": str(REPO_ROOT / "lightx2vModelrun"),
+            "H3_MODEL_DIR": "",
+            "H3_TURBO_DIR": "",
         },
     )
     return completed, result_dir
@@ -57,6 +68,16 @@ def test_h3_dry_run_uses_image_source_without_overlay(tmp_path):
     assert manifest["gpus"] == [0]
     assert manifest["parallel"]["tensor_parallel"] is False
     assert manifest["parallel"]["seq_parallel"] is False
+
+
+def test_h3_launcher_uses_published_default_model_locations(tmp_path):
+    completed, result_dir = run_dry(tmp_path, include_model_paths=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert f"H3 model:       {DEFAULT_MODEL_DIR} -> /models/minimax_h3" in completed.stdout
+    assert f"H3 turbo:       {DEFAULT_TURBO_DIR} -> /models/minimax_h3_turbo" in completed.stdout
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["model_dir"] == DEFAULT_MODEL_DIR
+    assert manifest["turbo_dir"] == DEFAULT_TURBO_DIR
 
 
 def test_h3_dry_run_accepts_two_gpu_ulysses_without_tp(tmp_path):

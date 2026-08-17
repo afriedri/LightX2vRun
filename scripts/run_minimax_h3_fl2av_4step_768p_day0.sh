@@ -9,7 +9,7 @@ usage() {
     cat <<'EOF'
 Usage:
   bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh --image IMAGE \
-      --model-dir DIR --turbo-dir DIR --first-frame FILE --last-frame FILE
+      --first-frame FILE --last-frame FILE
 
 Runs MiniMax-H3 FL2V on one gfx1201 GPU or two gfx1201 GPUs with pure Ulysses
 sequence parallelism. --image is required and must contain
@@ -19,7 +19,9 @@ are deliberately unsupported; rebuild the image before C0.
 Options:
   --image IMAGE          Rebuilt gfx1201 H3 image containing Day0 source
   --model-dir DIR        Host MiniMax-H3 checkpoint directory
+                         (default: /disk/ssd1/difumodels/MiniMax-h3)
   --turbo-dir DIR        Host directory containing the Turbo LoRA
+                         (default: /disk/ssd/difumodels-Dis/Minimax-h3-Turbo)
   --first-frame FILE     Host first-frame image
   --last-frame FILE      Host last-frame image
   --result-dir DIR       Exact host result directory (default: timestamped)
@@ -31,13 +33,15 @@ Options:
 Environment:
   PROMPT / SEED          Frozen request values (defaults: built-in prompt / 42)
   GPU_DEVICES            One id for single GPU or two ids for Ulysses SP2
+  H3_MODEL_DIR           Override the default complete H3 checkpoint directory
+  H3_TURBO_DIR           Override the default Turbo LoRA directory
   MEMORY_MONITOR         1 (default) records host RAM, process RSS/PSS and VRAM
 EOF
 }
 
 image=
-model_dir="${H3_MODEL_DIR:-}"
-turbo_dir="${H3_TURBO_DIR:-}"
+model_dir="${H3_MODEL_DIR:-/disk/ssd1/difumodels/MiniMax-h3}"
+turbo_dir="${H3_TURBO_DIR:-/disk/ssd/difumodels-Dis/Minimax-h3-Turbo}"
 first_frame="${H3_FIRST_FRAME:-}"
 last_frame="${H3_LAST_FRAME:-}"
 gpu_devices="${GPU_DEVICES:-0}"
@@ -107,8 +111,8 @@ while (( $# > 0 )); do
 done
 
 [[ -n "${image}" ]] || { echo "ERROR: MiniMax-H3 requires --image; do not fall back to the Wan default image" >&2; exit 2; }
-[[ -n "${model_dir}" && -n "${turbo_dir}" && -n "${first_frame}" && -n "${last_frame}" ]] || {
-    echo "ERROR: --model-dir, --turbo-dir, --first-frame, and --last-frame are required" >&2
+[[ -n "${first_frame}" && -n "${last_frame}" ]] || {
+    echo "ERROR: --first-frame and --last-frame are required" >&2
     exit 2
 }
 [[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+)?$ ]] || {

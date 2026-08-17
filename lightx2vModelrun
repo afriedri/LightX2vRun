@@ -15,6 +15,8 @@ ENCODERS_DIR="${ENCODERS_DIR:-${MODEL_STORE}/Encoders}"
 DISTILL_MODELS_DIR="${DISTILL_MODELS_DIR:-${MODEL_STORE}/Wan2.2-Distill-Models}"
 WAN22_BASE_DIR="${WAN22_BASE_DIR:-${MODEL_STORE}/Wan2.2-I2V-A14B}"
 WAN21_DISTILL_DIR="${WAN21_DISTILL_DIR:-${MODEL_STORE}/Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v/distill_fp8}"
+H3_MODEL_DIR="${H3_MODEL_DIR:-/disk/ssd1/difumodels/MiniMax-h3}"
+H3_TURBO_DIR="${H3_TURBO_DIR:-/disk/ssd/difumodels-Dis/Minimax-h3-Turbo}"
 
 RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd/lightx2v-runtime}"
 INPUT_DIR="${INPUT_DIR:-${RUNTIME_ROOT}/inputs}"
@@ -53,6 +55,7 @@ Ordinary timing runs should use the six numbered scripts:
 
 Important overrides:
   GPU_DEVICES, IMAGE, MODEL_STORE, OUTPUT_DIR, INPUT_DIR, CACHE_DIR
+  H3_MODEL_DIR, H3_TURBO_DIR
   TARGET_HEIGHT, TARGET_WIDTH, TARGET_VIDEO_LENGTH, TARGET_FPS
   LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE=auto|baseline|b1
   DRY_RUN=1, SKIP_MODEL_CHECKS=1
