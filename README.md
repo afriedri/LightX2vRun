@@ -14,8 +14,10 @@ container entry, and the same rank-critical timing summarizer.
 | 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
 
 MiniMax-H3 Day0 is a separate bring-up entry. Its default FL2V first and last
-frames are the NV sample assets baked into the image, so only the image and GPU
-ids are required:
+frames are read-only host inputs at
+`/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png` and
+`/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png`, so only the image and GPU ids
+are required:
 
 ```bash
 bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
@@ -24,8 +26,9 @@ bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
   --preflight-only
 ```
 
-Remove `--preflight-only` to run inference. Pass both `--first-frame` and
-`--last-frame` only when overriding the baked sample with host images.
+Remove `--preflight-only` to run inference. The full run explicitly requests
+1344x768 output. Pass both `--first-frame` and `--last-frame` only when
+overriding the default host images.
 
 ## Package and upload any result directory
 

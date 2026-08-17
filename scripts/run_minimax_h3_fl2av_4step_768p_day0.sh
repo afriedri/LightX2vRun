@@ -23,7 +23,8 @@ Options:
                          (default: /disk/ssd/difumodels-Dis/Minimax-h3-Turbo)
   --first-frame FILE     Custom host first-frame image; must be used with --last-frame
   --last-frame FILE      Custom host last-frame image; must be used with --first-frame
-                         (default: NV FL2V sample frames baked into the image)
+                         (defaults: /disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png
+                                    /disk/ssd/lightx2v-runtime/inputs/END_FL2V.png)
   --result-dir DIR       Exact host result directory (default: timestamped)
   --smoke                480x480 / 124 frames instead of 1344x768 / 362
   --preflight-only       Run per-GPU MHA and SP2 RCCL/Ulysses smoke, then exit
@@ -42,8 +43,8 @@ EOF
 image=
 model_dir="${H3_MODEL_DIR:-/disk/ssd1/difumodels/MiniMax-h3}"
 turbo_dir="${H3_TURBO_DIR:-/disk/ssd/difumodels-Dis/Minimax-h3-Turbo}"
-first_frame="${H3_FIRST_FRAME:-}"
-last_frame="${H3_LAST_FRAME:-}"
+first_frame="${H3_FIRST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png}"
+last_frame="${H3_LAST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png}"
 frame_source=host
 gpu_devices="${GPU_DEVICES:-0}"
 result_dir="${H3_RESULT_DIR:-}"
@@ -112,11 +113,7 @@ while (( $# > 0 )); do
 done
 
 [[ -n "${image}" ]] || { echo "ERROR: MiniMax-H3 requires --image; do not fall back to the Wan default image" >&2; exit 2; }
-if [[ -z "${first_frame}" && -z "${last_frame}" ]]; then
-    frame_source=image
-    first_frame=/workspace/LightX2V/assets/inputs/imgs/flf2v_input_first_frame-fs8.png
-    last_frame=/workspace/LightX2V/assets/inputs/imgs/flf2v_input_last_frame-fs8.png
-elif [[ -z "${first_frame}" || -z "${last_frame}" ]]; then
+if [[ -z "${first_frame}" || -z "${last_frame}" ]]; then
     echo "ERROR: --first-frame and --last-frame must be provided together" >&2
     exit 2
 fi

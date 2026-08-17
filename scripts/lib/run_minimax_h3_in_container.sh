@@ -64,8 +64,12 @@ else
 fi
 
 smoke_flag=()
+target_height=768
+target_width=1344
 if [[ "${H3_SMOKE:-0}" == 1 ]]; then
     smoke_flag+=(--smoke)
+    target_height=480
+    target_width=480
 fi
 
 python3 "${script_dir}/build_minimax_h3_runtime_config.py" \
@@ -124,6 +128,7 @@ infer_args=(
     --prompt "${prompt}"
     --image_path "${image_path}"
     --last_frame_path "${last_frame_path}"
+    --target_shape "${target_height}" "${target_width}"
     --save_result_path "${save_result_path}"
 )
 if [[ "${gpu_count}" == 2 ]]; then
@@ -135,7 +140,7 @@ fi
 if [[ -n "${evidence_dir}" ]]; then
     ffprobe -v error -show_streams -show_format -of json "${save_result_path}" \
         >"${evidence_dir}/ffprobe.json"
-    python3 - "${evidence_dir}/ffprobe.json" <<'PY'
+    python3 - "${evidence_dir}/ffprobe.json" "${target_width}" "${target_height}" <<'PY'
 import json
 import pathlib
 import sys
@@ -145,5 +150,10 @@ kinds = {stream.get("codec_type") for stream in payload.get("streams", [])}
 missing = {"video", "audio"} - kinds
 if missing:
     raise SystemExit(f"MiniMax-H3 output is missing streams: {sorted(missing)}")
+video = next(stream for stream in payload["streams"] if stream.get("codec_type") == "video")
+actual = (int(video["width"]), int(video["height"]))
+expected = (int(sys.argv[2]), int(sys.argv[3]))
+if actual != expected:
+    raise SystemExit(f"MiniMax-H3 output size is {actual[0]}x{actual[1]}, expected {expected[0]}x{expected[1]}")
 PY
 fi

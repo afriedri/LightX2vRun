@@ -10,8 +10,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY = REPO_ROOT / "scripts/run_minimax_h3_fl2av_4step_768p_day0.sh"
 DEFAULT_MODEL_DIR = "/disk/ssd1/difumodels/MiniMax-h3"
 DEFAULT_TURBO_DIR = "/disk/ssd/difumodels-Dis/Minimax-h3-Turbo"
-DEFAULT_FIRST_FRAME = "/workspace/LightX2V/assets/inputs/imgs/flf2v_input_first_frame-fs8.png"
-DEFAULT_LAST_FRAME = "/workspace/LightX2V/assets/inputs/imgs/flf2v_input_last_frame-fs8.png"
+DEFAULT_FIRST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png"
+DEFAULT_LAST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png"
 
 
 def run_dry(
@@ -84,18 +84,20 @@ def test_h3_dry_run_uses_image_source_without_overlay(tmp_path):
     assert manifest["parallel"]["seq_parallel"] is False
 
 
-def test_h3_launcher_defaults_to_nv_frames_baked_into_image(tmp_path):
+def test_h3_launcher_defaults_to_published_host_frames(tmp_path):
     completed, result_dir = run_dry(tmp_path, include_frames=False)
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "H3 frame source: image" in completed.stdout
-    assert "--env H3_FRAME_SOURCE=image" in completed.stdout
-    assert f"--env IMAGE_PATH={DEFAULT_FIRST_FRAME}" in completed.stdout
-    assert f"--env LAST_FRAME_PATH={DEFAULT_LAST_FRAME}" in completed.stdout
-    assert "target=/inputs/minimax_h3_first_frame" not in completed.stdout
-    assert "target=/inputs/minimax_h3_last_frame" not in completed.stdout
+    assert "H3 frame source: host" in completed.stdout
+    assert "--env H3_FRAME_SOURCE=host" in completed.stdout
+    assert "--env IMAGE_PATH=/inputs/minimax_h3_first_frame" in completed.stdout
+    assert "--env LAST_FRAME_PATH=/inputs/minimax_h3_last_frame" in completed.stdout
+    assert f"source={DEFAULT_FIRST_FRAME}" in completed.stdout
+    assert f"source={DEFAULT_LAST_FRAME}" in completed.stdout
+    assert "target=/inputs/minimax_h3_first_frame" in completed.stdout
+    assert "target=/inputs/minimax_h3_last_frame" in completed.stdout
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["first_frame"] == {"path": DEFAULT_FIRST_FRAME, "sha256": None, "source": "image"}
-    assert manifest["last_frame"] == {"path": DEFAULT_LAST_FRAME, "sha256": None, "source": "image"}
+    assert manifest["first_frame"] == {"path": DEFAULT_FIRST_FRAME, "sha256": None, "source": "host"}
+    assert manifest["last_frame"] == {"path": DEFAULT_LAST_FRAME, "sha256": None, "source": "host"}
 
 
 def test_h3_launcher_mounts_explicit_host_frames(tmp_path):
