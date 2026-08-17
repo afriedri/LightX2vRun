@@ -1,2 +1,4 @@
 outputs/
 *.log
+__pycache__/
+*.py[cod]

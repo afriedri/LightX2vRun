@@ -27,6 +27,47 @@ bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
 Remove `--preflight-only` to run inference. Pass both `--first-frame` and
 `--last-frame` only when overriding the baked sample with host images.
 
+## Package and upload any result directory
+
+`scripts/upload_result_bundle.py` recursively packages a complete result
+directory into a deterministic `.tar.gz`, uploads it to S3/MinIO, and verifies
+the remote size, SHA256 metadata, and file-count metadata with `head_object`.
+It includes hidden files, empty files, and empty directories. Symbolic links
+and special files are rejected so a result bundle cannot accidentally capture
+content outside the requested directory.
+
+The default endpoint is `http://compiler.hvat-ai.com:9000`, the default bucket
+is `aitertunecollection`, and the default object prefix is
+`lightx2v/results`. `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` and the standard AWS
+credential environment variables are both supported. Upload requires boto3;
+`--package-only` does not.
+
+Upload the current MiniMax-H3 Day0 result and print a one-day download URL:
+
+```bash
+export MINIO_ACCESS_KEY=...
+export MINIO_SECRET_KEY=...
+
+python3 scripts/upload_result_bundle.py \
+  /disk/ssd/lightx2v-runtime/outputs/minimax_h3_fl2av_4step_768p_day0_20260817_064647 \
+  --prefix minimax-h3/day0 \
+  --presign-seconds 86400
+```
+
+The default local archive is written beside the source directory as
+`<result-dir>.tar.gz`. A caller can choose an exact destination, build without
+uploading, or replace an explicit local archive:
+
+```bash
+python3 scripts/upload_result_bundle.py /path/to/results \
+  --object-key experiments/run-001.tar.gz
+
+python3 scripts/upload_result_bundle.py /path/to/results --package-only
+
+python3 scripts/upload_result_bundle.py /path/to/results \
+  --archive /path/to/bundle.tar.gz --overwrite --package-only
+```
+
 Run every configured GPU count:
 
 ```bash
