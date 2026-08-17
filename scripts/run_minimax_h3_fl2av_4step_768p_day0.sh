@@ -11,7 +11,8 @@ Usage:
   bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh --image IMAGE \
       --model-dir DIR --turbo-dir DIR --first-frame FILE --last-frame FILE
 
-Runs MiniMax-H3 FL2V on one gfx1201 GPU. --image is required and must contain
+Runs MiniMax-H3 FL2V on one gfx1201 GPU or two gfx1201 GPUs with pure Ulysses
+sequence parallelism. --image is required and must contain
 the complete Day0 LightX2V source at /workspace/LightX2V. Host source overlays
 are deliberately unsupported; rebuild the image before C0.
 
@@ -23,11 +24,13 @@ Options:
   --last-frame FILE      Host last-frame image
   --result-dir DIR       Exact host result directory (default: timestamped)
   --smoke                480x480 / 124 frames instead of 1344x768 / 362
-  --preflight-only       Build config and run GPU Triton MHA smoke, then exit
-  --gpu ID               Physical HIP GPU id (default: 0)
+  --preflight-only       Run per-GPU MHA and SP2 RCCL/Ulysses smoke, then exit
+  --gpus IDS             One GPU id or two comma-separated ids (default: 0)
+  --gpu IDS              Backward-compatible alias for --gpus
 
 Environment:
   PROMPT / SEED          Frozen request values (defaults: built-in prompt / 42)
+  GPU_DEVICES            One id for single GPU or two ids for Ulysses SP2
   MEMORY_MONITOR         1 (default) records host RAM, process RSS/PSS and VRAM
 EOF
 }
@@ -37,7 +40,7 @@ model_dir="${H3_MODEL_DIR:-}"
 turbo_dir="${H3_TURBO_DIR:-}"
 first_frame="${H3_FIRST_FRAME:-}"
 last_frame="${H3_LAST_FRAME:-}"
-gpu_id="${GPU_DEVICES:-0}"
+gpu_devices="${GPU_DEVICES:-0}"
 result_dir="${H3_RESULT_DIR:-}"
 smoke=0
 preflight_only=0
@@ -82,9 +85,9 @@ while (( $# > 0 )); do
             result_dir="$2"
             shift 2
             ;;
-        --gpu)
-            (( $# >= 2 )) || { echo "ERROR: --gpu requires a value" >&2; exit 2; }
-            gpu_id="$2"
+        --gpu | --gpus)
+            (( $# >= 2 )) || { echo "ERROR: $1 requires a value" >&2; exit 2; }
+            gpu_devices="$2"
             shift 2
             ;;
         --smoke)
@@ -108,7 +111,16 @@ done
     echo "ERROR: --model-dir, --turbo-dir, --first-frame, and --last-frame are required" >&2
     exit 2
 }
-[[ "${gpu_id}" =~ ^[0-9]+$ ]] || { echo "ERROR: MiniMax-H3 Day0 uses exactly one GPU id" >&2; exit 2; }
+[[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+)?$ ]] || {
+    echo "ERROR: MiniMax-H3 Day0 requires one GPU id or two comma-separated ids" >&2
+    exit 2
+}
+IFS=',' read -r -a gpu_device_ids <<<"${gpu_devices}"
+gpu_count="${#gpu_device_ids[@]}"
+if [[ "${gpu_count}" == 2 && "${gpu_device_ids[0]}" == "${gpu_device_ids[1]}" ]]; then
+    echo "ERROR: MiniMax-H3 GPU ids must be unique" >&2
+    exit 2
+fi
 
 memory_monitor_enabled="${MEMORY_MONITOR:-1}"
 case "${memory_monitor_enabled}" in
@@ -138,7 +150,7 @@ container_evidence_dir=/workspace/LightX2V/save_results
 
 python3 - "${result_dir}/run_manifest.json" "${image}" "${source_mode}" \
     "${model_dir}" "${turbo_dir}" "${first_frame}" "${last_frame}" \
-    "${gpu_id}" "${smoke}" "${preflight_only}" "${prompt}" "${seed}" <<'PY'
+    "${gpu_devices}" "${smoke}" "${preflight_only}" "${prompt}" "${seed}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -152,7 +164,7 @@ import sys
     turbo_dir,
     first_frame,
     last_frame,
-    gpu,
+    gpu_devices,
     smoke,
     preflight_only,
     prompt,
@@ -169,6 +181,7 @@ def sha256(path):
             digest.update(chunk)
     return digest.hexdigest()
 
+gpus = [int(item) for item in gpu_devices.split(",")]
 payload = {
     "kind": "minimax_h3_gfx1201_day0",
     "task": "fl2av",
@@ -182,7 +195,16 @@ payload = {
     },
     "first_frame": {"path": first_frame, "sha256": sha256(first_frame)},
     "last_frame": {"path": last_frame, "sha256": sha256(last_frame)},
-    "gpu": int(gpu),
+    "gpu": gpus[0],
+    "gpus": gpus,
+    "gpu_count": len(gpus),
+    "parallel": {
+        "tensor_parallel": False,
+        "seq_parallel": len(gpus) == 2,
+        "seq_p_size": len(gpus),
+        "seq_p_attn_type": "ulysses" if len(gpus) == 2 else None,
+        "vae_decode_parallel": len(gpus) == 2,
+    },
     "smoke": smoke == "1",
     "preflight_only": preflight_only == "1",
     "seed": int(seed),
@@ -201,7 +223,7 @@ PY
 export IMAGE="${image}"
 export LIGHTX2V_H3_EXPLICIT_IMAGE=1
 unset LIGHTX2V_DIR
-export GPU_DEVICES="${gpu_id}"
+export GPU_DEVICES="${gpu_devices}"
 export H3_MODEL_DIR="${model_dir}"
 export H3_TURBO_DIR="${turbo_dir}"
 export H3_FIRST_FRAME="${first_frame}"
@@ -250,8 +272,8 @@ if [[ "${memory_monitor_enabled}" == 1 && "${DRY_RUN:-0}" != 1 ]]; then
         --interval "${MEMORY_MONITOR_INTERVAL:-2.0}" \
         --print-interval "${MEMORY_MONITOR_PRINT_INTERVAL:-30.0}" \
         --start-timeout "${MEMORY_MONITOR_START_TIMEOUT:-900}" \
-        --expected-ranks 1 \
-        --gpu-indices "${gpu_id}" \
+        --expected-ranks "${gpu_count}" \
+        --gpu-indices "${gpu_devices}" \
         --host-limit-gib "${MEMORY_MONITOR_HOST_LIMIT_GIB:-512}" \
         --gpu-limit-gib "${MEMORY_MONITOR_GPU_LIMIT_GIB:-32}" \
         --phase-schema minimax_h3 &

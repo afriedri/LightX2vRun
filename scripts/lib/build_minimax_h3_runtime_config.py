@@ -60,7 +60,9 @@ def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def build(publish: dict, overlay: dict, *, smoke: bool) -> dict:
+def build(publish: dict, overlay: dict, *, smoke: bool, seq_parallel_size: int = 1) -> dict:
+    if seq_parallel_size not in (1, 2):
+        raise SystemExit(f"MiniMax-H3 Day0 supports seq_parallel_size 1 or 2, got {seq_parallel_size}")
     missing = [key for key in REQUIRED_PUBLISH_KEYS if key not in publish]
     if missing:
         raise SystemExit(f"published H3 JSON is missing keys: {missing}")
@@ -87,6 +89,23 @@ def build(publish: dict, overlay: dict, *, smoke: bool) -> dict:
     lora[0]["path"] = f"/models/minimax_h3_turbo/{TURBO_NAME}"
     config["task"] = "fl2av"
     config["lora_dynamic_apply"] = True
+    config["tensor_parallel"] = False
+    config["text_encoder_tensor_parallel"] = False
+    config["seq_parallel"] = seq_parallel_size > 1
+    config["vae_decode_parallel"] = seq_parallel_size > 1
+    if seq_parallel_size > 1:
+        config["parallel"] = {
+            "seq_p_size": seq_parallel_size,
+            "seq_p_attn_type": "ulysses",
+            "seq_p_prepost_backend": "torch",
+            "seq_p_a2a_backend": "torch",
+            "seq_p_tensor_fusion": False,
+            "seq_p_head_parallel": False,
+        }
+    else:
+        # A truthy parallel dictionary would make the single-process entry try
+        # to initialize torch.distributed without torchrun rendezvous variables.
+        config["parallel"] = False
     return config
 
 
@@ -96,14 +115,21 @@ def main() -> int:
     parser.add_argument("--overlay-json", type=Path, required=True)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--seq-parallel-size", type=int, choices=(1, 2), default=1)
     args = parser.parse_args()
-    config = build(load_json(args.publish_json), load_json(args.overlay_json), smoke=args.smoke)
+    config = build(
+        load_json(args.publish_json),
+        load_json(args.overlay_json),
+        smoke=args.smoke,
+        seq_parallel_size=args.seq_parallel_size,
+    )
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"H3 runtime config: {args.output_json}")
     print(
         f"geometry={config['target_height']}x{config['target_width']} "
-        f"frames={config['target_video_length']} attn={config['h3_core_attn_type']}"
+        f"frames={config['target_video_length']} attn={config['h3_core_attn_type']} "
+        f"seq_parallel_size={args.seq_parallel_size}"
     )
     return 0
 

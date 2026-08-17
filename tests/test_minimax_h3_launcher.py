@@ -54,6 +54,35 @@ def test_h3_dry_run_uses_image_source_without_overlay(tmp_path):
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["source_mode"] == "image"
     assert manifest["task"] == "fl2av"
+    assert manifest["gpus"] == [0]
+    assert manifest["parallel"]["tensor_parallel"] is False
+    assert manifest["parallel"]["seq_parallel"] is False
+
+
+def test_h3_dry_run_accepts_two_gpu_ulysses_without_tp(tmp_path):
+    completed, result_dir = run_dry(tmp_path, "--gpus", "0,1")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert r"HIP_VISIBLE_DEVICES=0\,1" in completed.stdout
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["gpus"] == [0, 1]
+    assert manifest["gpu_count"] == 2
+    assert manifest["parallel"] == {
+        "seq_p_attn_type": "ulysses",
+        "seq_p_size": 2,
+        "seq_parallel": True,
+        "tensor_parallel": False,
+        "vae_decode_parallel": True,
+    }
+
+
+def test_h3_launcher_rejects_duplicate_or_more_than_two_gpus(tmp_path):
+    duplicate, _ = run_dry(tmp_path, "--gpus", "0,0")
+    assert duplicate.returncode == 2
+    assert "must be unique" in duplicate.stderr
+
+    too_many, _ = run_dry(tmp_path, "--gpus", "0,1,2")
+    assert too_many.returncode == 2
+    assert "one GPU id or two comma-separated ids" in too_many.stderr
 
 
 def test_h3_launcher_rejects_host_source_overlay(tmp_path):
