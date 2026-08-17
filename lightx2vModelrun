@@ -30,6 +30,8 @@ readonly CONTAINER_H3_MODEL=/models/minimax_h3
 readonly CONTAINER_H3_TURBO=/models/minimax_h3_turbo
 readonly CONTAINER_H3_FIRST_FRAME=/inputs/minimax_h3_first_frame
 readonly CONTAINER_H3_LAST_FRAME=/inputs/minimax_h3_last_frame
+readonly CONTAINER_H3_IMAGE_FIRST_FRAME=/workspace/LightX2V/assets/inputs/imgs/flf2v_input_first_frame-fs8.png
+readonly CONTAINER_H3_IMAGE_LAST_FRAME=/workspace/LightX2V/assets/inputs/imgs/flf2v_input_last_frame-fs8.png
 readonly CONTAINER_RUN_ROOT=/workspace/LightX2VRun
 readonly FP8_RUN_SCRIPT_DIR=${CONTAINER_RUN_ROOT}/scripts
 readonly T5_FP8_FILENAME=models_t5_umt5-xxl-enc-fp8.pth
@@ -250,11 +252,26 @@ fi
 if [[ "${inference_mode}" == wan21_unified || "${inference_mode}" == wan22_unified ]]; then
     uses_fp8_run_script=1
 fi
+h3_frame_source=
+h3_first_frame_path=
+h3_last_frame_path=
 if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     [[ -n "${H3_MODEL_DIR:-}" ]] || die "H3_MODEL_DIR is required for MiniMax-H3"
     [[ -n "${H3_TURBO_DIR:-}" ]] || die "H3_TURBO_DIR is required for MiniMax-H3"
-    [[ -n "${H3_FIRST_FRAME:-}" ]] || die "H3_FIRST_FRAME is required for MiniMax-H3"
-    [[ -n "${H3_LAST_FRAME:-}" ]] || die "H3_LAST_FRAME is required for MiniMax-H3"
+    h3_frame_source="${H3_FRAME_SOURCE:-image}"
+    case "${h3_frame_source}" in
+        image)
+            h3_first_frame_path="${CONTAINER_H3_IMAGE_FIRST_FRAME}"
+            h3_last_frame_path="${CONTAINER_H3_IMAGE_LAST_FRAME}"
+            ;;
+        host)
+            [[ -n "${H3_FIRST_FRAME:-}" ]] || die "H3_FIRST_FRAME is required when H3_FRAME_SOURCE=host"
+            [[ -n "${H3_LAST_FRAME:-}" ]] || die "H3_LAST_FRAME is required when H3_FRAME_SOURCE=host"
+            h3_first_frame_path="${CONTAINER_H3_FIRST_FRAME}"
+            h3_last_frame_path="${CONTAINER_H3_LAST_FRAME}"
+            ;;
+        *) die "H3_FRAME_SOURCE must be image or host" ;;
+    esac
     readonly h3_source_mode=image
 fi
 
@@ -285,8 +302,10 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     if [[ "${is_minimax_h3_mode}" == 1 ]]; then
         require_dir "${H3_MODEL_DIR:?H3_MODEL_DIR is required}"
         require_dir "${H3_TURBO_DIR:?H3_TURBO_DIR is required}"
-        require_file "${H3_FIRST_FRAME:?H3_FIRST_FRAME is required}"
-        require_file "${H3_LAST_FRAME:?H3_LAST_FRAME is required}"
+        if [[ "${h3_frame_source}" == host ]]; then
+            require_file "${H3_FIRST_FRAME:?H3_FIRST_FRAME is required}"
+            require_file "${H3_LAST_FRAME:?H3_LAST_FRAME is required}"
+        fi
     elif [[ "${is_wan21_mode}" == 1 ]]; then
         require_dir "${WAN21_DISTILL_DIR}"
     else
@@ -403,12 +422,17 @@ if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${H3_MODEL_DIR},target=${CONTAINER_H3_MODEL},readonly"
         --mount "type=bind,source=${H3_TURBO_DIR},target=${CONTAINER_H3_TURBO},readonly"
-        --mount "type=bind,source=${H3_FIRST_FRAME},target=${CONTAINER_H3_FIRST_FRAME},readonly"
-        --mount "type=bind,source=${H3_LAST_FRAME},target=${CONTAINER_H3_LAST_FRAME},readonly"
         --env "H3_SOURCE_MODE=${h3_source_mode}"
-        --env "IMAGE_PATH=${CONTAINER_H3_FIRST_FRAME}"
-        --env "LAST_FRAME_PATH=${CONTAINER_H3_LAST_FRAME}"
+        --env "H3_FRAME_SOURCE=${h3_frame_source}"
+        --env "IMAGE_PATH=${h3_first_frame_path}"
+        --env "LAST_FRAME_PATH=${h3_last_frame_path}"
     )
+    if [[ "${h3_frame_source}" == host ]]; then
+        docker_args+=(
+            --mount "type=bind,source=${H3_FIRST_FRAME},target=${CONTAINER_H3_FIRST_FRAME},readonly"
+            --mount "type=bind,source=${H3_LAST_FRAME},target=${CONTAINER_H3_LAST_FRAME},readonly"
+        )
+    fi
 elif [[ "${is_wan21_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${MODEL_STORE},target=/data,readonly"
@@ -488,8 +512,14 @@ if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     printf 'H3 source mode: %s\n' "${h3_source_mode}"
     printf 'H3 LightX2V:    /workspace/LightX2V (from image)\n'
     printf 'H3 turbo:       %s -> %s\n' "${H3_TURBO_DIR}" "${CONTAINER_H3_TURBO}"
-    printf 'H3 first frame: %s\n' "${H3_FIRST_FRAME}"
-    printf 'H3 last frame:  %s\n' "${H3_LAST_FRAME}"
+    printf 'H3 frame source: %s\n' "${h3_frame_source}"
+    if [[ "${h3_frame_source}" == host ]]; then
+        printf 'H3 first frame: %s -> %s\n' "${H3_FIRST_FRAME}" "${h3_first_frame_path}"
+        printf 'H3 last frame:  %s -> %s\n' "${H3_LAST_FRAME}" "${h3_last_frame_path}"
+    else
+        printf 'H3 first frame: %s\n' "${h3_first_frame_path}"
+        printf 'H3 last frame:  %s\n' "${h3_last_frame_path}"
+    fi
 elif [[ "${is_wan21_mode}" == 1 ]]; then
     printf 'Wan2.1 Distill: %s\n' "${WAN21_DISTILL_DIR}"
 else

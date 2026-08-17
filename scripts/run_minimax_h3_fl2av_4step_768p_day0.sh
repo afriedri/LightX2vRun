@@ -8,8 +8,7 @@ model_run="${MODEL_RUN:-${run_root}/lightx2vModelrun}"
 usage() {
     cat <<'EOF'
 Usage:
-  bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh --image IMAGE \
-      --first-frame FILE --last-frame FILE
+  bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh --image IMAGE
 
 Runs MiniMax-H3 FL2V on one gfx1201 GPU or two gfx1201 GPUs with pure Ulysses
 sequence parallelism. --image is required and must contain
@@ -22,8 +21,9 @@ Options:
                          (default: /disk/ssd1/difumodels/MiniMax-h3)
   --turbo-dir DIR        Host directory containing the Turbo LoRA
                          (default: /disk/ssd/difumodels-Dis/Minimax-h3-Turbo)
-  --first-frame FILE     Host first-frame image
-  --last-frame FILE      Host last-frame image
+  --first-frame FILE     Custom host first-frame image; must be used with --last-frame
+  --last-frame FILE      Custom host last-frame image; must be used with --first-frame
+                         (default: NV FL2V sample frames baked into the image)
   --result-dir DIR       Exact host result directory (default: timestamped)
   --smoke                480x480 / 124 frames instead of 1344x768 / 362
   --preflight-only       Run per-GPU MHA and SP2 RCCL/Ulysses smoke, then exit
@@ -44,6 +44,7 @@ model_dir="${H3_MODEL_DIR:-/disk/ssd1/difumodels/MiniMax-h3}"
 turbo_dir="${H3_TURBO_DIR:-/disk/ssd/difumodels-Dis/Minimax-h3-Turbo}"
 first_frame="${H3_FIRST_FRAME:-}"
 last_frame="${H3_LAST_FRAME:-}"
+frame_source=host
 gpu_devices="${GPU_DEVICES:-0}"
 result_dir="${H3_RESULT_DIR:-}"
 smoke=0
@@ -111,10 +112,14 @@ while (( $# > 0 )); do
 done
 
 [[ -n "${image}" ]] || { echo "ERROR: MiniMax-H3 requires --image; do not fall back to the Wan default image" >&2; exit 2; }
-[[ -n "${first_frame}" && -n "${last_frame}" ]] || {
-    echo "ERROR: --first-frame and --last-frame are required" >&2
+if [[ -z "${first_frame}" && -z "${last_frame}" ]]; then
+    frame_source=image
+    first_frame=/workspace/LightX2V/assets/inputs/imgs/flf2v_input_first_frame-fs8.png
+    last_frame=/workspace/LightX2V/assets/inputs/imgs/flf2v_input_last_frame-fs8.png
+elif [[ -z "${first_frame}" || -z "${last_frame}" ]]; then
+    echo "ERROR: --first-frame and --last-frame must be provided together" >&2
     exit 2
-}
+fi
 [[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+)?$ ]] || {
     echo "ERROR: MiniMax-H3 Day0 requires one GPU id or two comma-separated ids" >&2
     exit 2
@@ -154,7 +159,7 @@ container_evidence_dir=/workspace/LightX2V/save_results
 
 python3 - "${result_dir}/run_manifest.json" "${image}" "${source_mode}" \
     "${model_dir}" "${turbo_dir}" "${first_frame}" "${last_frame}" \
-    "${gpu_devices}" "${smoke}" "${preflight_only}" "${prompt}" "${seed}" <<'PY'
+    "${frame_source}" "${gpu_devices}" "${smoke}" "${preflight_only}" "${prompt}" "${seed}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -168,6 +173,7 @@ import sys
     turbo_dir,
     first_frame,
     last_frame,
+    frame_source,
     gpu_devices,
     smoke,
     preflight_only,
@@ -197,8 +203,8 @@ payload = {
         "path": str(pathlib.Path(turbo_dir) / "minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"),
         "sha256": sha256(pathlib.Path(turbo_dir) / "minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"),
     },
-    "first_frame": {"path": first_frame, "sha256": sha256(first_frame)},
-    "last_frame": {"path": last_frame, "sha256": sha256(last_frame)},
+    "first_frame": {"path": first_frame, "source": frame_source, "sha256": sha256(first_frame)},
+    "last_frame": {"path": last_frame, "source": frame_source, "sha256": sha256(last_frame)},
     "gpu": gpus[0],
     "gpus": gpus,
     "gpu_count": len(gpus),
@@ -232,6 +238,7 @@ export H3_MODEL_DIR="${model_dir}"
 export H3_TURBO_DIR="${turbo_dir}"
 export H3_FIRST_FRAME="${first_frame}"
 export H3_LAST_FRAME="${last_frame}"
+export H3_FRAME_SOURCE="${frame_source}"
 export H3_SMOKE="${smoke}"
 export H3_PREFLIGHT_ONLY="${preflight_only}"
 export PROMPT="${prompt}"

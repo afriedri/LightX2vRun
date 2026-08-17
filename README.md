@@ -13,6 +13,20 @@ container entry, and the same rank-critical timing summarizer.
 | 06 | `scripts/run_06_wan22_720p_81f_16fps_scale.sh` | Wan2.2, 720P, 81f, 16 FPS | 2/4/8/16 |
 | 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
 
+MiniMax-H3 Day0 is a separate bring-up entry. Its default FL2V first and last
+frames are the NV sample assets baked into the image, so only the image and GPU
+ids are required:
+
+```bash
+bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
+  --image IMAGE \
+  --gpus 0,1 \
+  --preflight-only
+```
+
+Remove `--preflight-only` to run inference. Pass both `--first-frame` and
+`--last-frame` only when overriding the baked sample with host images.
+
 Run every configured GPU count:
 
 ```bash

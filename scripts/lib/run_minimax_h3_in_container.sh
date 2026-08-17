@@ -6,6 +6,8 @@ run_root="$(cd -- "${script_dir}/../.." && pwd)"
 lightx2v_path="${LIGHTX2V_PATH:-/workspace/LightX2V}"
 model_path="${MODEL_PATH:-/models/minimax_h3}"
 source_mode="${H3_SOURCE_MODE:-image}"
+image_path="${IMAGE_PATH:-${lightx2v_path}/assets/inputs/imgs/flf2v_input_first_frame-fs8.png}"
+last_frame_path="${LAST_FRAME_PATH:-${lightx2v_path}/assets/inputs/imgs/flf2v_input_last_frame-fs8.png}"
 overlay_json="${BASE_CONFIG_JSON:-${lightx2v_path}/configs/platforms/amd_rocm/minimax_h3_fl2av_4step_768p_gfx1201.json}"
 publish_json="${lightx2v_path}/configs/minimax_h3/dmd/minimax_h3_bf16_4step_single_gpu_offload.json"
 
@@ -76,8 +78,8 @@ python3 "${script_dir}/build_minimax_h3_runtime_config.py" \
 python3 "${script_dir}/preflight_minimax_h3_day0.py" \
     --model-dir "${model_path}" \
     --turbo-dir /models/minimax_h3_turbo \
-    --first-frame /inputs/minimax_h3_first_frame \
-    --last-frame /inputs/minimax_h3_last_frame \
+    --first-frame "${image_path}" \
+    --last-frame "${last_frame_path}" \
     --runtime-config "${runtime_config_json}" \
     --expected-world-size "${gpu_count}" \
     --source-mode "${source_mode}" | tee "${preflight_json}"
@@ -95,8 +97,6 @@ if [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 || "${CONFIG_ONLY:-0}" == 1 ]]; then
 fi
 
 prompt="${PROMPT:-A cinematic tracking shot between the first and last frames, natural motion, photorealistic lighting.}"
-image_path="${IMAGE_PATH:-/inputs/minimax_h3_first_frame}"
-last_frame_path="${LAST_FRAME_PATH:-/inputs/minimax_h3_last_frame}"
 save_result_path="${SAVE_RESULT_PATH:-${lightx2v_path}/save_results/minimax_h3_fl2av.mp4}"
 
 echo "MiniMax-H3 FL2V gfx1201"

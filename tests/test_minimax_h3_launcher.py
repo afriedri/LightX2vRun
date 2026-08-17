@@ -10,12 +10,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY = REPO_ROOT / "scripts/run_minimax_h3_fl2av_4step_768p_day0.sh"
 DEFAULT_MODEL_DIR = "/disk/ssd1/difumodels/MiniMax-h3"
 DEFAULT_TURBO_DIR = "/disk/ssd/difumodels-Dis/Minimax-h3-Turbo"
+DEFAULT_FIRST_FRAME = "/workspace/LightX2V/assets/inputs/imgs/flf2v_input_first_frame-fs8.png"
+DEFAULT_LAST_FRAME = "/workspace/LightX2V/assets/inputs/imgs/flf2v_input_last_frame-fs8.png"
 
 
 def run_dry(
     tmp_path: Path,
     *extra: str,
     include_model_paths: bool = True,
+    include_frames: bool = True,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     result_dir = tmp_path / "image-result"
     arguments = [
@@ -23,22 +26,33 @@ def run_dry(
         str(ENTRY),
         "--image",
         "example.invalid/minimax-h3:day0",
-        "--first-frame",
-        str(tmp_path / "first.png"),
-        "--last-frame",
-        str(tmp_path / "last.png"),
-        "--result-dir",
-        str(result_dir),
-        "--preflight-only",
-        *extra,
     ]
     if include_model_paths:
-        arguments[4:4] = [
-            "--model-dir",
-            str(tmp_path / "MiniMax-H3"),
-            "--turbo-dir",
-            str(tmp_path / "Minimax-h3-Turbo"),
+        arguments.extend(
+            [
+                "--model-dir",
+                str(tmp_path / "MiniMax-H3"),
+                "--turbo-dir",
+                str(tmp_path / "Minimax-h3-Turbo"),
+            ]
+        )
+    if include_frames:
+        arguments.extend(
+            [
+                "--first-frame",
+                str(tmp_path / "first.png"),
+                "--last-frame",
+                str(tmp_path / "last.png"),
+            ]
+        )
+    arguments.extend(
+        [
+            "--result-dir",
+            str(result_dir),
+            "--preflight-only",
+            *extra,
         ]
+    )
     completed = subprocess.run(
         arguments,
         check=False,
@@ -68,6 +82,32 @@ def test_h3_dry_run_uses_image_source_without_overlay(tmp_path):
     assert manifest["gpus"] == [0]
     assert manifest["parallel"]["tensor_parallel"] is False
     assert manifest["parallel"]["seq_parallel"] is False
+
+
+def test_h3_launcher_defaults_to_nv_frames_baked_into_image(tmp_path):
+    completed, result_dir = run_dry(tmp_path, include_frames=False)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "H3 frame source: image" in completed.stdout
+    assert "--env H3_FRAME_SOURCE=image" in completed.stdout
+    assert f"--env IMAGE_PATH={DEFAULT_FIRST_FRAME}" in completed.stdout
+    assert f"--env LAST_FRAME_PATH={DEFAULT_LAST_FRAME}" in completed.stdout
+    assert "target=/inputs/minimax_h3_first_frame" not in completed.stdout
+    assert "target=/inputs/minimax_h3_last_frame" not in completed.stdout
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["first_frame"] == {"path": DEFAULT_FIRST_FRAME, "sha256": None, "source": "image"}
+    assert manifest["last_frame"] == {"path": DEFAULT_LAST_FRAME, "sha256": None, "source": "image"}
+
+
+def test_h3_launcher_mounts_explicit_host_frames(tmp_path):
+    completed, result_dir = run_dry(tmp_path)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "H3 frame source: host" in completed.stdout
+    assert "--env H3_FRAME_SOURCE=host" in completed.stdout
+    assert "target=/inputs/minimax_h3_first_frame" in completed.stdout
+    assert "target=/inputs/minimax_h3_last_frame" in completed.stdout
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["first_frame"]["source"] == "host"
+    assert manifest["last_frame"]["source"] == "host"
 
 
 def test_h3_launcher_uses_published_default_model_locations(tmp_path):
