@@ -481,7 +481,7 @@ for inference_env in \
     CLIP_CPU_OFFLOAD USE_CHANNELS_LAST_3D \
     LIGHTX2V_WARMUP LIGHTX2V_DIT_PROGRESS ROPE_CHUNK_SIZE \
     LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE LAST_FRAME_PATH H3_SMOKE H3_PREFLIGHT_ONLY \
-    H3_EVIDENCE_DIR; do
+    H3_EVIDENCE_DIR H3_PROMPT_PRESET H3_PROMPT_FILE; do
     if [[ -n "${!inference_env:-}" ]]; then
         docker_args+=(--env "${inference_env}=${!inference_env}")
     fi

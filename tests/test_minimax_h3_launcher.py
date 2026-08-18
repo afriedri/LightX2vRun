@@ -12,7 +12,12 @@ DEFAULT_MODEL_DIR = "/disk/ssd1/difumodels/MiniMax-h3"
 DEFAULT_TURBO_DIR = "/disk/ssd/difumodels-Dis/Minimax-h3-Turbo"
 DEFAULT_FIRST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png"
 DEFAULT_LAST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png"
-DEFAULT_PROMPT = "Create a coherent transition with natural synchronized sound."
+DEFAULT_PROMPT_PRESET = "bird-stable"
+
+
+def rendered_prompt(preset: str, duration: str) -> str:
+    template = (REPO_ROOT / f"prompts/minimax_h3/{preset}.txt").read_text(encoding="utf-8").strip()
+    return template.replace("{{DURATION_SECONDS}}", duration)
 
 
 def run_dry(
@@ -67,6 +72,9 @@ def run_dry(
             "H3_MODEL_DIR": "",
             "H3_TURBO_DIR": "",
             "GPU_DEVICES": "",
+            "H3_PROMPT_FILE": "",
+            "H3_PROMPT_PRESET": "",
+            "PROMPT": "",
         },
     )
     return completed, result_dir
@@ -106,7 +114,43 @@ def test_h3_launcher_defaults_to_published_host_frames(tmp_path):
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["first_frame"] == {"path": DEFAULT_FIRST_FRAME, "sha256": None, "source": "host"}
     assert manifest["last_frame"] == {"path": DEFAULT_LAST_FRAME, "sha256": None, "source": "host"}
-    assert manifest["prompt"] == DEFAULT_PROMPT
+    assert manifest["prompt"] == rendered_prompt(DEFAULT_PROMPT_PRESET, "15.08")
+    assert manifest["prompt_source"] == f"preset:{DEFAULT_PROMPT_PRESET}"
+    assert manifest["prompt_preset"] == DEFAULT_PROMPT_PRESET
+
+
+def test_h3_launcher_renders_smoke_duration_in_structured_prompt(tmp_path):
+    completed, result_dir = run_dry(tmp_path, "--smoke")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["prompt"] == rendered_prompt(DEFAULT_PROMPT_PRESET, "5.17")
+    assert "15.08-second mark" not in manifest["prompt"]
+
+
+def test_h3_launcher_selects_audio_prompt_preset(tmp_path):
+    completed, result_dir = run_dry(tmp_path, "--prompt-preset", "bird-audio")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["prompt"] == rendered_prompt("bird-audio", "15.08")
+    assert manifest["prompt_source"] == "preset:bird-audio"
+    assert manifest["prompt_preset"] == "bird-audio"
+
+
+def test_h3_launcher_accepts_custom_prompt_file(tmp_path):
+    prompt_file = tmp_path / "custom-prompt.txt"
+    prompt_file.write_text("custom ending at {{DURATION_SECONDS}} seconds", encoding="utf-8")
+    completed, result_dir = run_dry(tmp_path, "--prompt-file", str(prompt_file))
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["prompt"] == "custom ending at 15.08 seconds"
+    assert manifest["prompt_source"] == f"file:{prompt_file}"
+    assert manifest["prompt_preset"] is None
+
+
+def test_h3_launcher_rejects_unknown_prompt_preset(tmp_path):
+    completed, _ = run_dry(tmp_path, "--prompt-preset", "not-a-preset")
+    assert completed.returncode == 2
+    assert "unknown MiniMax-H3 prompt preset" in completed.stderr
 
 
 def test_h3_launcher_mounts_explicit_host_frames(tmp_path):

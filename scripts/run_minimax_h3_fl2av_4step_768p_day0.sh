@@ -4,6 +4,7 @@ set -Eeuo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 run_root="$(cd -- "${script_dir}/.." && pwd)"
 model_run="${MODEL_RUN:-${run_root}/lightx2vModelrun}"
+source "${run_root}/scripts/lib/minimax_h3_prompt_presets.sh"
 
 usage() {
     cat <<'EOF'
@@ -26,6 +27,8 @@ Options:
                          (defaults: /disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png
                                     /disk/ssd/lightx2v-runtime/inputs/END_FL2V.png)
   --result-dir DIR       Exact host result directory (default: timestamped)
+  --prompt-preset NAME   bird-stable (default), bird-dynamic, or bird-audio
+  --prompt-file FILE     Custom H3-structured prompt; overrides the preset
   --smoke                480x480 / 124 frames instead of 1344x768 / 362
   --preflight-only       Run per-GPU MHA and RCCL/Ulysses smoke, then exit
   --gpus IDS             One, two, or four comma-separated GPU ids
@@ -33,7 +36,9 @@ Options:
   --gpu IDS              Backward-compatible alias for --gpus
 
 Environment:
-  PROMPT / SEED          Frozen request values (defaults: built-in prompt / 42)
+  PROMPT / SEED          PROMPT overrides preset/file; seed defaults to 42
+  H3_PROMPT_PRESET       Default prompt preset (default: bird-stable)
+  H3_PROMPT_FILE         Custom prompt file, overridden by PROMPT
   GPU_DEVICES            One, two, or four ids; multi-GPU uses pure Ulysses
   H3_MODEL_DIR           Override the default complete H3 checkpoint directory
   H3_TURBO_DIR           Override the default Turbo LoRA directory
@@ -49,6 +54,8 @@ last_frame="${H3_LAST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png}"
 frame_source=host
 gpu_devices="${GPU_DEVICES:-0,1,2,3}"
 result_dir="${H3_RESULT_DIR:-}"
+prompt_preset="${H3_PROMPT_PRESET:-bird-stable}"
+prompt_file="${H3_PROMPT_FILE:-}"
 smoke=0
 preflight_only=0
 
@@ -90,6 +97,16 @@ while (( $# > 0 )); do
         --result-dir)
             (( $# >= 2 )) || { echo "ERROR: --result-dir requires a value" >&2; exit 2; }
             result_dir="$2"
+            shift 2
+            ;;
+        --prompt-preset)
+            (( $# >= 2 )) || { echo "ERROR: --prompt-preset requires a value" >&2; exit 2; }
+            prompt_preset="$2"
+            shift 2
+            ;;
+        --prompt-file)
+            (( $# >= 2 )) || { echo "ERROR: --prompt-file requires a value" >&2; exit 2; }
+            prompt_file="$2"
             shift 2
             ;;
         --gpu | --gpus)
@@ -142,6 +159,13 @@ case "${memory_monitor_enabled}" in
     0 | 1) ;;
     *) echo "ERROR: MEMORY_MONITOR must be 0 or 1" >&2; exit 2 ;;
 esac
+prompt_duration_seconds=15.08
+if [[ "${smoke}" == 1 ]]; then
+    prompt_duration_seconds=5.17
+fi
+resolve_minimax_h3_prompt "${run_root}" "${prompt_preset}" "${prompt_file}" "${prompt_duration_seconds}" || exit $?
+prompt="${MINIMAX_H3_PROMPT}"
+prompt_source="${MINIMAX_H3_PROMPT_SOURCE}"
 run_tag="${H3_RUN_TAG:-minimax_h3_fl2av_4step_768p_day0_$(date +%Y%m%d_%H%M%S)}"
 if [[ -z "${result_dir}" ]]; then
     result_dir="${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}"
@@ -153,8 +177,6 @@ fi
 mkdir -p "${result_dir}"
 
 readonly source_mode=image
-default_prompt="Create a coherent transition with natural synchronized sound."
-prompt="${PROMPT:-${default_prompt}}"
 seed="${SEED:-42}"
 [[ "${seed}" =~ ^-?[0-9]+$ ]] || { echo "ERROR: SEED must be an integer" >&2; exit 2; }
 log_path="${result_dir}/run.log"
@@ -165,7 +187,8 @@ container_evidence_dir=/workspace/LightX2V/save_results
 
 python3 - "${result_dir}/run_manifest.json" "${image}" "${source_mode}" \
     "${model_dir}" "${turbo_dir}" "${first_frame}" "${last_frame}" \
-    "${frame_source}" "${gpu_devices}" "${smoke}" "${preflight_only}" "${prompt}" "${seed}" <<'PY'
+    "${frame_source}" "${gpu_devices}" "${smoke}" "${preflight_only}" \
+    "${prompt}" "${prompt_source}" "${prompt_preset}" "${seed}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -184,6 +207,8 @@ import sys
     smoke,
     preflight_only,
     prompt,
+    prompt_source,
+    prompt_preset,
     seed,
 ) = sys.argv[1:]
 
@@ -225,6 +250,8 @@ payload = {
     "preflight_only": preflight_only == "1",
     "seed": int(seed),
     "prompt": prompt,
+    "prompt_source": prompt_source,
+    "prompt_preset": prompt_preset if prompt_source.startswith("preset:") else None,
     "workload": {
         "height": 480 if smoke == "1" else 768,
         "width": 480 if smoke == "1" else 1344,
@@ -299,6 +326,7 @@ fi
 
 echo "MiniMax-H3 Day0 results: ${result_dir}"
 echo "Source mode: ${source_mode}"
+echo "Prompt: ${prompt_source} (${prompt_duration_seconds}s alignment)"
 set +e
 "${model_run}" --run-minimax-h3-gfx1201 2>&1 | tee "${log_path}"
 pipeline_status=("${PIPESTATUS[@]}")

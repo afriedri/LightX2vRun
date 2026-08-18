@@ -26,11 +26,35 @@ bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
 ```
 
 Remove `--preflight-only` to run inference. The full run explicitly requests
-1344x768 output and defaults to the upstream FL2AV prompt `Create a coherent
-transition with natural synchronized sound.` Pass both `--first-frame` and
-`--last-frame` only when overriding the default host images. The default GPU
-set is `0,1,2,3`, using pure Ulysses SP4 plus VAE tile parallelism; TP and Qwen
-text-encoder TP remain disabled. `--gpus 0` and `--gpus 0,1` remain available.
+1344x768 output. Its default `bird-stable` prompt follows MiniMax's FL2VA
+Context-IR structure and is tailored to the published blue-bird first/last
+frames. It uses one continuous takeoff shot, explicit keyframe timing, identity
+constraints, and synchronized natural sound. The launcher renders the final
+keyframe mark as 15.08 seconds for a full run or 5.17 seconds for `--smoke`.
+
+Two additional prompts support controlled comparisons without editing shell
+variables:
+
+```bash
+# More camera and takeoff motion
+bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
+  --image IMAGE --prompt-preset bird-dynamic
+
+# Stronger synchronized sound design and non-diegetic music
+bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
+  --image IMAGE --prompt-preset bird-audio
+```
+
+`--prompt-file FILE` accepts another complete H3 prompt, while `PROMPT` remains
+the highest-priority override. The selected prompt and source are stored in
+`run_manifest.json`. Prompt presets live in `prompts/minimax_h3/` and are read
+through the mounted LightX2VRun checkout, so prompt-only updates do not require
+an image rebuild.
+
+Pass both `--first-frame` and `--last-frame` only when overriding the default
+host images. The default GPU set is `0,1,2,3`, using pure Ulysses SP4 plus VAE
+tile parallelism; TP and Qwen text-encoder TP remain disabled. `--gpus 0` and
+`--gpus 0,1` remain available.
 
 ## Package and upload any result directory
 

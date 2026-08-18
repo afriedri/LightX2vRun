@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 run_root="$(cd -- "${script_dir}/../.." && pwd)"
+source "${run_root}/scripts/lib/minimax_h3_prompt_presets.sh"
 lightx2v_path="${LIGHTX2V_PATH:-/workspace/LightX2V}"
 model_path="${MODEL_PATH:-/models/minimax_h3}"
 source_mode="${H3_SOURCE_MODE:-image}"
@@ -74,10 +75,12 @@ fi
 smoke_flag=()
 target_height=768
 target_width=1344
+prompt_duration_seconds=15.08
 if [[ "${H3_SMOKE:-0}" == 1 ]]; then
     smoke_flag+=(--smoke)
     target_height=480
     target_width=480
+    prompt_duration_seconds=5.17
 fi
 
 python3 "${script_dir}/build_minimax_h3_runtime_config.py" \
@@ -108,7 +111,12 @@ if [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 || "${CONFIG_ONLY:-0}" == 1 ]]; then
     exit 0
 fi
 
-prompt="${PROMPT:-Create a coherent transition with natural synchronized sound.}"
+resolve_minimax_h3_prompt \
+    "${run_root}" \
+    "${H3_PROMPT_PRESET:-bird-stable}" \
+    "${H3_PROMPT_FILE:-}" \
+    "${prompt_duration_seconds}"
+prompt="${MINIMAX_H3_PROMPT}"
 save_result_path="${SAVE_RESULT_PATH:-${lightx2v_path}/save_results/minimax_h3_fl2av.mp4}"
 
 echo "MiniMax-H3 FL2V gfx1201"
@@ -122,6 +130,7 @@ echo "Source mode: ${source_mode}"
 echo "Model: ${model_path}"
 echo "Config: ${runtime_config_json}"
 echo "First/last: ${image_path} ${last_frame_path}"
+echo "Prompt: ${MINIMAX_H3_PROMPT_SOURCE} (${prompt_duration_seconds}s alignment)"
 echo "Output: ${save_result_path}"
 
 source "${lightx2v_path}/scripts/base/base.sh"
