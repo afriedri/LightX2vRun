@@ -217,8 +217,8 @@ def smoke_distributed_ulysses() -> int:
         world_size = dist.get_world_size()
         rank = dist.get_rank()
         local_rank = int(os.environ.get("LOCAL_RANK", rank))
-        if world_size != 2:
-            raise RuntimeError(f"MiniMax-H3 distributed preflight requires world_size=2, got {world_size}")
+        if world_size not in (2, 4):
+            raise RuntimeError(f"MiniMax-H3 distributed preflight requires world_size 2 or 4, got {world_size}")
         torch.cuda.set_device(local_rank)
         device = torch.device(f"cuda:{local_rank}")
         aux_len = 3
@@ -274,7 +274,7 @@ def smoke_distributed_ulysses() -> int:
                     sort_keys=True,
                 )
             )
-            print("[H3Preflight] RCCL Ulysses SP2 attention: OK", file=sys.stderr)
+            print(f"[H3Preflight] RCCL Ulysses SP{world_size} attention: OK", file=sys.stderr)
         return 0
     finally:
         dist.destroy_process_group()
@@ -383,17 +383,17 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
             die(f"single-GPU runtime config parallel must be false, got {parallel!r}")
     else:
         if not isinstance(parallel, dict):
-            die("SP2 runtime config parallel must be a dictionary")
+            die(f"SP{expected_world_size} runtime config parallel must be a dictionary")
         if parallel.get("seq_p_size") != expected_world_size or parallel.get("seq_p_attn_type") != "ulysses":
-            die(f"SP2 runtime config must select seq_p_size={expected_world_size} and Ulysses, got {parallel!r}")
+            die(f"SP{expected_world_size} runtime config must select seq_p_size={expected_world_size} and Ulysses, got {parallel!r}")
         if parallel.get("tensor_p_size", 1) != 1 or parallel.get("cfg_p_size", 1) != 1:
-            die(f"MiniMax-H3 Day0 SP2 must not enable TP or CFG parallel, got {parallel!r}")
+            die(f"MiniMax-H3 Day0 SP{expected_world_size} must not enable TP or CFG parallel, got {parallel!r}")
         if parallel.get("seq_p_prepost_backend") != "torch" or parallel.get("seq_p_a2a_backend") != "torch":
-            die(f"MiniMax-H3 Day0 SP2 requires the conservative torch layout/A2A backends, got {parallel!r}")
+            die(f"MiniMax-H3 Day0 SP{expected_world_size} requires the conservative torch layout/A2A backends, got {parallel!r}")
         if parallel.get("seq_p_quant_scheme") is not None or parallel.get("seq_p_fp8_comm", False) or parallel.get("seq_p_fp4_comm", False):
-            die(f"MiniMax-H3 Day0 SP2 communication must remain unquantized, got {parallel!r}")
+            die(f"MiniMax-H3 Day0 SP{expected_world_size} communication must remain unquantized, got {parallel!r}")
         if parallel.get("seq_p_tensor_fusion", False) is not False or parallel.get("seq_p_head_parallel", False) is not False:
-            die(f"MiniMax-H3 Day0 SP2 must not enable tensor fusion or the head pipeline, got {parallel!r}")
+            die(f"MiniMax-H3 Day0 SP{expected_world_size} must not enable tensor fusion or the head pipeline, got {parallel!r}")
     return config
 
 
@@ -406,7 +406,7 @@ def main() -> int:
     parser.add_argument("--runtime-config", type=Path)
     parser.add_argument("--source-mode", choices=("image",), default="image")
     parser.add_argument("--skip-artifacts", action="store_true")
-    parser.add_argument("--expected-world-size", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--expected-world-size", type=int, choices=(1, 2, 4), default=1)
     parser.add_argument("--distributed-attention-only", action="store_true")
     args = parser.parse_args()
 

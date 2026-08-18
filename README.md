@@ -22,13 +22,15 @@ are required:
 ```bash
 bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
   --image IMAGE \
-  --gpus 0,1 \
   --preflight-only
 ```
 
 Remove `--preflight-only` to run inference. The full run explicitly requests
-1344x768 output. Pass both `--first-frame` and `--last-frame` only when
-overriding the default host images.
+1344x768 output and defaults to the upstream FL2AV prompt `Create a coherent
+transition with natural synchronized sound.` Pass both `--first-frame` and
+`--last-frame` only when overriding the default host images. The default GPU
+set is `0,1,2,3`, using pure Ulysses SP4 plus VAE tile parallelism; TP and Qwen
+text-encoder TP remain disabled. `--gpus 0` and `--gpus 0,1` remain available.
 
 ## Package and upload any result directory
 

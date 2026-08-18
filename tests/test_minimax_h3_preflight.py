@@ -60,7 +60,8 @@ def test_artifact_contract_rejects_incomplete_processor(tmp_path):
         PREFLIGHT.check_artifacts(model_dir, turbo_dir, first_frame, last_frame, expected_world_size=2)
 
 
-def test_runtime_contract_accepts_only_pure_sp2(tmp_path):
+@pytest.mark.parametrize("world_size", (2, 4))
+def test_runtime_contract_accepts_only_pure_ulysses(tmp_path, world_size):
     config = {
         "video_flow_shift": 6.0,
         "h3_step_update": "training_euler",
@@ -73,7 +74,7 @@ def test_runtime_contract_accepts_only_pure_sp2(tmp_path):
         "seq_parallel": True,
         "vae_decode_parallel": True,
         "parallel": {
-            "seq_p_size": 2,
+            "seq_p_size": world_size,
             "seq_p_attn_type": "ulysses",
             "seq_p_prepost_backend": "torch",
             "seq_p_a2a_backend": "torch",
@@ -81,12 +82,12 @@ def test_runtime_contract_accepts_only_pure_sp2(tmp_path):
     }
     path = tmp_path / "runtime.json"
     path.write_text(json.dumps(config), encoding="utf-8")
-    assert PREFLIGHT.check_runtime_config(path, 2)["parallel"]["seq_p_attn_type"] == "ulysses"
+    assert PREFLIGHT.check_runtime_config(path, world_size)["parallel"]["seq_p_attn_type"] == "ulysses"
 
     config["tensor_parallel"] = True
     path.write_text(json.dumps(config), encoding="utf-8")
     with pytest.raises(SystemExit):
-        PREFLIGHT.check_runtime_config(path, 2)
+        PREFLIGHT.check_runtime_config(path, world_size)
 
 
 @pytest.mark.parametrize(

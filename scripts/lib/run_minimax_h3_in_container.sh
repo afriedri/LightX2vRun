@@ -12,16 +12,24 @@ overlay_json="${BASE_CONFIG_JSON:-${lightx2v_path}/configs/platforms/amd_rocm/mi
 publish_json="${lightx2v_path}/configs/minimax_h3/dmd/minimax_h3_bf16_4step_single_gpu_offload.json"
 
 visible_devices="${HIP_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
-[[ "${visible_devices}" =~ ^[0-9]+(,[0-9]+)?$ ]] || {
-    echo "ERROR: MiniMax-H3 Day0 requires one GPU or two comma-separated HIP GPU ids, got '${visible_devices}'" >&2
+[[ "${visible_devices}" =~ ^[0-9]+(,[0-9]+){0,3}$ ]] || {
+    echo "ERROR: MiniMax-H3 Day0 requires one, two, or four comma-separated HIP GPU ids, got '${visible_devices}'" >&2
     exit 1
 }
 IFS=',' read -r -a visible_device_ids <<<"${visible_devices}"
 gpu_count="${#visible_device_ids[@]}"
-if [[ "${gpu_count}" == 2 && "${visible_device_ids[0]}" == "${visible_device_ids[1]}" ]]; then
-    echo "ERROR: MiniMax-H3 Day0 GPU ids must be unique, got '${visible_devices}'" >&2
-    exit 1
-fi
+case "${gpu_count}" in
+    1 | 2 | 4) ;;
+    *) echo "ERROR: MiniMax-H3 Day0 supports exactly 1, 2, or 4 GPUs" >&2; exit 1 ;;
+esac
+declare -A seen_visible_device_ids=()
+for visible_device_id in "${visible_device_ids[@]}"; do
+    [[ -z "${seen_visible_device_ids[${visible_device_id}]:-}" ]] || {
+        echo "ERROR: MiniMax-H3 Day0 GPU ids must be unique, got '${visible_devices}'" >&2
+        exit 1
+    }
+    seen_visible_device_ids["${visible_device_id}"]=1
+done
 export HIP_VISIBLE_DEVICES="${visible_devices}"
 unset CUDA_VISIBLE_DEVICES
 
@@ -88,9 +96,9 @@ python3 "${script_dir}/preflight_minimax_h3_day0.py" \
     --expected-world-size "${gpu_count}" \
     --source-mode "${source_mode}" | tee "${preflight_json}"
 
-if [[ "${gpu_count}" == 2 ]]; then
+if (( gpu_count > 1 )); then
     ulysses_preflight_log="${ulysses_preflight_log:-${runtime_config_dir}/ulysses_preflight.log}"
-    torchrun --standalone --nproc_per_node=2 \
+    torchrun --standalone --nproc_per_node="${gpu_count}" \
         "${script_dir}/preflight_minimax_h3_day0.py" \
         --distributed-attention-only 2>&1 | tee "${ulysses_preflight_log}"
 fi
@@ -100,14 +108,14 @@ if [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 || "${CONFIG_ONLY:-0}" == 1 ]]; then
     exit 0
 fi
 
-prompt="${PROMPT:-A cinematic tracking shot between the first and last frames, natural motion, photorealistic lighting.}"
+prompt="${PROMPT:-Create a coherent transition with natural synchronized sound.}"
 save_result_path="${SAVE_RESULT_PATH:-${lightx2v_path}/save_results/minimax_h3_fl2av.mp4}"
 
 echo "MiniMax-H3 FL2V gfx1201"
 echo "GPUs: ${visible_devices} (world_size=${gpu_count})"
 parallel_mode="single GPU"
-if [[ "${gpu_count}" == 2 ]]; then
-    parallel_mode="Ulysses SP2 + VAE tile parallel"
+if (( gpu_count > 1 )); then
+    parallel_mode="Ulysses SP${gpu_count} + VAE tile parallel"
 fi
 echo "Parallel: ${parallel_mode}"
 echo "Source mode: ${source_mode}"
@@ -131,8 +139,8 @@ infer_args=(
     --target_shape "${target_height}" "${target_width}"
     --save_result_path "${save_result_path}"
 )
-if [[ "${gpu_count}" == 2 ]]; then
-    torchrun --standalone --nproc_per_node=2 -m lightx2v.infer "${infer_args[@]}"
+if (( gpu_count > 1 )); then
+    torchrun --standalone --nproc_per_node="${gpu_count}" -m lightx2v.infer "${infer_args[@]}"
 else
     python3 -m lightx2v.infer "${infer_args[@]}"
 fi

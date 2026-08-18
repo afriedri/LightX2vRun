@@ -61,8 +61,8 @@ def load_json(path: Path) -> dict:
 
 
 def build(publish: dict, overlay: dict, *, smoke: bool, seq_parallel_size: int = 1) -> dict:
-    if seq_parallel_size not in (1, 2):
-        raise SystemExit(f"MiniMax-H3 Day0 supports seq_parallel_size 1 or 2, got {seq_parallel_size}")
+    if seq_parallel_size not in (1, 2, 4):
+        raise SystemExit(f"MiniMax-H3 Day0 supports seq_parallel_size 1, 2, or 4, got {seq_parallel_size}")
     missing = [key for key in REQUIRED_PUBLISH_KEYS if key not in publish]
     if missing:
         raise SystemExit(f"published H3 JSON is missing keys: {missing}")
@@ -115,7 +115,7 @@ def main() -> int:
     parser.add_argument("--overlay-json", type=Path, required=True)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--smoke", action="store_true")
-    parser.add_argument("--seq-parallel-size", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--seq-parallel-size", type=int, choices=(1, 2, 4), default=1)
     args = parser.parse_args()
     config = build(
         load_json(args.publish_json),

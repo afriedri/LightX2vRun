@@ -87,9 +87,26 @@ def test_builder_enables_pure_ulysses_sp2_and_parallel_vae_decode():
     }
 
 
+def test_builder_enables_pure_ulysses_sp4_and_parallel_vae_decode():
+    config = BUILDER.build(published_config(), amd_overlay(), smoke=False, seq_parallel_size=4)
+
+    assert config["tensor_parallel"] is False
+    assert config["text_encoder_tensor_parallel"] is False
+    assert config["seq_parallel"] is True
+    assert config["vae_decode_parallel"] is True
+    assert config["parallel"] == {
+        "seq_p_size": 4,
+        "seq_p_attn_type": "ulysses",
+        "seq_p_prepost_backend": "torch",
+        "seq_p_a2a_backend": "torch",
+        "seq_p_tensor_fusion": False,
+        "seq_p_head_parallel": False,
+    }
+
+
 def test_builder_rejects_unsupported_sequence_parallel_size():
-    with pytest.raises(SystemExit, match="seq_parallel_size 1 or 2"):
-        BUILDER.build(published_config(), amd_overlay(), smoke=False, seq_parallel_size=4)
+    with pytest.raises(SystemExit, match="seq_parallel_size 1, 2, or 4"):
+        BUILDER.build(published_config(), amd_overlay(), smoke=False, seq_parallel_size=3)
 
 
 def test_builder_rejects_non_whitelisted_semantic_change():

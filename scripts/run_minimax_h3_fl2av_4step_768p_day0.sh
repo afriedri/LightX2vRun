@@ -10,8 +10,8 @@ usage() {
 Usage:
   bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh --image IMAGE
 
-Runs MiniMax-H3 FL2V on one gfx1201 GPU or two gfx1201 GPUs with pure Ulysses
-sequence parallelism. --image is required and must contain
+Runs MiniMax-H3 FL2V on one, two, or four gfx1201 GPUs. Multi-GPU runs use pure
+Ulysses sequence parallelism. --image is required and must contain
 the complete Day0 LightX2V source at /workspace/LightX2V. Host source overlays
 are deliberately unsupported; rebuild the image before C0.
 
@@ -27,13 +27,14 @@ Options:
                                     /disk/ssd/lightx2v-runtime/inputs/END_FL2V.png)
   --result-dir DIR       Exact host result directory (default: timestamped)
   --smoke                480x480 / 124 frames instead of 1344x768 / 362
-  --preflight-only       Run per-GPU MHA and SP2 RCCL/Ulysses smoke, then exit
-  --gpus IDS             One GPU id or two comma-separated ids (default: 0)
+  --preflight-only       Run per-GPU MHA and RCCL/Ulysses smoke, then exit
+  --gpus IDS             One, two, or four comma-separated GPU ids
+                         (default: 0,1,2,3; four-GPU pure Ulysses SP4)
   --gpu IDS              Backward-compatible alias for --gpus
 
 Environment:
   PROMPT / SEED          Frozen request values (defaults: built-in prompt / 42)
-  GPU_DEVICES            One id for single GPU or two ids for Ulysses SP2
+  GPU_DEVICES            One, two, or four ids; multi-GPU uses pure Ulysses
   H3_MODEL_DIR           Override the default complete H3 checkpoint directory
   H3_TURBO_DIR           Override the default Turbo LoRA directory
   MEMORY_MONITOR         1 (default) records host RAM, process RSS/PSS and VRAM
@@ -46,7 +47,7 @@ turbo_dir="${H3_TURBO_DIR:-/disk/ssd/difumodels-Dis/Minimax-h3-Turbo}"
 first_frame="${H3_FIRST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png}"
 last_frame="${H3_LAST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png}"
 frame_source=host
-gpu_devices="${GPU_DEVICES:-0}"
+gpu_devices="${GPU_DEVICES:-0,1,2,3}"
 result_dir="${H3_RESULT_DIR:-}"
 smoke=0
 preflight_only=0
@@ -117,16 +118,24 @@ if [[ -z "${first_frame}" || -z "${last_frame}" ]]; then
     echo "ERROR: --first-frame and --last-frame must be provided together" >&2
     exit 2
 fi
-[[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+)?$ ]] || {
-    echo "ERROR: MiniMax-H3 Day0 requires one GPU id or two comma-separated ids" >&2
+[[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+){0,3}$ ]] || {
+    echo "ERROR: MiniMax-H3 Day0 requires one, two, or four comma-separated GPU ids" >&2
     exit 2
 }
 IFS=',' read -r -a gpu_device_ids <<<"${gpu_devices}"
 gpu_count="${#gpu_device_ids[@]}"
-if [[ "${gpu_count}" == 2 && "${gpu_device_ids[0]}" == "${gpu_device_ids[1]}" ]]; then
-    echo "ERROR: MiniMax-H3 GPU ids must be unique" >&2
-    exit 2
-fi
+case "${gpu_count}" in
+    1 | 2 | 4) ;;
+    *) echo "ERROR: MiniMax-H3 Day0 supports exactly 1, 2, or 4 GPUs" >&2; exit 2 ;;
+esac
+declare -A seen_gpu_device_ids=()
+for gpu_device_id in "${gpu_device_ids[@]}"; do
+    [[ -z "${seen_gpu_device_ids[${gpu_device_id}]:-}" ]] || {
+        echo "ERROR: MiniMax-H3 GPU ids must be unique" >&2
+        exit 2
+    }
+    seen_gpu_device_ids["${gpu_device_id}"]=1
+done
 
 memory_monitor_enabled="${MEMORY_MONITOR:-1}"
 case "${memory_monitor_enabled}" in
@@ -144,7 +153,7 @@ fi
 mkdir -p "${result_dir}"
 
 readonly source_mode=image
-default_prompt="A cinematic tracking shot between the first and last frames, natural motion, photorealistic lighting."
+default_prompt="Create a coherent transition with natural synchronized sound."
 prompt="${PROMPT:-${default_prompt}}"
 seed="${SEED:-42}"
 [[ "${seed}" =~ ^-?[0-9]+$ ]] || { echo "ERROR: SEED must be an integer" >&2; exit 2; }
@@ -207,10 +216,10 @@ payload = {
     "gpu_count": len(gpus),
     "parallel": {
         "tensor_parallel": False,
-        "seq_parallel": len(gpus) == 2,
+        "seq_parallel": len(gpus) > 1,
         "seq_p_size": len(gpus),
-        "seq_p_attn_type": "ulysses" if len(gpus) == 2 else None,
-        "vae_decode_parallel": len(gpus) == 2,
+        "seq_p_attn_type": "ulysses" if len(gpus) > 1 else None,
+        "vae_decode_parallel": len(gpus) > 1,
     },
     "smoke": smoke == "1",
     "preflight_only": preflight_only == "1",

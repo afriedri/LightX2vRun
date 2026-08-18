@@ -12,6 +12,7 @@ DEFAULT_MODEL_DIR = "/disk/ssd1/difumodels/MiniMax-h3"
 DEFAULT_TURBO_DIR = "/disk/ssd/difumodels-Dis/Minimax-h3-Turbo"
 DEFAULT_FIRST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png"
 DEFAULT_LAST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png"
+DEFAULT_PROMPT = "Create a coherent transition with natural synchronized sound."
 
 
 def run_dry(
@@ -65,6 +66,7 @@ def run_dry(
             "MODEL_RUN": str(REPO_ROOT / "lightx2vModelrun"),
             "H3_MODEL_DIR": "",
             "H3_TURBO_DIR": "",
+            "GPU_DEVICES": "",
         },
     )
     return completed, result_dir
@@ -79,9 +81,15 @@ def test_h3_dry_run_uses_image_source_without_overlay(tmp_path):
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["source_mode"] == "image"
     assert manifest["task"] == "fl2av"
-    assert manifest["gpus"] == [0]
+    assert manifest["gpus"] == [0, 1, 2, 3]
     assert manifest["parallel"]["tensor_parallel"] is False
-    assert manifest["parallel"]["seq_parallel"] is False
+    assert manifest["parallel"] == {
+        "seq_p_attn_type": "ulysses",
+        "seq_p_size": 4,
+        "seq_parallel": True,
+        "tensor_parallel": False,
+        "vae_decode_parallel": True,
+    }
 
 
 def test_h3_launcher_defaults_to_published_host_frames(tmp_path):
@@ -98,6 +106,7 @@ def test_h3_launcher_defaults_to_published_host_frames(tmp_path):
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["first_frame"] == {"path": DEFAULT_FIRST_FRAME, "sha256": None, "source": "host"}
     assert manifest["last_frame"] == {"path": DEFAULT_LAST_FRAME, "sha256": None, "source": "host"}
+    assert manifest["prompt"] == DEFAULT_PROMPT
 
 
 def test_h3_launcher_mounts_explicit_host_frames(tmp_path):
@@ -138,14 +147,33 @@ def test_h3_dry_run_accepts_two_gpu_ulysses_without_tp(tmp_path):
     }
 
 
-def test_h3_launcher_rejects_duplicate_or_more_than_two_gpus(tmp_path):
+def test_h3_dry_run_accepts_four_gpu_ulysses_without_tp(tmp_path):
+    completed, result_dir = run_dry(tmp_path, "--gpus", "4,5,6,7")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert r"HIP_VISIBLE_DEVICES=4\,5\,6\,7" in completed.stdout
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["gpus"] == [4, 5, 6, 7]
+    assert manifest["parallel"] == {
+        "seq_p_attn_type": "ulysses",
+        "seq_p_size": 4,
+        "seq_parallel": True,
+        "tensor_parallel": False,
+        "vae_decode_parallel": True,
+    }
+
+
+def test_h3_launcher_rejects_duplicate_or_unsupported_gpu_counts(tmp_path):
     duplicate, _ = run_dry(tmp_path, "--gpus", "0,0")
     assert duplicate.returncode == 2
     assert "must be unique" in duplicate.stderr
 
-    too_many, _ = run_dry(tmp_path, "--gpus", "0,1,2")
+    unsupported, _ = run_dry(tmp_path, "--gpus", "0,1,2")
+    assert unsupported.returncode == 2
+    assert "supports exactly 1, 2, or 4 GPUs" in unsupported.stderr
+
+    too_many, _ = run_dry(tmp_path, "--gpus", "0,1,2,3,4")
     assert too_many.returncode == 2
-    assert "one GPU id or two comma-separated ids" in too_many.stderr
+    assert "one, two, or four comma-separated GPU ids" in too_many.stderr
 
 
 def test_h3_launcher_rejects_host_source_overlay(tmp_path):
