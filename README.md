@@ -33,6 +33,15 @@ frames. It uses one continuous takeoff shot, explicit keyframe timing, identity
 constraints, and synchronized natural sound. The launcher renders the final
 keyframe mark as 5.17 seconds for every H3 test.
 
+The gfx1201 production overlay routes only H3 Core Attention through Aiter
+SageAttention2 (`aiter_fav3_sage_bf16_attn` / `sage_attn_v2_gfx1201`). The
+short Token Refiner stays on the BF16 Triton MHA route. Core Dense GEMM and
+dynamic rank-128 LoRA remain the measured `torch.mm` path using PyTorch's
+default ROCm BLAS heuristic (hipBLASLt on the collected hot shapes). The H3
+launcher explicitly disables TunableOp and does not load a tuning cache: its
+weighted gain was only 1.035x and QKV LoRA-up regressed. Preflight executes
+both Attention kernels and the real Ulysses-to-Sage adapter before inference.
+
 Two additional prompts support controlled comparisons without editing shell
 variables:
 

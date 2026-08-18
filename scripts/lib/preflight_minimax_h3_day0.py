@@ -123,9 +123,15 @@ def check_runtime_dependencies(source_mode: str) -> dict:
         )
     except Exception as error:
         die(f"LightX2V H3 runner/AMD registry cannot be imported: {error}")
-    backend = "aiter_triton_bf16_flash_attn"
-    if backend not in PLATFORM_ATTN_WEIGHT_REGISTER:
-        die(f"LightX2V attention backend is not registered: {backend}")
+    attention_backends = (
+        "aiter_triton_bf16_flash_attn",
+        "aiter_fav3_sage_bf16_attn",
+    )
+    for backend in attention_backends:
+        if backend not in PLATFORM_ATTN_WEIGHT_REGISTER:
+            die(f"LightX2V attention backend is not registered: {backend}")
+        if backend not in ATTN_WEIGHT_REGISTER:
+            die(f"LightX2V model-facing attention registry is missing: {backend}")
     for registry, name in (
         (RUNNER_REGISTER, "minimax_h3"),
         (ATTN_WEIGHT_REGISTER, "ulysses"),
@@ -155,10 +161,43 @@ def check_runtime_dependencies(source_mode: str) -> dict:
         "transformers": transformers.__version__,
         "ffmpeg": shutil.which("ffmpeg"),
         "ffprobe": shutil.which("ffprobe"),
-        "registered_backend": backend,
+        "registered_backends": list(attention_backends),
         "registered_runner": "minimax_h3",
         "registered_torch_ops": ["torch_sdpa", "torch_native", "torch_real_rope"],
         "sage_api_importable": True,
+        "dense_gemm": check_dense_gemm_runtime(),
+    }
+
+
+def check_dense_gemm_runtime() -> dict:
+    import torch
+
+    enabled_env = os.environ.get("PYTORCH_TUNABLEOP_ENABLED")
+    if enabled_env != "0":
+        die(
+            "MiniMax-H3 Dense GEMM/LoRA requires PYTORCH_TUNABLEOP_ENABLED=0; "
+            f"got {enabled_env!r}"
+        )
+    forced_blas = {
+        name: os.environ[name]
+        for name in ("TORCH_BLAS_PREFER_CUBLASLT", "TORCH_BLAS_PREFER_HIPBLASLT")
+        if name in os.environ
+    }
+    if forced_blas:
+        die(
+            "MiniMax-H3 Dense GEMM/LoRA uses the measured default BLAS heuristic; "
+            f"remove forced BLAS environment variables: {forced_blas}"
+        )
+    tunable = getattr(torch.cuda, "tunable", None)
+    if tunable is None or not callable(getattr(tunable, "is_enabled", None)):
+        die("this PyTorch build does not expose torch.cuda.tunable.is_enabled")
+    if tunable.is_enabled():
+        die("MiniMax-H3 Dense GEMM/LoRA production route requires TunableOp disabled")
+    return {
+        "route": "torch.mm -> default ROCm BLAS heuristic",
+        "measured_backend": "hipBLASLt",
+        "tunableop_enabled": False,
+        "tunableop_cache": False,
     }
 
 
@@ -205,12 +244,59 @@ def smoke_triton_mha(device_index: int) -> dict:
     }
 
 
+def smoke_sage_attention(device_index: int, heads: int) -> dict:
+    import torch
+
+    from lightx2v_platform.ops.attn.amd_rocm.sage_attn import (
+        AiterFav3SageBf16AttnWeight,
+    )
+
+    if heads not in (14, 28, 56):
+        die(f"MiniMax-H3 Sage preflight expects 14, 28, or 56 heads, got {heads}")
+    seq_len, head_dim = 257, 128
+    torch.cuda.set_device(device_index)
+    device = torch.device(f"cuda:{device_index}")
+    q = torch.randn(seq_len, heads, head_dim, device=device, dtype=torch.bfloat16)
+    k = torch.randn_like(q)
+    v = torch.randn_like(q)
+    cu_seqlens = torch.tensor([0, seq_len], device=device, dtype=torch.int32)
+    out = AiterFav3SageBf16AttnWeight().apply(
+        q=q,
+        k=k,
+        v=v,
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        max_seqlen_q=seq_len,
+        max_seqlen_kv=seq_len,
+        causal=False,
+    )
+    torch.cuda.synchronize()
+    expected_shape = (seq_len, heads * head_dim)
+    if tuple(out.shape) != expected_shape:
+        die(f"SageAttention2 output shape {tuple(out.shape)} != {expected_shape}")
+    if not torch.isfinite(out).all():
+        die("SageAttention2 produced non-finite values on gfx1201")
+    peak = float(out.abs().max().item())
+    if peak <= 0.0:
+        die("SageAttention2 returned an all-zero tensor")
+    return {
+        "backend": "aiter_fav3_sage_bf16_attn",
+        "route": "sage_attn_v2_gfx1201",
+        "numerics": "int8_qk_fp8_pv",
+        "q_shape": [seq_len, heads, head_dim],
+        "output_shape": list(out.shape),
+        "dtype": str(out.dtype).replace("torch.", ""),
+        "abs_max": peak,
+        "device": str(out.device),
+    }
+
+
 def smoke_distributed_ulysses() -> int:
     import torch
     import torch.distributed as dist
 
     from lightx2v.common.ops.attn.ulysses_attn import UlyssesAttnWeight
-    from lightx2v_platform.ops.attn.amd_rocm.triton_mha_attn import AiterTritonBf16FlashAttnWeight
+    from lightx2v_platform.ops.attn.amd_rocm.sage_attn import AiterFav3SageBf16AttnWeight
 
     dist.init_process_group(backend="nccl")
     try:
@@ -238,7 +324,7 @@ def smoke_distributed_ulysses() -> int:
             aux_q=aux_q,
             aux_k=aux_k,
             aux_v=aux_v,
-            attention_module=AiterTritonBf16FlashAttnWeight(),
+            attention_module=AiterFav3SageBf16AttnWeight(),
             seq_p_group=dist.group.WORLD,
             prepost_backend="torch",
             a2a_backend="torch",
@@ -264,7 +350,8 @@ def smoke_distributed_ulysses() -> int:
                     {
                         "status": "ok",
                         "backend": "ulysses",
-                        "attention": "aiter_triton_bf16_flash_attn",
+                        "attention": "aiter_fav3_sage_bf16_attn",
+                        "attention_route": "sage_attn_v2_gfx1201",
                         "world_size": world_size,
                         "local_q_shape": [local_len, heads, head_dim],
                         "local_output_shape": list(output.shape),
@@ -361,7 +448,10 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
         ("video_flow_shift", 6.0),
         ("h3_step_update", "training_euler"),
         ("h3_refiner_attn_type", "aiter_triton_bf16_flash_attn"),
-        ("h3_core_attn_type", "aiter_triton_bf16_flash_attn"),
+        ("h3_core_attn_type", "aiter_fav3_sage_bf16_attn"),
+        ("attn_type", "aiter_triton_bf16_flash_attn"),
+        ("dit_quant_scheme", "Default"),
+        ("lora_dynamic_apply", True),
         ("warmup", False),
     ):
         if config.get(key) != expected:
@@ -419,28 +509,37 @@ def main() -> int:
     if not args.skip_artifacts:
         artifacts = check_artifacts(args.model_dir, args.turbo_dir, args.first_frame, args.last_frame, args.expected_world_size)
     config = check_runtime_config(args.runtime_config, args.expected_world_size) if args.runtime_config else {}
-    attn_runs = [smoke_triton_mha(device_index) for device_index in range(args.expected_world_size)]
+    triton_runs = [smoke_triton_mha(device_index) for device_index in range(args.expected_world_size)]
+    sage_heads_per_rank = 56 // args.expected_world_size
+    sage_runs = [
+        smoke_sage_attention(device_index, sage_heads_per_rank)
+        for device_index in range(args.expected_world_size)
+    ]
     import torch
 
     torch.cuda.set_device(0)
-    attn = attn_runs[0]
+    triton_attn = triton_runs[0]
+    sage_attn = sage_runs[0]
     payload = {
         "status": "ok",
         "gpu": gpu,
         "runtime": runtime,
         "artifacts": artifacts,
-        "triton_mha": attn,
-        "triton_mha_devices": attn_runs,
+        "triton_mha": triton_attn,
+        "triton_mha_devices": triton_runs,
+        "sage_attention": sage_attn,
+        "sage_attention_devices": sage_runs,
         "world_size": args.expected_world_size,
         "task": config.get("task", "fl2av"),
-        "h3_core_attn_type": config.get("h3_core_attn_type", "aiter_triton_bf16_flash_attn"),
+        "h3_core_attn_type": config.get("h3_core_attn_type", "aiter_fav3_sage_bf16_attn"),
+        "dense_gemm": runtime["dense_gemm"],
     }
     json.dump(payload, sys.stdout, indent=2)
     sys.stdout.write("\n")
     print(
         f"[H3Preflight] gfx={gpu['arch']} rocm={gpu['rocm']} source={args.source_mode} "
-        f"Triton MHA ran on {args.expected_world_size} device(s) "
-        f"q={tuple(attn['q_shape'])} abs_max={attn['abs_max']:.4f}",
+        f"Triton Refiner + Sage Core ran on {args.expected_world_size} device(s) "
+        f"sage_q={tuple(sage_attn['q_shape'])} sage_abs_max={sage_attn['abs_max']:.4f}",
         file=sys.stderr,
     )
     return 0

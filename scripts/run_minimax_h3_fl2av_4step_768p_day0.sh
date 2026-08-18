@@ -256,6 +256,20 @@ payload = {
         "seq_p_attn_type": "ulysses" if len(gpus) > 1 else None,
         "vae_decode_parallel": len(gpus) > 1,
     },
+    "backends": {
+        "h3_core_attention": {
+            "name": "aiter_fav3_sage_bf16_attn",
+            "route": "sage_attn_v2_gfx1201",
+            "numerics": "int8_qk_fp8_pv",
+        },
+        "h3_refiner_attention": "aiter_triton_bf16_flash_attn",
+        "dense_gemm_lora": {
+            "route": "torch.mm -> default ROCm BLAS heuristic",
+            "measured_backend": "hipBLASLt",
+            "tunableop_enabled": False,
+            "tunableop_cache": False,
+        },
+    },
     "smoke": smoke == "1",
     "preflight_only": preflight_only == "1",
     "runcollector": {

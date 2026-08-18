@@ -98,6 +98,21 @@ def test_h3_dry_run_uses_image_source_without_overlay(tmp_path):
         "tensor_parallel": False,
         "vae_decode_parallel": True,
     }
+    assert manifest["backends"] == {
+        "dense_gemm_lora": {
+            "measured_backend": "hipBLASLt",
+            "route": "torch.mm -> default ROCm BLAS heuristic",
+            "tunableop_cache": False,
+            "tunableop_enabled": False,
+        },
+        "h3_core_attention": {
+            "name": "aiter_fav3_sage_bf16_attn",
+            "numerics": "int8_qk_fp8_pv",
+            "route": "sage_attn_v2_gfx1201",
+        },
+        "h3_refiner_attention": "aiter_triton_bf16_flash_attn",
+    }
+    assert "--env PYTORCH_TUNABLEOP_ENABLED=0" in completed.stdout
 
 
 def test_h3_launcher_defaults_to_published_host_frames(tmp_path):

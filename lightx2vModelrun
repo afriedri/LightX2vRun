@@ -426,6 +426,7 @@ if [[ "${is_minimax_h3_mode}" == 1 ]]; then
         --env "H3_FRAME_SOURCE=${h3_frame_source}"
         --env "IMAGE_PATH=${h3_first_frame_path}"
         --env "LAST_FRAME_PATH=${h3_last_frame_path}"
+        --env PYTORCH_TUNABLEOP_ENABLED=0
     )
     if [[ "${h3_frame_source}" == host ]]; then
         docker_args+=(
@@ -514,6 +515,8 @@ if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     printf 'H3 LightX2V:    /workspace/LightX2V (from image)\n'
     printf 'H3 turbo:       %s -> %s\n' "${H3_TURBO_DIR}" "${CONTAINER_H3_TURBO}"
     printf 'H3 frame source: %s\n' "${h3_frame_source}"
+    printf 'H3 Core attn:   %s\n' "aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201)"
+    printf 'H3 Dense GEMM:  %s\n' "torch.mm/default ROCm BLAS heuristic; TunableOp disabled"
     if [[ "${h3_frame_source}" == host ]]; then
         printf 'H3 first frame: %s -> %s\n' "${H3_FIRST_FRAME}" "${h3_first_frame_path}"
         printf 'H3 last frame:  %s -> %s\n' "${H3_LAST_FRAME}" "${h3_last_frame_path}"

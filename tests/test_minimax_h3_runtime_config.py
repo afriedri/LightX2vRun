@@ -48,7 +48,7 @@ def amd_overlay() -> dict:
         "task": "fl2av",
         "attn_type": "aiter_triton_bf16_flash_attn",
         "h3_refiner_attn_type": "aiter_triton_bf16_flash_attn",
-        "h3_core_attn_type": "aiter_triton_bf16_flash_attn",
+        "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
         "qwen3vl_attn_type": "torch_sdpa",
         "dit_quant_scheme": "Default",
         "rms_type": "torch_native",
@@ -68,6 +68,10 @@ def test_builder_freezes_full_and_smoke_geometry():
     assert full["text_encoder_tensor_parallel"] is False
     assert full["seq_parallel"] is False
     assert full["vae_decode_parallel"] is False
+    assert full["h3_core_attn_type"] == "aiter_fav3_sage_bf16_attn"
+    assert full["h3_refiner_attn_type"] == "aiter_triton_bf16_flash_attn"
+    assert full["dit_quant_scheme"] == "Default"
+    assert full["lora_dynamic_apply"] is True
 
 
 def test_builder_enables_pure_ulysses_sp2_and_parallel_vae_decode():

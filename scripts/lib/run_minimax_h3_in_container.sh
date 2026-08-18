@@ -41,6 +41,11 @@ export GPU_ARCHS="${GPU_ARCHS:-gfx1201}"
 export CU_NUM="${CU_NUM:-24}"
 export PYTORCH_ROCM_ARCH=gfx1201
 export AITER_ROCM_ARCH=gfx1201
+# The measured H3 BF16 GEMM/LoRA winner is ordinary torch.mm with PyTorch's
+# default ROCm BLAS heuristic (hipBLASLt for the collected hot shapes).
+# TunableOp replay regressed QKV LoRA-up and is deliberately excluded.
+export PYTORCH_TUNABLEOP_ENABLED=0
+unset TORCH_BLAS_PREFER_CUBLASLT TORCH_BLAS_PREFER_HIPBLASLT
 export PYTHONPATH="${lightx2v_path}${PYTHONPATH:+:${PYTHONPATH}}"
 [[ "${GPU_ARCHS}" == gfx1201 && "${CU_NUM}" == 24 ]] || {
     echo "ERROR: MiniMax-H3 Day0 requires GPU_ARCHS=gfx1201 and CU_NUM=24" >&2
@@ -125,6 +130,8 @@ if (( gpu_count > 1 )); then
     parallel_mode="Ulysses SP${gpu_count} + VAE tile parallel"
 fi
 echo "Parallel: ${parallel_mode}"
+echo "Core Attention: aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201)"
+echo "Dense GEMM/LoRA: torch.mm -> default ROCm BLAS heuristic (TunableOp disabled)"
 echo "Source mode: ${source_mode}"
 echo "Model: ${model_path}"
 echo "Config: ${runtime_config_json}"

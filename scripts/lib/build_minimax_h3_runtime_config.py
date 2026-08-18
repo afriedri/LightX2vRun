@@ -32,7 +32,7 @@ FROZEN_VALUES = {
     "infer_steps": 5,
     "warmup": False,
     "h3_refiner_attn_type": "aiter_triton_bf16_flash_attn",
-    "h3_core_attn_type": "aiter_triton_bf16_flash_attn",
+    "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
     "attn_type": "aiter_triton_bf16_flash_attn",
     "qwen3vl_attn_type": "torch_sdpa",
     "dit_quant_scheme": "Default",

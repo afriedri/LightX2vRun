@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -14,6 +16,40 @@ SPEC = importlib.util.spec_from_file_location("preflight_minimax_h3_day0", PREFL
 assert SPEC is not None and SPEC.loader is not None
 PREFLIGHT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PREFLIGHT)
+
+
+def test_dense_gemm_contract_requires_direct_torch_mm_without_tunableop(monkeypatch):
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(tunable=SimpleNamespace(is_enabled=lambda: False))
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setenv("PYTORCH_TUNABLEOP_ENABLED", "0")
+    monkeypatch.delenv("TORCH_BLAS_PREFER_CUBLASLT", raising=False)
+    monkeypatch.delenv("TORCH_BLAS_PREFER_HIPBLASLT", raising=False)
+
+    contract = PREFLIGHT.check_dense_gemm_runtime()
+
+    assert contract == {
+        "measured_backend": "hipBLASLt",
+        "route": "torch.mm -> default ROCm BLAS heuristic",
+        "tunableop_cache": False,
+        "tunableop_enabled": False,
+    }
+
+
+def test_dense_gemm_contract_rejects_tunableop_or_forced_blas(monkeypatch):
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(tunable=SimpleNamespace(is_enabled=lambda: False))
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setenv("PYTORCH_TUNABLEOP_ENABLED", "1")
+    with pytest.raises(SystemExit):
+        PREFLIGHT.check_dense_gemm_runtime()
+
+    monkeypatch.setenv("PYTORCH_TUNABLEOP_ENABLED", "0")
+    monkeypatch.setenv("TORCH_BLAS_PREFER_HIPBLASLT", "1")
+    with pytest.raises(SystemExit):
+        PREFLIGHT.check_dense_gemm_runtime()
 
 
 def make_artifacts(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
@@ -66,7 +102,10 @@ def test_runtime_contract_accepts_only_pure_ulysses(tmp_path, world_size):
         "video_flow_shift": 6.0,
         "h3_step_update": "training_euler",
         "h3_refiner_attn_type": "aiter_triton_bf16_flash_attn",
-        "h3_core_attn_type": "aiter_triton_bf16_flash_attn",
+        "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
+        "attn_type": "aiter_triton_bf16_flash_attn",
+        "dit_quant_scheme": "Default",
+        "lora_dynamic_apply": True,
         "warmup": False,
         "enable_cfg": False,
         "tensor_parallel": False,
@@ -106,7 +145,10 @@ def test_runtime_contract_rejects_non_day0_ulysses_options(tmp_path, key, value)
         "video_flow_shift": 6.0,
         "h3_step_update": "training_euler",
         "h3_refiner_attn_type": "aiter_triton_bf16_flash_attn",
-        "h3_core_attn_type": "aiter_triton_bf16_flash_attn",
+        "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
+        "attn_type": "aiter_triton_bf16_flash_attn",
+        "dit_quant_scheme": "Default",
+        "lora_dynamic_apply": True,
         "warmup": False,
         "tensor_parallel": False,
         "text_encoder_tensor_parallel": False,
