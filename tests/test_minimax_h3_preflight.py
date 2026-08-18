@@ -65,11 +65,11 @@ def test_distributed_worker_selects_local_device_before_backend_import(monkeypat
 
 
 @pytest.mark.parametrize(
-    ("world_size", "heads"),
-    ((1, 56), (2, 28), (4, 14)),
+    ("world_size", "expected"),
+    ((1, ((0, 56),)), (2, ()), (4, ())),
 )
-def test_parent_sage_smoke_stays_on_cuda0(world_size, heads):
-    assert PREFLIGHT.standalone_sage_smoke_plan(world_size) == ((0, heads),)
+def test_parent_sage_smoke_is_only_used_for_single_gpu(world_size, expected):
+    assert PREFLIGHT.standalone_sage_smoke_plan(world_size) == expected
 
 
 def make_artifacts(tmp_path: Path) -> tuple[Path, Path, Path, Path]:

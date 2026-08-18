@@ -295,7 +295,10 @@ def standalone_sage_smoke_plan(world_size: int) -> tuple[tuple[int, int], ...]:
     """Plan parent-process Sage coverage without cross-device reuse."""
     if world_size not in (1, 2, 4):
         raise ValueError(f"MiniMax-H3 Sage preflight does not support world_size={world_size}")
-    return ((0, 56 // world_size),)
+    # Multi-GPU runs are covered once, through the exact torchrun
+    # Ulysses-to-Sage production path. A second parent-process Sage check would
+    # be redundant and can reuse device-local FlyDSL state incorrectly.
+    return ((0, 56),) if world_size == 1 else ()
 
 
 def set_distributed_local_device() -> int:
@@ -534,7 +537,9 @@ def main() -> int:
     if not args.skip_artifacts:
         artifacts = check_artifacts(args.model_dir, args.turbo_dir, args.first_frame, args.last_frame, args.expected_world_size)
     config = check_runtime_config(args.runtime_config, args.expected_world_size) if args.runtime_config else {}
-    triton_runs = [smoke_triton_mha(device_index) for device_index in range(args.expected_world_size)]
+    # One card is enough for the replicated Refiner kernel contract. Core
+    # multi-GPU coverage is handled by the exact distributed smoke below.
+    triton_runs = [smoke_triton_mha(0)]
     sage_runs = [
         smoke_sage_attention(device_index, heads)
         for device_index, heads in standalone_sage_smoke_plan(args.expected_world_size)
@@ -542,7 +547,7 @@ def main() -> int:
 
     torch.cuda.set_device(0)
     triton_attn = triton_runs[0]
-    sage_attn = sage_runs[0]
+    sage_attn = sage_runs[0] if sage_runs else None
     payload = {
         "status": "ok",
         "gpu": gpu,
@@ -550,9 +555,14 @@ def main() -> int:
         "artifacts": artifacts,
         "triton_mha": triton_attn,
         "triton_mha_devices": triton_runs,
+        "triton_mha_scope": "replicated Refiner kernel contract on cuda:0",
         "sage_attention": sage_attn,
         "sage_attention_devices": sage_runs,
-        "sage_attention_scope": "standalone cuda:0; all devices use one torchrun worker in the following Ulysses smoke",
+        "sage_attention_scope": (
+            "standalone cuda:0"
+            if args.expected_world_size == 1
+            else "standalone skipped; all devices use one torchrun worker in the following Ulysses smoke"
+        ),
         "world_size": args.expected_world_size,
         "task": config.get("task", "fl2av"),
         "h3_core_attn_type": config.get("h3_core_attn_type", "aiter_fav3_sage_bf16_attn"),
@@ -560,11 +570,16 @@ def main() -> int:
     }
     json.dump(payload, sys.stdout, indent=2)
     sys.stdout.write("\n")
+    if sage_attn is not None:
+        sage_status = (
+            "standalone Sage Core ran on cuda:0 "
+            f"q={tuple(sage_attn['q_shape'])} abs_max={sage_attn['abs_max']:.4f}"
+        )
+    else:
+        sage_status = "standalone Sage skipped; distributed Ulysses-to-Sage smoke follows"
     print(
         f"[H3Preflight] gfx={gpu['arch']} rocm={gpu['rocm']} source={args.source_mode} "
-        f"Triton Refiner ran on {args.expected_world_size} device(s); "
-        "standalone Sage Core ran on cuda:0 "
-        f"sage_q={tuple(sage_attn['q_shape'])} sage_abs_max={sage_attn['abs_max']:.4f}",
+        f"Triton Refiner ran on cuda:0; {sage_status}",
         file=sys.stderr,
     )
     return 0
