@@ -56,6 +56,23 @@ host images. The default GPU set is `0,1,2,3`, using pure Ulysses SP4 plus VAE
 tile parallelism; TP and Qwen text-encoder TP remain disabled. `--gpus 0` and
 `--gpus 0,1` remain available.
 
+Use `--collect` for one H3 backend-selection run:
+
+```bash
+bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
+  --image IMAGE --gpus 0,1 --collect
+```
+
+The collector is MiniMax-H3-only and disabled by default. Each rank writes
+`h3_runcollector.rankNNN.json` into the normal result directory. The JSON
+contains H0-H6 task/stage timings plus exact Attention, GEMM/LoRA, Conv,
+normalization, and RoPE shape contracts with the current backend class. Shape
+contracts are aggregated across identical calls and ranked as hotspots for
+AI-assisted Aiter backend selection. GPU events and Python instrumentation add
+intentional synchronization and hook overhead, so a `--collect` run is not a
+production performance baseline. The generic result bundle uploader includes
+these JSON files automatically.
+
 ## Package and upload any result directory
 
 `scripts/upload_result_bundle.py` recursively packages a complete result

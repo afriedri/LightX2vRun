@@ -31,6 +31,7 @@ Options:
   --prompt-file FILE     Custom H3-structured prompt; overrides the preset
   --smoke                480x480 / 124 frames instead of 1344x768 / 362
   --preflight-only       Run per-GPU MHA and RCCL/Ulysses smoke, then exit
+  --collect              Record H0-H6 timings and AI-readable operator contracts
   --gpus IDS             One, two, or four comma-separated GPU ids
                          (default: 0,1,2,3; four-GPU pure Ulysses SP4)
   --gpu IDS              Backward-compatible alias for --gpus
@@ -43,6 +44,8 @@ Environment:
   H3_MODEL_DIR           Override the default complete H3 checkpoint directory
   H3_TURBO_DIR           Override the default Turbo LoRA directory
   MEMORY_MONITOR         1 (default) records host RAM, process RSS/PSS and VRAM
+  LIGHTX2V_H3_RUN_COLLECTOR
+                         Prefer --collect; direct environment use accepts 0/1
 EOF
 }
 
@@ -58,6 +61,7 @@ prompt_preset="${H3_PROMPT_PRESET:-bird-stable}"
 prompt_file="${H3_PROMPT_FILE:-}"
 smoke=0
 preflight_only=0
+collect="${LIGHTX2V_H3_RUN_COLLECTOR:-0}"
 
 while (( $# > 0 )); do
     case "$1" in
@@ -122,6 +126,10 @@ while (( $# > 0 )); do
             preflight_only=1
             shift
             ;;
+        --collect)
+            collect=1
+            shift
+            ;;
         *)
             echo "ERROR: unknown argument: $1" >&2
             usage >&2
@@ -159,6 +167,10 @@ case "${memory_monitor_enabled}" in
     0 | 1) ;;
     *) echo "ERROR: MEMORY_MONITOR must be 0 or 1" >&2; exit 2 ;;
 esac
+case "${collect}" in
+    0 | 1) ;;
+    *) echo "ERROR: LIGHTX2V_H3_RUN_COLLECTOR must be 0 or 1" >&2; exit 2 ;;
+esac
 prompt_duration_seconds=15.08
 if [[ "${smoke}" == 1 ]]; then
     prompt_duration_seconds=5.17
@@ -188,7 +200,7 @@ container_evidence_dir=/workspace/LightX2V/save_results
 python3 - "${result_dir}/run_manifest.json" "${image}" "${source_mode}" \
     "${model_dir}" "${turbo_dir}" "${first_frame}" "${last_frame}" \
     "${frame_source}" "${gpu_devices}" "${smoke}" "${preflight_only}" \
-    "${prompt}" "${prompt_source}" "${prompt_preset}" "${seed}" <<'PY'
+    "${prompt}" "${prompt_source}" "${prompt_preset}" "${seed}" "${collect}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -210,6 +222,7 @@ import sys
     prompt_source,
     prompt_preset,
     seed,
+    collect,
 ) = sys.argv[1:]
 
 def sha256(path):
@@ -248,6 +261,13 @@ payload = {
     },
     "smoke": smoke == "1",
     "preflight_only": preflight_only == "1",
+    "runcollector": {
+        "enabled": collect == "1",
+        "schema_name": "lightx2v.minimax_h3.runcollector",
+        "schema_version": 1,
+        "output_pattern": "h3_runcollector.rank{rank}.json",
+        "profiling_only": True,
+    },
     "seed": int(seed),
     "prompt": prompt,
     "prompt_source": prompt_source,
@@ -274,6 +294,8 @@ export H3_LAST_FRAME="${last_frame}"
 export H3_FRAME_SOURCE="${frame_source}"
 export H3_SMOKE="${smoke}"
 export H3_PREFLIGHT_ONLY="${preflight_only}"
+export LIGHTX2V_H3_RUN_COLLECTOR="${collect}"
+export LIGHTX2V_H3_RUN_COLLECTOR_OUTPUT="${container_evidence_dir}/h3_runcollector.rank{rank}.json"
 export PROMPT="${prompt}"
 export SEED="${seed}"
 export H3_EVIDENCE_DIR="${container_evidence_dir}"
@@ -327,6 +349,9 @@ fi
 echo "MiniMax-H3 Day0 results: ${result_dir}"
 echo "Source mode: ${source_mode}"
 echo "Prompt: ${prompt_source} (${prompt_duration_seconds}s alignment)"
+if [[ "${collect}" == 1 ]]; then
+    echo "H3 runcollector: ${result_dir}/h3_runcollector.rankNNN.json (profiling only)"
+fi
 set +e
 "${model_run}" --run-minimax-h3-gfx1201 2>&1 | tee "${log_path}"
 pipeline_status=("${PIPESTATUS[@]}")
@@ -363,4 +388,7 @@ echo "Video: ${video_path}"
 echo "Summary: ${summary_path}"
 if [[ "${memory_monitor_enabled}" == 1 ]]; then
     echo "Memory: ${memory_path} (+ .summary.json)"
+fi
+if [[ "${collect}" == 1 ]]; then
+    echo "Runcollector: ${result_dir}/h3_runcollector.rankNNN.json"
 fi
