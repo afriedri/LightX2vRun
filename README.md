@@ -25,12 +25,13 @@ bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
   --preflight-only
 ```
 
-Remove `--preflight-only` to run inference. The full run explicitly requests
-1344x768 output. Its default `bird-stable` prompt follows MiniMax's FL2VA
-Context-IR structure and is tailored to the published blue-bird first/last
+Remove `--preflight-only` to run inference. The default run requests
+1344x768 output at 24 FPS for 124 frames (about 5.17 seconds); `--smoke`
+keeps the same duration and uses 480x480. The default `bird-stable` prompt
+follows MiniMax's FL2VA Context-IR structure and is tailored to the published blue-bird first/last
 frames. It uses one continuous takeoff shot, explicit keyframe timing, identity
 constraints, and synchronized natural sound. The launcher renders the final
-keyframe mark as 15.08 seconds for a full run or 5.17 seconds for `--smoke`.
+keyframe mark as 5.17 seconds for every H3 test.
 
 Two additional prompts support controlled comparisons without editing shell
 variables:

@@ -17,7 +17,7 @@ SPEC.loader.exec_module(BUILDER)
 def published_config() -> dict:
     return {
         "infer_steps": 5,
-        "target_video_length": 362,
+        "target_video_length": 124,
         "target_height": 768,
         "target_width": 1344,
         "fps": 24,
@@ -60,7 +60,7 @@ def amd_overlay() -> dict:
 def test_builder_freezes_full_and_smoke_geometry():
     full = BUILDER.build(published_config(), amd_overlay(), smoke=False, seq_parallel_size=1)
     smoke = BUILDER.build(published_config(), amd_overlay(), smoke=True, seq_parallel_size=1)
-    assert (full["target_height"], full["target_width"], full["target_video_length"]) == (768, 1344, 362)
+    assert (full["target_height"], full["target_width"], full["target_video_length"]) == (768, 1344, 124)
     assert (smoke["target_height"], smoke["target_width"], smoke["target_video_length"]) == (480, 480, 124)
     assert full["lora_configs"][0]["path"].startswith("/models/minimax_h3_turbo/")
     assert full["parallel"] is False
@@ -114,3 +114,10 @@ def test_builder_rejects_non_whitelisted_semantic_change():
     overlay["audio_flow_shift"] = 99.0
     with pytest.raises(SystemExit, match="non-whitelisted"):
         BUILDER.build(published_config(), overlay, smoke=False, seq_parallel_size=1)
+
+
+def test_builder_overrides_older_image_workload_to_124_frames():
+    publish = published_config()
+    publish["target_video_length"] = 362
+    config = BUILDER.build(publish, amd_overlay(), smoke=False, seq_parallel_size=1)
+    assert config["target_video_length"] == 124

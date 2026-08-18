@@ -29,7 +29,7 @@ Options:
   --result-dir DIR       Exact host result directory (default: timestamped)
   --prompt-preset NAME   bird-stable (default), bird-dynamic, or bird-audio
   --prompt-file FILE     Custom H3-structured prompt; overrides the preset
-  --smoke                480x480 / 124 frames instead of 1344x768 / 362
+  --smoke                Use 480x480 instead of 1344x768; both run 124 frames
   --preflight-only       Run per-GPU MHA and RCCL/Ulysses smoke, then exit
   --collect              Record H0-H6 timings and AI-readable operator contracts
   --gpus IDS             One, two, or four comma-separated GPU ids
@@ -171,10 +171,7 @@ case "${collect}" in
     0 | 1) ;;
     *) echo "ERROR: LIGHTX2V_H3_RUN_COLLECTOR must be 0 or 1" >&2; exit 2 ;;
 esac
-prompt_duration_seconds=15.08
-if [[ "${smoke}" == 1 ]]; then
-    prompt_duration_seconds=5.17
-fi
+prompt_duration_seconds=5.17
 resolve_minimax_h3_prompt "${run_root}" "${prompt_preset}" "${prompt_file}" "${prompt_duration_seconds}" || exit $?
 prompt="${MINIMAX_H3_PROMPT}"
 prompt_source="${MINIMAX_H3_PROMPT_SOURCE}"
@@ -275,7 +272,7 @@ payload = {
     "workload": {
         "height": 480 if smoke == "1" else 768,
         "width": 480 if smoke == "1" else 1344,
-        "frames": 124 if smoke == "1" else 362,
+        "frames": 124,
         "fps": 24,
         "model_evaluations": 4,
     },

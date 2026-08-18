@@ -24,6 +24,9 @@ REQUIRED_PUBLISH_KEYS = (
     "keep_latents_dtype_in_scheduler",
 )
 FROZEN_VALUES = {
+    "target_video_length": 124,
+    "fps": 24,
+    "target_fps": 24,
     "video_flow_shift": 6.0,
     "h3_step_update": "training_euler",
     "infer_steps": 5,
@@ -53,7 +56,8 @@ ALLOWED_OVERLAY_CHANGES = {
     "lora_configs",
 }
 TURBO_NAME = "minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
-SMOKE = {"target_height": 480, "target_width": 480, "target_video_length": 124, "fps": 24, "target_fps": 24}
+TEST_WORKLOAD = {"target_video_length": 124, "fps": 24, "target_fps": 24}
+SMOKE = {"target_height": 480, "target_width": 480}
 
 
 def load_json(path: Path) -> dict:
@@ -75,6 +79,9 @@ def build(publish: dict, overlay: dict, *, smoke: bool, seq_parallel_size: int =
         raise SystemExit(f"AMD overlay changes non-whitelisted published semantics: {unauthorized}")
     config = dict(publish)
     config.update(overlay)
+    # Run policy: every H3 backend test uses the shortest valid 17*n+5 shape.
+    # Override older images whose baked published config still requests 362f.
+    config.update(TEST_WORKLOAD)
     if smoke:
         config.update(SMOKE)
     for key, expected in FROZEN_VALUES.items():

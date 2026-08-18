@@ -114,9 +114,16 @@ def test_h3_launcher_defaults_to_published_host_frames(tmp_path):
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["first_frame"] == {"path": DEFAULT_FIRST_FRAME, "sha256": None, "source": "host"}
     assert manifest["last_frame"] == {"path": DEFAULT_LAST_FRAME, "sha256": None, "source": "host"}
-    assert manifest["prompt"] == rendered_prompt(DEFAULT_PROMPT_PRESET, "15.08")
+    assert manifest["prompt"] == rendered_prompt(DEFAULT_PROMPT_PRESET, "5.17")
     assert manifest["prompt_source"] == f"preset:{DEFAULT_PROMPT_PRESET}"
     assert manifest["prompt_preset"] == DEFAULT_PROMPT_PRESET
+    assert manifest["workload"] == {
+        "fps": 24,
+        "frames": 124,
+        "height": 768,
+        "model_evaluations": 4,
+        "width": 1344,
+    }
 
 
 def test_h3_launcher_renders_smoke_duration_in_structured_prompt(tmp_path):
@@ -124,14 +131,20 @@ def test_h3_launcher_renders_smoke_duration_in_structured_prompt(tmp_path):
     assert completed.returncode == 0, completed.stdout + completed.stderr
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["prompt"] == rendered_prompt(DEFAULT_PROMPT_PRESET, "5.17")
-    assert "15.08-second mark" not in manifest["prompt"]
+    assert manifest["workload"] == {
+        "fps": 24,
+        "frames": 124,
+        "height": 480,
+        "model_evaluations": 4,
+        "width": 480,
+    }
 
 
 def test_h3_launcher_selects_audio_prompt_preset(tmp_path):
     completed, result_dir = run_dry(tmp_path, "--prompt-preset", "bird-audio")
     assert completed.returncode == 0, completed.stdout + completed.stderr
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["prompt"] == rendered_prompt("bird-audio", "15.08")
+    assert manifest["prompt"] == rendered_prompt("bird-audio", "5.17")
     assert manifest["prompt_source"] == "preset:bird-audio"
     assert manifest["prompt_preset"] == "bird-audio"
 
@@ -142,7 +155,7 @@ def test_h3_launcher_accepts_custom_prompt_file(tmp_path):
     completed, result_dir = run_dry(tmp_path, "--prompt-file", str(prompt_file))
     assert completed.returncode == 0, completed.stdout + completed.stderr
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["prompt"] == "custom ending at 15.08 seconds"
+    assert manifest["prompt"] == "custom ending at 5.17 seconds"
     assert manifest["prompt_source"] == f"file:{prompt_file}"
     assert manifest["prompt_preset"] is None
 

@@ -75,12 +75,11 @@ fi
 smoke_flag=()
 target_height=768
 target_width=1344
-prompt_duration_seconds=15.08
+prompt_duration_seconds=5.17
 if [[ "${H3_SMOKE:-0}" == 1 ]]; then
     smoke_flag+=(--smoke)
     target_height=480
     target_width=480
-    prompt_duration_seconds=5.17
 fi
 
 python3 "${script_dir}/build_minimax_h3_runtime_config.py" \
