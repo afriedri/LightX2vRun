@@ -291,10 +291,30 @@ def smoke_sage_attention(device_index: int, heads: int) -> dict:
     }
 
 
+def standalone_sage_smoke_plan(world_size: int) -> tuple[tuple[int, int], ...]:
+    """Plan parent-process Sage coverage without cross-device reuse."""
+    if world_size not in (1, 2, 4):
+        raise ValueError(f"MiniMax-H3 Sage preflight does not support world_size={world_size}")
+    return ((0, 56 // world_size),)
+
+
+def set_distributed_local_device() -> int:
+    """Bind this torchrun worker before LightX2V/Aiter initializes a backend."""
+    import torch
+
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    torch.cuda.set_device(local_rank)
+    return local_rank
+
+
 def smoke_distributed_ulysses() -> int:
+    local_rank = set_distributed_local_device()
+
     import torch
     import torch.distributed as dist
 
+    # These imports can initialize Aiter/Triton/FlyDSL device-local state, so
+    # they must happen only after the torchrun worker has selected LOCAL_RANK.
     from lightx2v.common.ops.attn.ulysses_attn import UlyssesAttnWeight
     from lightx2v_platform.ops.attn.amd_rocm.sage_attn import AiterFav3SageBf16AttnWeight
 
@@ -302,10 +322,8 @@ def smoke_distributed_ulysses() -> int:
     try:
         world_size = dist.get_world_size()
         rank = dist.get_rank()
-        local_rank = int(os.environ.get("LOCAL_RANK", rank))
         if world_size not in (2, 4):
             raise RuntimeError(f"MiniMax-H3 distributed preflight requires world_size 2 or 4, got {world_size}")
-        torch.cuda.set_device(local_rank)
         device = torch.device(f"cuda:{local_rank}")
         aux_len = 3
         torch.manual_seed(20260817)
@@ -504,18 +522,23 @@ def main() -> int:
         return smoke_distributed_ulysses()
 
     gpu = require_gfx1201(args.expected_world_size)
+    import torch
+
+    # The parent preflight process initializes Aiter once on logical cuda:0.
+    # Do not execute native Sage on multiple devices from that one process:
+    # FlyDSL owns device-local runtime state. Multi-GPU Sage coverage is
+    # provided below by the one-process-per-device torchrun Ulysses smoke.
+    torch.cuda.set_device(0)
     runtime = check_runtime_dependencies(args.source_mode)
     artifacts = {}
     if not args.skip_artifacts:
         artifacts = check_artifacts(args.model_dir, args.turbo_dir, args.first_frame, args.last_frame, args.expected_world_size)
     config = check_runtime_config(args.runtime_config, args.expected_world_size) if args.runtime_config else {}
     triton_runs = [smoke_triton_mha(device_index) for device_index in range(args.expected_world_size)]
-    sage_heads_per_rank = 56 // args.expected_world_size
     sage_runs = [
-        smoke_sage_attention(device_index, sage_heads_per_rank)
-        for device_index in range(args.expected_world_size)
+        smoke_sage_attention(device_index, heads)
+        for device_index, heads in standalone_sage_smoke_plan(args.expected_world_size)
     ]
-    import torch
 
     torch.cuda.set_device(0)
     triton_attn = triton_runs[0]
@@ -529,6 +552,7 @@ def main() -> int:
         "triton_mha_devices": triton_runs,
         "sage_attention": sage_attn,
         "sage_attention_devices": sage_runs,
+        "sage_attention_scope": "standalone cuda:0; all devices use one torchrun worker in the following Ulysses smoke",
         "world_size": args.expected_world_size,
         "task": config.get("task", "fl2av"),
         "h3_core_attn_type": config.get("h3_core_attn_type", "aiter_fav3_sage_bf16_attn"),
@@ -538,7 +562,8 @@ def main() -> int:
     sys.stdout.write("\n")
     print(
         f"[H3Preflight] gfx={gpu['arch']} rocm={gpu['rocm']} source={args.source_mode} "
-        f"Triton Refiner + Sage Core ran on {args.expected_world_size} device(s) "
+        f"Triton Refiner ran on {args.expected_world_size} device(s); "
+        "standalone Sage Core ran on cuda:0 "
         f"sage_q={tuple(sage_attn['q_shape'])} sage_abs_max={sage_attn['abs_max']:.4f}",
         file=sys.stderr,
     )

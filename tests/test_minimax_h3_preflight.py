@@ -52,6 +52,26 @@ def test_dense_gemm_contract_rejects_tunableop_or_forced_blas(monkeypatch):
         PREFLIGHT.check_dense_gemm_runtime()
 
 
+def test_distributed_worker_selects_local_device_before_backend_import(monkeypatch):
+    selected = []
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(set_device=selected.append)
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setenv("LOCAL_RANK", "3")
+
+    assert PREFLIGHT.set_distributed_local_device() == 3
+    assert selected == [3]
+
+
+@pytest.mark.parametrize(
+    ("world_size", "heads"),
+    ((1, 56), (2, 28), (4, 14)),
+)
+def test_parent_sage_smoke_stays_on_cuda0(world_size, heads):
+    assert PREFLIGHT.standalone_sage_smoke_plan(world_size) == ((0, heads),)
+
+
 def make_artifacts(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     model_dir = tmp_path / "MiniMax-H3"
     required = {
