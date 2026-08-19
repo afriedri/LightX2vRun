@@ -471,6 +471,7 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
         ("h3_refiner_attn_type", "aiter_triton_bf16_flash_attn"),
         ("h3_core_attn_type", "aiter_fav3_sage_bf16_attn"),
         ("attn_type", "aiter_triton_bf16_flash_attn"),
+        ("qwen3vl_attn_type", "aiter_triton_bf16_flash_attn"),
         ("dit_quant_scheme", "Default"),
         ("lora_dynamic_apply", True),
         ("warmup", False),

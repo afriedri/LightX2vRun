@@ -34,7 +34,7 @@ FROZEN_VALUES = {
     "h3_refiner_attn_type": "aiter_triton_bf16_flash_attn",
     "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
     "attn_type": "aiter_triton_bf16_flash_attn",
-    "qwen3vl_attn_type": "torch_sdpa",
+    "qwen3vl_attn_type": "aiter_triton_bf16_flash_attn",
     "dit_quant_scheme": "Default",
     "rms_type": "torch_native",
     "rope_type": "torch_real_rope",

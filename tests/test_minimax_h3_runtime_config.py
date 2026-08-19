@@ -49,7 +49,7 @@ def amd_overlay() -> dict:
         "attn_type": "aiter_triton_bf16_flash_attn",
         "h3_refiner_attn_type": "aiter_triton_bf16_flash_attn",
         "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
-        "qwen3vl_attn_type": "torch_sdpa",
+        "qwen3vl_attn_type": "aiter_triton_bf16_flash_attn",
         "dit_quant_scheme": "Default",
         "rms_type": "torch_native",
         "rope_type": "torch_real_rope",
@@ -70,6 +70,7 @@ def test_builder_freezes_full_and_smoke_geometry():
     assert full["vae_decode_parallel"] is False
     assert full["h3_core_attn_type"] == "aiter_fav3_sage_bf16_attn"
     assert full["h3_refiner_attn_type"] == "aiter_triton_bf16_flash_attn"
+    assert full["qwen3vl_attn_type"] == "aiter_triton_bf16_flash_attn"
     assert full["dit_quant_scheme"] == "Default"
     assert full["lora_dynamic_apply"] is True
 
