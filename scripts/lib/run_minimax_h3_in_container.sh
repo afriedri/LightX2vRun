@@ -78,6 +78,7 @@ else
 fi
 
 smoke_flag=()
+kernel_smoke_flag=()
 target_height=768
 target_width=1344
 prompt_duration_seconds=5.17
@@ -85,6 +86,9 @@ if [[ "${H3_SMOKE:-0}" == 1 ]]; then
     smoke_flag+=(--smoke)
     target_height=480
     target_width=480
+fi
+if [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 ]]; then
+    kernel_smoke_flag+=(--kernel-smoke)
 fi
 
 python3 "${script_dir}/build_minimax_h3_runtime_config.py" \
@@ -101,9 +105,10 @@ python3 "${script_dir}/preflight_minimax_h3_day0.py" \
     --last-frame "${last_frame_path}" \
     --runtime-config "${runtime_config_json}" \
     --expected-world-size "${gpu_count}" \
-    --source-mode "${source_mode}" | tee "${preflight_json}"
+    --source-mode "${source_mode}" \
+    "${kernel_smoke_flag[@]}" | tee "${preflight_json}"
 
-if (( gpu_count > 1 )); then
+if (( gpu_count > 1 )) && [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 ]]; then
     ulysses_preflight_log="${ulysses_preflight_log:-${runtime_config_dir}/ulysses_preflight.log}"
     torchrun --standalone --nproc_per_node="${gpu_count}" \
         "${script_dir}/preflight_minimax_h3_day0.py" \
@@ -130,6 +135,7 @@ if (( gpu_count > 1 )); then
     parallel_mode="Ulysses SP${gpu_count} + VAE tile parallel"
 fi
 echo "Parallel: ${parallel_mode}"
+echo "H1 PatchEmbed API: torch F.linear (ATen operator: addmm; measured device backend: hipBLASLt)"
 echo "Core Attention: aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201)"
 echo "Dense GEMM/LoRA: torch.mm -> default ROCm BLAS heuristic (TunableOp disabled)"
 echo "Source mode: ${source_mode}"

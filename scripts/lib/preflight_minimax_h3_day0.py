@@ -90,6 +90,24 @@ def require_gfx1201(expected_devices: int) -> dict:
     }
 
 
+def check_h1_patch_embed_runtime(patch_embed_class) -> dict:
+    contract = {
+        "name": getattr(patch_embed_class, "_lightx2v_patch_embed_backend", None),
+        "frontend_api": getattr(patch_embed_class, "_lightx2v_runcollector_frontend_api", None),
+        "aten_operator": getattr(patch_embed_class, "_lightx2v_runcollector_aten_operator", None),
+        "sequence_sharded": False,
+    }
+    expected = {
+        "name": "torch_linear",
+        "frontend_api": "torch.nn.functional.linear",
+        "aten_operator": "addmm",
+        "sequence_sharded": False,
+    }
+    if contract != expected:
+        die(f"LightX2V image does not contain the MiniMax-H3 T2a PatchEmbed contract: expected {expected}, got {contract}")
+    return contract
+
+
 def check_runtime_dependencies(source_mode: str) -> dict:
     for executable in ("ffmpeg", "ffprobe"):
         if shutil.which(executable) is None:
@@ -114,6 +132,7 @@ def check_runtime_dependencies(source_mode: str) -> dict:
         import lightx2v
         import lightx2v.infer  # noqa: F401
         import lightx2v_platform.ops.attn.amd_rocm  # noqa: F401
+        from lightx2v.models.input_encoders.hf.minimax_h3.qwen3vl_vision import _PatchEmbed
         from lightx2v_platform.registry_factory import PLATFORM_ATTN_WEIGHT_REGISTER
         from lightx2v.utils.registry_factory import (
             ATTN_WEIGHT_REGISTER,
@@ -141,6 +160,7 @@ def check_runtime_dependencies(source_mode: str) -> dict:
     ):
         if name not in registry:
             die(f"LightX2V runtime registry is missing: {name}")
+    patch_embed_contract = check_h1_patch_embed_runtime(_PatchEmbed)
 
     source_root = Path(lightx2v.__file__).resolve().parents[1]
     source_revision = os.environ.get("LIGHTX2V_SOURCE_REVISION") or git_revision(source_root)
@@ -164,6 +184,7 @@ def check_runtime_dependencies(source_mode: str) -> dict:
         "registered_backends": list(attention_backends),
         "registered_runner": "minimax_h3",
         "registered_torch_ops": ["torch_sdpa", "torch_native", "torch_real_rope"],
+        "h1_patch_embed": patch_embed_contract,
         "sage_api_importable": True,
         "dense_gemm": check_dense_gemm_runtime(),
     }
@@ -519,6 +540,7 @@ def main() -> int:
     parser.add_argument("--source-mode", choices=("image",), default="image")
     parser.add_argument("--skip-artifacts", action="store_true")
     parser.add_argument("--expected-world-size", type=int, choices=(1, 2, 4), default=1)
+    parser.add_argument("--kernel-smoke", action="store_true", help="Run standalone Triton/Sage GPU kernels; reserved for explicit preflight-only runs")
     parser.add_argument("--distributed-attention-only", action="store_true")
     args = parser.parse_args()
 
@@ -538,16 +560,21 @@ def main() -> int:
     if not args.skip_artifacts:
         artifacts = check_artifacts(args.model_dir, args.turbo_dir, args.first_frame, args.last_frame, args.expected_world_size)
     config = check_runtime_config(args.runtime_config, args.expected_world_size) if args.runtime_config else {}
-    # One card is enough for the replicated Refiner kernel contract. Core
-    # multi-GPU coverage is handled by the exact distributed smoke below.
-    triton_runs = [smoke_triton_mha(0)]
-    sage_runs = [
-        smoke_sage_attention(device_index, heads)
-        for device_index, heads in standalone_sage_smoke_plan(args.expected_world_size)
-    ]
+    # Kernel execution is an explicit diagnostic. Normal inference immediately
+    # exercises these same paths, so only retain the cheap static/runtime
+    # contracts on every request.
+    triton_runs = [smoke_triton_mha(0)] if args.kernel_smoke else []
+    sage_runs = (
+        [
+            smoke_sage_attention(device_index, heads)
+            for device_index, heads in standalone_sage_smoke_plan(args.expected_world_size)
+        ]
+        if args.kernel_smoke
+        else []
+    )
 
     torch.cuda.set_device(0)
-    triton_attn = triton_runs[0]
+    triton_attn = triton_runs[0] if triton_runs else None
     sage_attn = sage_runs[0] if sage_runs else None
     payload = {
         "status": "ok",
@@ -556,14 +583,19 @@ def main() -> int:
         "artifacts": artifacts,
         "triton_mha": triton_attn,
         "triton_mha_devices": triton_runs,
-        "triton_mha_scope": "replicated Refiner kernel contract on cuda:0",
+        "triton_mha_scope": "replicated Refiner kernel contract on cuda:0" if args.kernel_smoke else "skipped during normal inference startup",
         "sage_attention": sage_attn,
         "sage_attention_devices": sage_runs,
         "sage_attention_scope": (
             "standalone cuda:0"
-            if args.expected_world_size == 1
-            else "standalone skipped; all devices use one torchrun worker in the following Ulysses smoke"
+            if args.kernel_smoke and args.expected_world_size == 1
+            else (
+                "standalone skipped; all devices use one torchrun worker in the following Ulysses smoke"
+                if args.kernel_smoke
+                else "skipped during normal inference startup"
+            )
         ),
+        "kernel_smoke_requested": args.kernel_smoke,
         "world_size": args.expected_world_size,
         "task": config.get("task", "fl2av"),
         "h3_core_attn_type": config.get("h3_core_attn_type", "aiter_fav3_sage_bf16_attn"),
@@ -571,16 +603,19 @@ def main() -> int:
     }
     json.dump(payload, sys.stdout, indent=2)
     sys.stdout.write("\n")
-    if sage_attn is not None:
+    if not args.kernel_smoke:
+        kernel_status = "kernel smoke skipped for normal inference"
+    elif sage_attn is not None:
         sage_status = (
             "standalone Sage Core ran on cuda:0 "
             f"q={tuple(sage_attn['q_shape'])} abs_max={sage_attn['abs_max']:.4f}"
         )
+        kernel_status = f"Triton Refiner ran on cuda:0; {sage_status}"
     else:
-        sage_status = "standalone Sage skipped; distributed Ulysses-to-Sage smoke follows"
+        kernel_status = "Triton Refiner ran on cuda:0; standalone Sage skipped; distributed Ulysses-to-Sage smoke follows"
     print(
         f"[H3Preflight] gfx={gpu['arch']} rocm={gpu['rocm']} source={args.source_mode} "
-        f"Triton Refiner ran on cuda:0; {sage_status}",
+        f"{kernel_status}",
         file=sys.stderr,
     )
     return 0

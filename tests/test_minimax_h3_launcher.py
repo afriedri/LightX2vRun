@@ -105,6 +105,16 @@ def test_h3_dry_run_uses_image_source_without_overlay(tmp_path):
             "tunableop_cache": False,
             "tunableop_enabled": False,
         },
+        "h1_patch_embed": {
+            "aten_operator": "addmm",
+            "calls_per_h1": 1,
+            "frontend_api": "torch.nn.functional.linear",
+            "matrix_mkn_per_rank": [8064, 1536, 1152],
+            "measured_device_backend": "hipBLASLt",
+            "name": "torch_linear",
+            "sequence_sharded": False,
+            "tunableop_enabled": False,
+        },
         "h3_core_attention": {
             "name": "aiter_fav3_sage_bf16_attn",
             "numerics": "int8_qk_fp8_pv",
@@ -153,6 +163,7 @@ def test_h3_launcher_renders_smoke_duration_in_structured_prompt(tmp_path):
         "model_evaluations": 4,
         "width": 480,
     }
+    assert manifest["backends"]["h1_patch_embed"]["matrix_mkn_per_rank"] == [1800, 1536, 1152]
 
 
 def test_h3_launcher_selects_audio_prompt_preset(tmp_path):

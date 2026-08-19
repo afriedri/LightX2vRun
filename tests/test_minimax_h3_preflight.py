@@ -18,6 +18,26 @@ PREFLIGHT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PREFLIGHT)
 
 
+def test_h1_patch_embed_contract_separates_frontend_from_aten_operator():
+    patch_embed = SimpleNamespace(
+        _lightx2v_patch_embed_backend="torch_linear",
+        _lightx2v_runcollector_frontend_api="torch.nn.functional.linear",
+        _lightx2v_runcollector_aten_operator="addmm",
+    )
+
+    assert PREFLIGHT.check_h1_patch_embed_runtime(patch_embed) == {
+        "name": "torch_linear",
+        "frontend_api": "torch.nn.functional.linear",
+        "aten_operator": "addmm",
+        "sequence_sharded": False,
+    }
+
+
+def test_h1_patch_embed_contract_rejects_an_old_image():
+    with pytest.raises(SystemExit):
+        PREFLIGHT.check_h1_patch_embed_runtime(SimpleNamespace())
+
+
 def test_dense_gemm_contract_requires_direct_torch_mm_without_tunableop(monkeypatch):
     fake_torch = SimpleNamespace(
         cuda=SimpleNamespace(tunable=SimpleNamespace(is_enabled=lambda: False))

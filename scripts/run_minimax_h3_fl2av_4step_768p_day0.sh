@@ -257,6 +257,16 @@ payload = {
         "vae_decode_parallel": len(gpus) > 1,
     },
     "backends": {
+        "h1_patch_embed": {
+            "name": "torch_linear",
+            "frontend_api": "torch.nn.functional.linear",
+            "aten_operator": "addmm",
+            "measured_device_backend": "hipBLASLt",
+            "matrix_mkn_per_rank": [1800 if smoke == "1" else 8064, 1536, 1152],
+            "calls_per_h1": 1,
+            "sequence_sharded": False,
+            "tunableop_enabled": False,
+        },
         "h3_core_attention": {
             "name": "aiter_fav3_sage_bf16_attn",
             "route": "sage_attn_v2_gfx1201",
