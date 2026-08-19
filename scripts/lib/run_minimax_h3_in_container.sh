@@ -79,6 +79,7 @@ fi
 
 smoke_flag=()
 kernel_smoke_flag=()
+runcollector_schema_flag=()
 target_height=768
 target_width=1344
 prompt_duration_seconds=5.17
@@ -89,6 +90,9 @@ if [[ "${H3_SMOKE:-0}" == 1 ]]; then
 fi
 if [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 ]]; then
     kernel_smoke_flag+=(--kernel-smoke)
+fi
+if [[ "${LIGHTX2V_H3_RUN_COLLECTOR:-0}" == 1 ]]; then
+    runcollector_schema_flag+=(--required-runcollector-schema 2)
 fi
 
 python3 "${script_dir}/build_minimax_h3_runtime_config.py" \
@@ -106,6 +110,7 @@ python3 "${script_dir}/preflight_minimax_h3_day0.py" \
     --runtime-config "${runtime_config_json}" \
     --expected-world-size "${gpu_count}" \
     --source-mode "${source_mode}" \
+    "${runcollector_schema_flag[@]}" \
     "${kernel_smoke_flag[@]}" | tee "${preflight_json}"
 
 if (( gpu_count > 1 )) && [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 ]]; then

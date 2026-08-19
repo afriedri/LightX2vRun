@@ -40,7 +40,9 @@ dynamic rank-128 LoRA remain the measured `torch.mm` path using PyTorch's
 default ROCm BLAS heuristic (hipBLASLt on the collected hot shapes). The H3
 launcher explicitly disables TunableOp and does not load a tuning cache: its
 weighted gain was only 1.035x and QKV LoRA-up regressed. Preflight executes
-both Attention kernels and the real Ulysses-to-Sage adapter before inference.
+only static/runtime contracts during a normal inference start;
+`--preflight-only` additionally executes both Attention kernels and the real
+Ulysses-to-Sage adapter.
 
 Two additional prompts support controlled comparisons without editing shell
 variables:
@@ -73,15 +75,17 @@ bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
   --image IMAGE --gpus 0,1 --collect
 ```
 
-The collector is MiniMax-H3-only and disabled by default. Each rank writes
-`h3_runcollector.rankNNN.json` into the normal result directory. The JSON
-contains H0-H6 task/stage timings plus exact Attention, GEMM/LoRA, Conv,
-normalization, and RoPE shape contracts with the current backend class. Shape
-contracts are aggregated across identical calls and ranked as hotspots for
-AI-assisted Aiter backend selection. GPU events and Python instrumentation add
-intentional synchronization and hook overhead, so a `--collect` run is not a
-production performance baseline. The generic result bundle uploader includes
-these JSON files automatically.
+The schema-2 collector is MiniMax-H3-only and disabled by default. Each rank
+writes `h3_runcollector.rankNNN.json`; the launcher also writes
+`h3_t1_summary.json`. In addition to H0-H6 and exact operator contracts, T1
+records every H3 block's compute/H2D lifecycle, exposed versus overlapped H2D,
+dynamic LoRA child time, Ulysses communication/layout residual, Refiner and
+Pre/Core/Post timings, and the remaining elementwise bucket. For each step the
+cross-rank summary selects the slowest whole rank instead of adding maxima from
+different ranks. GPU events, Python hooks, and final report materialization add
+profiling overhead, so a `--collect` run is not a production performance
+baseline. The generic result bundle uploader includes these JSON files
+automatically.
 
 ## Package and upload any result directory
 

@@ -38,6 +38,33 @@ def test_h1_patch_embed_contract_rejects_an_old_image():
         PREFLIGHT.check_h1_patch_embed_runtime(SimpleNamespace())
 
 
+def test_h3_t1_runcollector_contract_accepts_schema2():
+    assert PREFLIGHT.validate_runcollector_contract(
+        "lightx2v.minimax_h3.runcollector",
+        2,
+        "h3_t1_lifecycle",
+        2,
+    ) == {
+        "required": True,
+        "schema_name": "lightx2v.minimax_h3.runcollector",
+        "schema_version": 2,
+        "mode": "h3_t1_lifecycle",
+    }
+
+
+@pytest.mark.parametrize(
+    ("schema_name", "schema_version", "mode"),
+    (
+        ("lightx2v.minimax_h3.runcollector", 1, "h3_t1_lifecycle"),
+        ("lightx2v.minimax_h3.runcollector", 2, "legacy"),
+        ("wrong", 2, "h3_t1_lifecycle"),
+    ),
+)
+def test_h3_t1_runcollector_contract_rejects_old_or_wrong_images(schema_name, schema_version, mode):
+    with pytest.raises(SystemExit):
+        PREFLIGHT.validate_runcollector_contract(schema_name, schema_version, mode, 2)
+
+
 def test_dense_gemm_contract_requires_direct_torch_mm_without_tunableop(monkeypatch):
     fake_torch = SimpleNamespace(
         cuda=SimpleNamespace(tunable=SimpleNamespace(is_enabled=lambda: False))

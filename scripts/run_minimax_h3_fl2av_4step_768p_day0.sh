@@ -31,7 +31,7 @@ Options:
   --prompt-file FILE     Custom H3-structured prompt; overrides the preset
   --smoke                Use 480x480 instead of 1344x768; both run 124 frames
   --preflight-only       Run per-GPU MHA and RCCL/Ulysses smoke, then exit
-  --collect              Record H0-H6 timings and AI-readable operator contracts
+  --collect              Record schema-2 H3 T1 lifecycle/operator evidence
   --gpus IDS             One, two, or four comma-separated GPU ids
                          (default: 0,1,2,3; four-GPU pure Ulysses SP4)
   --gpu IDS              Backward-compatible alias for --gpus
@@ -285,9 +285,12 @@ payload = {
     "runcollector": {
         "enabled": collect == "1",
         "schema_name": "lightx2v.minimax_h3.runcollector",
-        "schema_version": 1,
+        "schema_version": 2,
+        "mode": "h3_t1_lifecycle",
         "output_pattern": "h3_runcollector.rank{rank}.json",
+        "cross_rank_summary": "h3_t1_summary.json",
         "profiling_only": True,
+        "numerical_path_changed": False,
     },
     "seed": int(seed),
     "prompt": prompt,
@@ -371,7 +374,7 @@ echo "MiniMax-H3 Day0 results: ${result_dir}"
 echo "Source mode: ${source_mode}"
 echo "Prompt: ${prompt_source} (${prompt_duration_seconds}s alignment)"
 if [[ "${collect}" == 1 ]]; then
-    echo "H3 runcollector: ${result_dir}/h3_runcollector.rankNNN.json (profiling only)"
+    echo "H3 T1 collector: ${result_dir}/h3_runcollector.rankNNN.json (schema-2, profiling only)"
 fi
 set +e
 "${model_run}" --run-minimax-h3-gfx1201 2>&1 | tee "${log_path}"
@@ -404,6 +407,12 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/lib/summarize_minimax_
     --probe-json "${result_dir}/ffprobe.json" \
     --output-json "${summary_path}"
 
+if [[ "${collect}" == 1 ]]; then
+    PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/lib/summarize_minimax_h3_t1.py" \
+        --result-dir "${result_dir}" \
+        --expected-ranks "${gpu_count}"
+fi
+
 echo "MiniMax-H3 Day0 complete: ${result_dir}"
 echo "Video: ${video_path}"
 echo "Summary: ${summary_path}"
@@ -412,4 +421,5 @@ if [[ "${memory_monitor_enabled}" == 1 ]]; then
 fi
 if [[ "${collect}" == 1 ]]; then
     echo "Runcollector: ${result_dir}/h3_runcollector.rankNNN.json"
+    echo "T1 summary: ${result_dir}/h3_t1_summary.json"
 fi

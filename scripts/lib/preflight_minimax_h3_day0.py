@@ -108,7 +108,48 @@ def check_h1_patch_embed_runtime(patch_embed_class) -> dict:
     return contract
 
 
-def check_runtime_dependencies(source_mode: str) -> dict:
+def validate_runcollector_contract(
+    schema_name: str,
+    schema_version: int,
+    mode: str,
+    required_schema_version: int,
+) -> dict:
+    expected_name = "lightx2v.minimax_h3.runcollector"
+    expected_mode = "h3_t1_lifecycle"
+    contract = {
+        "required": True,
+        "schema_name": schema_name,
+        "schema_version": schema_version,
+        "mode": mode,
+    }
+    if schema_name != expected_name or schema_version != required_schema_version or mode != expected_mode:
+        die(
+            "LightX2V image does not contain the required MiniMax-H3 T1 collector: "
+            f"expected {expected_name} v{required_schema_version} mode={expected_mode!r}, got {contract}"
+        )
+    return contract
+
+
+def check_runcollector_runtime(required_schema_version: int | None) -> dict:
+    if required_schema_version is None:
+        return {"required": False}
+    try:
+        from lightx2v.utils.minimax_h3_runcollector import (
+            MINIMAX_H3_RUN_COLLECTOR_MODE,
+            MINIMAX_H3_RUN_COLLECTOR_SCHEMA_NAME,
+            MINIMAX_H3_RUN_COLLECTOR_SCHEMA_VERSION,
+        )
+    except (ImportError, AttributeError) as error:
+        die(f"LightX2V image is missing the MiniMax-H3 T1 collector contract: {error}")
+    return validate_runcollector_contract(
+        MINIMAX_H3_RUN_COLLECTOR_SCHEMA_NAME,
+        MINIMAX_H3_RUN_COLLECTOR_SCHEMA_VERSION,
+        MINIMAX_H3_RUN_COLLECTOR_MODE,
+        required_schema_version,
+    )
+
+
+def check_runtime_dependencies(source_mode: str, required_runcollector_schema: int | None = None) -> dict:
     for executable in ("ffmpeg", "ffprobe"):
         if shutil.which(executable) is None:
             die(f"required executable is missing from the image: {executable}")
@@ -185,6 +226,7 @@ def check_runtime_dependencies(source_mode: str) -> dict:
         "registered_runner": "minimax_h3",
         "registered_torch_ops": ["torch_sdpa", "torch_native", "torch_real_rope"],
         "h1_patch_embed": patch_embed_contract,
+        "h3_runcollector": check_runcollector_runtime(required_runcollector_schema),
         "sage_api_importable": True,
         "dense_gemm": check_dense_gemm_runtime(),
     }
@@ -540,6 +582,7 @@ def main() -> int:
     parser.add_argument("--source-mode", choices=("image",), default="image")
     parser.add_argument("--skip-artifacts", action="store_true")
     parser.add_argument("--expected-world-size", type=int, choices=(1, 2, 4), default=1)
+    parser.add_argument("--required-runcollector-schema", type=int)
     parser.add_argument("--kernel-smoke", action="store_true", help="Run standalone Triton/Sage GPU kernels; reserved for explicit preflight-only runs")
     parser.add_argument("--distributed-attention-only", action="store_true")
     args = parser.parse_args()
@@ -555,7 +598,7 @@ def main() -> int:
     # FlyDSL owns device-local runtime state. Multi-GPU Sage coverage is
     # provided below by the one-process-per-device torchrun Ulysses smoke.
     torch.cuda.set_device(0)
-    runtime = check_runtime_dependencies(args.source_mode)
+    runtime = check_runtime_dependencies(args.source_mode, args.required_runcollector_schema)
     artifacts = {}
     if not args.skip_artifacts:
         artifacts = check_artifacts(args.model_dir, args.turbo_dir, args.first_frame, args.last_frame, args.expected_world_size)

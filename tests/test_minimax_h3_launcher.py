@@ -248,16 +248,19 @@ def test_h3_dry_run_accepts_four_gpu_ulysses_without_tp(tmp_path):
 def test_h3_collect_is_opt_in_and_passed_to_each_rank(tmp_path):
     completed, result_dir = run_dry(tmp_path, "--collect", "--gpus", "0,1")
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "H3 runcollector:" in completed.stdout
+    assert "H3 T1 collector:" in completed.stdout
     assert "--env LIGHTX2V_H3_RUN_COLLECTOR=1" in completed.stdout
     assert r"--env LIGHTX2V_H3_RUN_COLLECTOR_OUTPUT=/workspace/LightX2V/save_results/h3_runcollector.rank\{rank\}.json" in completed.stdout
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["runcollector"] == {
+        "cross_rank_summary": "h3_t1_summary.json",
         "enabled": True,
+        "mode": "h3_t1_lifecycle",
+        "numerical_path_changed": False,
         "output_pattern": "h3_runcollector.rank{rank}.json",
         "profiling_only": True,
         "schema_name": "lightx2v.minimax_h3.runcollector",
-        "schema_version": 1,
+        "schema_version": 2,
     }
 
 
@@ -266,7 +269,7 @@ def test_h3_runcollector_is_disabled_by_default(tmp_path):
     assert completed.returncode == 0, completed.stdout + completed.stderr
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["runcollector"]["enabled"] is False
-    assert "H3 runcollector:" not in completed.stdout
+    assert "H3 T1 collector:" not in completed.stdout
 
 
 def test_h3_launcher_rejects_duplicate_or_unsupported_gpu_counts(tmp_path):
