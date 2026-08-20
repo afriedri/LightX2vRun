@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a MiniMax-H3 Day0 runtime JSON from the published config plus AMD overlay."""
+"""Build a MiniMax-H3 gfx1201 runtime JSON from the published config plus AMD overlay."""
 
 from __future__ import annotations
 
@@ -31,13 +31,16 @@ FROZEN_VALUES = {
     "h3_step_update": "training_euler",
     "infer_steps": 5,
     "warmup": False,
-    "h3_refiner_attn_type": "aiter_triton_bf16_flash_attn",
+    "h3_refiner_attn_type": "aiter_triton_mha",
     "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
-    "attn_type": "aiter_triton_bf16_flash_attn",
-    "qwen3vl_attn_type": "aiter_triton_bf16_flash_attn",
+    "attn_type": "aiter_triton_mha",
+    "qwen3vl_attn_type": "aiter_triton_mha",
     "dit_quant_scheme": "Default",
     "rms_type": "torch_native",
     "rope_type": "torch_real_rope",
+    "h3_core_qk_rms_type": "minimax_h3_aiter_triton_qk",
+    "h3_core_rope_type": "minimax_h3_triton_strict_rope",
+    "h4_video_attn_type": "aiter_triton_mha",
 }
 ALLOWED_OVERLAY_CHANGES = {
     "task",
@@ -48,6 +51,9 @@ ALLOWED_OVERLAY_CHANGES = {
     "dit_quant_scheme",
     "rms_type",
     "rope_type",
+    "h3_core_qk_rms_type",
+    "h3_core_rope_type",
+    "h4_video_attn_type",
     "warmup",
     "tensor_parallel",
     "seq_parallel",
@@ -66,7 +72,7 @@ def load_json(path: Path) -> dict:
 
 def build(publish: dict, overlay: dict, *, smoke: bool, seq_parallel_size: int = 1) -> dict:
     if seq_parallel_size not in (1, 2, 4):
-        raise SystemExit(f"MiniMax-H3 Day0 supports seq_parallel_size 1, 2, or 4, got {seq_parallel_size}")
+        raise SystemExit(f"MiniMax-H3 gfx1201 supports seq_parallel_size 1, 2, or 4, got {seq_parallel_size}")
     missing = [key for key in REQUIRED_PUBLISH_KEYS if key not in publish]
     if missing:
         raise SystemExit(f"published H3 JSON is missing keys: {missing}")

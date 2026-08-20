@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""C0 preflight for MiniMax-H3 on gfx1201. This runs on the GPU."""
+"""Production preflight for MiniMax-H3 on gfx1201. This runs on the GPU."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def require_gfx1201(expected_devices: int) -> dict:
     except ImportError as error:
         die(f"torch is required on the GPU host/container: {error}")
     if not torch.cuda.is_available():
-        die("CUDA/ROCm device is unavailable; MiniMax-H3 Day0 must run on the gfx1201 card")
+        die("CUDA/ROCm device is unavailable; MiniMax-H3 must run on the gfx1201 card")
     device_count = torch.cuda.device_count()
     if device_count != expected_devices:
         die(f"expected {expected_devices} visible gfx1201 GPU(s), got {device_count}")
@@ -72,10 +72,10 @@ def require_gfx1201(expected_devices: int) -> dict:
         )
     rocm = str(torch.version.hip or "")
     if not rocm.startswith("7.2"):
-        die(f"MiniMax-H3 Day0 is frozen to ROCm 7.2, got torch.version.hip={rocm!r}")
+        die(f"MiniMax-H3 gfx1201 is frozen to ROCm 7.2, got torch.version.hip={rocm!r}")
     if os.environ.get("GPU_ARCHS") != "gfx1201" or os.environ.get("CU_NUM") != "24":
         die(
-            "MiniMax-H3 Day0 requires GPU_ARCHS=gfx1201 and CU_NUM=24 "
+            "MiniMax-H3 gfx1201 requires GPU_ARCHS=gfx1201 and CU_NUM=24 "
             f"(24 WGP / 48 CU), got GPU_ARCHS={os.environ.get('GPU_ARCHS')!r} "
             f"CU_NUM={os.environ.get('CU_NUM')!r}"
         )
@@ -93,8 +93,16 @@ def require_gfx1201(expected_devices: int) -> dict:
 def check_h1_patch_embed_runtime(patch_embed_class) -> dict:
     contract = {
         "name": getattr(patch_embed_class, "_lightx2v_patch_embed_backend", None),
-        "frontend_api": getattr(patch_embed_class, "_lightx2v_runcollector_frontend_api", None),
-        "aten_operator": getattr(patch_embed_class, "_lightx2v_runcollector_aten_operator", None),
+        "frontend_api": getattr(
+            patch_embed_class,
+            "_lightx2v_collector_frontend_api",
+            getattr(patch_embed_class, "_lightx2v_runcollector_frontend_api", None),
+        ),
+        "aten_operator": getattr(
+            patch_embed_class,
+            "_lightx2v_collector_aten_operator",
+            getattr(patch_embed_class, "_lightx2v_runcollector_aten_operator", None),
+        ),
         "sequence_sharded": False,
     }
     expected = {
@@ -165,7 +173,7 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
         from aiter import flash_attn_varlen_func as public_varlen
         from aiter.ops.triton.attention.fav3_sage import fav3_sage_wrapper_func  # noqa: F401
     except ImportError as error:
-        die(f"Aiter Triton MHA and Sage APIs are required by the Day0 runtime: {error}")
+        die(f"Aiter Triton MHA and Sage APIs are required by the gfx1201 runtime: {error}")
     if not callable(public_varlen):
         die("aiter.flash_attn_varlen_func is not callable")
 
@@ -174,6 +182,9 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
         import lightx2v.infer  # noqa: F401
         import lightx2v_platform.ops.attn.amd_rocm  # noqa: F401
         from lightx2v.models.input_encoders.hf.minimax_h3.qwen3vl_vision import _PatchEmbed
+        from lightx2v_platform.ops.attn.amd_rocm.triton_mha_attn import (
+            dense_flash_attn_func,
+        )
         from lightx2v_platform.registry_factory import PLATFORM_ATTN_WEIGHT_REGISTER
         from lightx2v.utils.registry_factory import (
             ATTN_WEIGHT_REGISTER,
@@ -184,7 +195,7 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
     except Exception as error:
         die(f"LightX2V H3 runner/AMD registry cannot be imported: {error}")
     attention_backends = (
-        "aiter_triton_bf16_flash_attn",
+        "aiter_triton_mha",
         "aiter_fav3_sage_bf16_attn",
     )
     for backend in attention_backends:
@@ -197,10 +208,14 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
         (ATTN_WEIGHT_REGISTER, "ulysses"),
         (ATTN_WEIGHT_REGISTER, "torch_sdpa"),
         (RMS_WEIGHT_REGISTER, "torch_native"),
+        (RMS_WEIGHT_REGISTER, "minimax_h3_aiter_triton_qk"),
         (ROPE_REGISTER, "torch_real_rope"),
+        (ROPE_REGISTER, "minimax_h3_triton_strict_rope"),
     ):
         if name not in registry:
             die(f"LightX2V runtime registry is missing: {name}")
+    if not callable(dense_flash_attn_func):
+        die("Aiter dense Triton MHA API required by H4 is unavailable")
     patch_embed_contract = check_h1_patch_embed_runtime(_PatchEmbed)
 
     source_root = Path(lightx2v.__file__).resolve().parents[1]
@@ -224,7 +239,14 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
         "ffprobe": shutil.which("ffprobe"),
         "registered_backends": list(attention_backends),
         "registered_runner": "minimax_h3",
-        "registered_torch_ops": ["torch_sdpa", "torch_native", "torch_real_rope"],
+        "registered_routes": [
+            "torch_sdpa",
+            "torch_native",
+            "torch_real_rope",
+            "minimax_h3_aiter_triton_qk",
+            "minimax_h3_triton_strict_rope",
+            "aiter_triton_mha",
+        ],
         "h1_patch_embed": patch_embed_contract,
         "h3_runcollector": check_runcollector_runtime(required_runcollector_schema),
         "sage_api_importable": True,
@@ -531,10 +553,13 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
         ("enable_cfg", False),
         ("video_flow_shift", 6.0),
         ("h3_step_update", "training_euler"),
-        ("h3_refiner_attn_type", "aiter_triton_bf16_flash_attn"),
+        ("h3_refiner_attn_type", "aiter_triton_mha"),
         ("h3_core_attn_type", "aiter_fav3_sage_bf16_attn"),
-        ("attn_type", "aiter_triton_bf16_flash_attn"),
-        ("qwen3vl_attn_type", "aiter_triton_bf16_flash_attn"),
+        ("attn_type", "aiter_triton_mha"),
+        ("qwen3vl_attn_type", "aiter_triton_mha"),
+        ("h3_core_qk_rms_type", "minimax_h3_aiter_triton_qk"),
+        ("h3_core_rope_type", "minimax_h3_triton_strict_rope"),
+        ("h4_video_attn_type", "aiter_triton_mha"),
         ("dit_quant_scheme", "Default"),
         ("lora_dynamic_apply", True),
         ("warmup", False),
@@ -542,11 +567,11 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
         if config.get(key) != expected:
             die(f"runtime config {key} must be {expected!r}, got {config.get(key)!r}")
     if config.get("tensor_parallel") is not False:
-        die("runtime config tensor_parallel must remain false for MiniMax-H3 Day0")
+        die("runtime config tensor_parallel must remain false for MiniMax-H3 gfx1201")
     if config.get("text_encoder_tensor_parallel", False) is not False:
-        die("runtime config text_encoder_tensor_parallel must remain false for MiniMax-H3 Day0")
+        die("runtime config text_encoder_tensor_parallel must remain false for MiniMax-H3 gfx1201")
     if config.get("cfg_parallel", False) is not False:
-        die("runtime config cfg_parallel must remain false for MiniMax-H3 Day0")
+        die("runtime config cfg_parallel must remain false for MiniMax-H3 gfx1201")
     expected_sp = expected_world_size > 1
     if config.get("seq_parallel") is not expected_sp:
         die(f"runtime config seq_parallel must be {expected_sp} for world_size={expected_world_size}")
@@ -562,13 +587,13 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
         if parallel.get("seq_p_size") != expected_world_size or parallel.get("seq_p_attn_type") != "ulysses":
             die(f"SP{expected_world_size} runtime config must select seq_p_size={expected_world_size} and Ulysses, got {parallel!r}")
         if parallel.get("tensor_p_size", 1) != 1 or parallel.get("cfg_p_size", 1) != 1:
-            die(f"MiniMax-H3 Day0 SP{expected_world_size} must not enable TP or CFG parallel, got {parallel!r}")
+            die(f"MiniMax-H3 gfx1201 SP{expected_world_size} must not enable TP or CFG parallel, got {parallel!r}")
         if parallel.get("seq_p_prepost_backend") != "torch" or parallel.get("seq_p_a2a_backend") != "torch":
-            die(f"MiniMax-H3 Day0 SP{expected_world_size} requires the conservative torch layout/A2A backends, got {parallel!r}")
+            die(f"MiniMax-H3 gfx1201 SP{expected_world_size} requires the conservative torch layout/A2A backends, got {parallel!r}")
         if parallel.get("seq_p_quant_scheme") is not None or parallel.get("seq_p_fp8_comm", False) or parallel.get("seq_p_fp4_comm", False):
-            die(f"MiniMax-H3 Day0 SP{expected_world_size} communication must remain unquantized, got {parallel!r}")
+            die(f"MiniMax-H3 gfx1201 SP{expected_world_size} communication must remain unquantized, got {parallel!r}")
         if parallel.get("seq_p_tensor_fusion", False) is not False or parallel.get("seq_p_head_parallel", False) is not False:
-            die(f"MiniMax-H3 Day0 SP{expected_world_size} must not enable tensor fusion or the head pipeline, got {parallel!r}")
+            die(f"MiniMax-H3 gfx1201 SP{expected_world_size} must not enable tensor fusion or the head pipeline, got {parallel!r}")
     return config
 
 

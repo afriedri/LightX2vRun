@@ -9,15 +9,15 @@ source "${run_root}/scripts/lib/minimax_h3_prompt_presets.sh"
 usage() {
     cat <<'EOF'
 Usage:
-  bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh --image IMAGE
+  bash scripts/run_minimax_h3_fl2av_4step_768p.sh --image IMAGE
 
 Runs MiniMax-H3 FL2V on one, two, or four gfx1201 GPUs. Multi-GPU runs use pure
 Ulysses sequence parallelism. --image is required and must contain
-the complete Day0 LightX2V source at /workspace/LightX2V. Host source overlays
-are deliberately unsupported; rebuild the image before C0.
+the complete production LightX2V source at /workspace/LightX2V. Host source overlays
+are deliberately unsupported; rebuild the image before production runs.
 
 Options:
-  --image IMAGE          Rebuilt gfx1201 H3 image containing Day0 source
+  --image IMAGE          Rebuilt gfx1201 H3 image containing production source
   --model-dir DIR        Host MiniMax-H3 checkpoint directory
                          (default: /disk/ssd1/difumodels/MiniMax-h3)
   --turbo-dir DIR        Host directory containing the Turbo LoRA
@@ -144,14 +144,14 @@ if [[ -z "${first_frame}" || -z "${last_frame}" ]]; then
     exit 2
 fi
 [[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+){0,3}$ ]] || {
-    echo "ERROR: MiniMax-H3 Day0 requires one, two, or four comma-separated GPU ids" >&2
+    echo "ERROR: MiniMax-H3 gfx1201 requires one, two, or four comma-separated GPU ids" >&2
     exit 2
 }
 IFS=',' read -r -a gpu_device_ids <<<"${gpu_devices}"
 gpu_count="${#gpu_device_ids[@]}"
 case "${gpu_count}" in
     1 | 2 | 4) ;;
-    *) echo "ERROR: MiniMax-H3 Day0 supports exactly 1, 2, or 4 GPUs" >&2; exit 2 ;;
+    *) echo "ERROR: MiniMax-H3 gfx1201 supports exactly 1, 2, or 4 GPUs" >&2; exit 2 ;;
 esac
 declare -A seen_gpu_device_ids=()
 for gpu_device_id in "${gpu_device_ids[@]}"; do
@@ -175,7 +175,7 @@ prompt_duration_seconds=5.17
 resolve_minimax_h3_prompt "${run_root}" "${prompt_preset}" "${prompt_file}" "${prompt_duration_seconds}" || exit $?
 prompt="${MINIMAX_H3_PROMPT}"
 prompt_source="${MINIMAX_H3_PROMPT_SOURCE}"
-run_tag="${H3_RUN_TAG:-minimax_h3_fl2av_4step_768p_day0_$(date +%Y%m%d_%H%M%S)}"
+run_tag="${H3_RUN_TAG:-minimax_h3_fl2av_4step_768p_$(date +%Y%m%d_%H%M%S)}"
 if [[ -z "${result_dir}" ]]; then
     result_dir="${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}"
 fi
@@ -234,7 +234,7 @@ def sha256(path):
 
 gpus = [int(item) for item in gpu_devices.split(",")]
 payload = {
-    "kind": "minimax_h3_gfx1201_day0",
+    "kind": "minimax_h3_gfx1201_production",
     "task": "fl2av",
     "image": image,
     "source_mode": source_mode,
@@ -272,7 +272,10 @@ payload = {
             "route": "sage_attn_v2_gfx1201",
             "numerics": "int8_qk_fp8_pv",
         },
-        "h3_refiner_attention": "aiter_triton_bf16_flash_attn",
+        "h3_refiner_attention": "aiter_triton_mha",
+        "h3_core_qk_rms": "minimax_h3_aiter_triton_qk",
+        "h3_core_rope": "minimax_h3_triton_strict_rope",
+        "h4_video_attention": "aiter_triton_mha",
         "dense_gemm_lora": {
             "route": "torch.mm -> default ROCm BLAS heuristic",
             "measured_backend": "hipBLASLt",
@@ -370,7 +373,7 @@ if [[ "${memory_monitor_enabled}" == 1 && "${DRY_RUN:-0}" != 1 ]]; then
     monitor_pid=$!
 fi
 
-echo "MiniMax-H3 Day0 results: ${result_dir}"
+echo "MiniMax-H3 gfx1201 results: ${result_dir}"
 echo "Source mode: ${source_mode}"
 echo "Prompt: ${prompt_source} (${prompt_duration_seconds}s alignment)"
 if [[ "${collect}" == 1 ]]; then
@@ -397,7 +400,7 @@ if [[ "${DRY_RUN:-0}" == 1 ]]; then
     exit 0
 fi
 if [[ "${preflight_only}" == 1 ]]; then
-    echo "C0 preflight complete: ${result_dir}/preflight.json"
+    echo "gfx1201 production preflight complete: ${result_dir}/preflight.json"
     exit 0
 fi
 
@@ -413,7 +416,7 @@ if [[ "${collect}" == 1 ]]; then
         --expected-ranks "${gpu_count}"
 fi
 
-echo "MiniMax-H3 Day0 complete: ${result_dir}"
+echo "MiniMax-H3 gfx1201 complete: ${result_dir}"
 echo "Video: ${video_path}"
 echo "Summary: ${summary_path}"
 if [[ "${memory_monitor_enabled}" == 1 ]]; then

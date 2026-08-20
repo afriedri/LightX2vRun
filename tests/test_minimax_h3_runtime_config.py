@@ -46,13 +46,16 @@ def published_config() -> dict:
 def amd_overlay() -> dict:
     return {
         "task": "fl2av",
-        "attn_type": "aiter_triton_bf16_flash_attn",
-        "h3_refiner_attn_type": "aiter_triton_bf16_flash_attn",
+        "attn_type": "aiter_triton_mha",
+        "h3_refiner_attn_type": "aiter_triton_mha",
         "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
-        "qwen3vl_attn_type": "aiter_triton_bf16_flash_attn",
+        "qwen3vl_attn_type": "aiter_triton_mha",
         "dit_quant_scheme": "Default",
         "rms_type": "torch_native",
         "rope_type": "torch_real_rope",
+        "h3_core_qk_rms_type": "minimax_h3_aiter_triton_qk",
+        "h3_core_rope_type": "minimax_h3_triton_strict_rope",
+        "h4_video_attn_type": "aiter_triton_mha",
         "warmup": False,
     }
 
@@ -69,8 +72,11 @@ def test_builder_freezes_full_and_smoke_geometry():
     assert full["seq_parallel"] is False
     assert full["vae_decode_parallel"] is False
     assert full["h3_core_attn_type"] == "aiter_fav3_sage_bf16_attn"
-    assert full["h3_refiner_attn_type"] == "aiter_triton_bf16_flash_attn"
-    assert full["qwen3vl_attn_type"] == "aiter_triton_bf16_flash_attn"
+    assert full["h3_refiner_attn_type"] == "aiter_triton_mha"
+    assert full["qwen3vl_attn_type"] == "aiter_triton_mha"
+    assert full["h3_core_qk_rms_type"] == "minimax_h3_aiter_triton_qk"
+    assert full["h3_core_rope_type"] == "minimax_h3_triton_strict_rope"
+    assert full["h4_video_attn_type"] == "aiter_triton_mha"
     assert full["dit_quant_scheme"] == "Default"
     assert full["lora_dynamic_apply"] is True
 

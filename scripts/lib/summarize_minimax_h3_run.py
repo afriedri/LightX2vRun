@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize MiniMax-H3 Day0 logs and probe the output MP4 on the GPU run host."""
+"""Summarize MiniMax-H3 gfx1201 logs and probe the output MP4 on the GPU run host."""
 
 from __future__ import annotations
 

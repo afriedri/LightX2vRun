@@ -14,19 +14,19 @@ publish_json="${lightx2v_path}/configs/minimax_h3/dmd/minimax_h3_bf16_4step_sing
 
 visible_devices="${HIP_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
 [[ "${visible_devices}" =~ ^[0-9]+(,[0-9]+){0,3}$ ]] || {
-    echo "ERROR: MiniMax-H3 Day0 requires one, two, or four comma-separated HIP GPU ids, got '${visible_devices}'" >&2
+    echo "ERROR: MiniMax-H3 gfx1201 requires one, two, or four comma-separated HIP GPU ids, got '${visible_devices}'" >&2
     exit 1
 }
 IFS=',' read -r -a visible_device_ids <<<"${visible_devices}"
 gpu_count="${#visible_device_ids[@]}"
 case "${gpu_count}" in
     1 | 2 | 4) ;;
-    *) echo "ERROR: MiniMax-H3 Day0 supports exactly 1, 2, or 4 GPUs" >&2; exit 1 ;;
+    *) echo "ERROR: MiniMax-H3 gfx1201 supports exactly 1, 2, or 4 GPUs" >&2; exit 1 ;;
 esac
 declare -A seen_visible_device_ids=()
 for visible_device_id in "${visible_device_ids[@]}"; do
     [[ -z "${seen_visible_device_ids[${visible_device_id}]:-}" ]] || {
-        echo "ERROR: MiniMax-H3 Day0 GPU ids must be unique, got '${visible_devices}'" >&2
+        echo "ERROR: MiniMax-H3 gfx1201 GPU ids must be unique, got '${visible_devices}'" >&2
         exit 1
     }
     seen_visible_device_ids["${visible_device_id}"]=1
@@ -48,7 +48,7 @@ export PYTORCH_TUNABLEOP_ENABLED=0
 unset TORCH_BLAS_PREFER_CUBLASLT TORCH_BLAS_PREFER_HIPBLASLT
 export PYTHONPATH="${lightx2v_path}${PYTHONPATH:+:${PYTHONPATH}}"
 [[ "${GPU_ARCHS}" == gfx1201 && "${CU_NUM}" == 24 ]] || {
-    echo "ERROR: MiniMax-H3 Day0 requires GPU_ARCHS=gfx1201 and CU_NUM=24" >&2
+    echo "ERROR: MiniMax-H3 gfx1201 requires GPU_ARCHS=gfx1201 and CU_NUM=24" >&2
     exit 1
 }
 case "${source_mode}" in
@@ -102,7 +102,7 @@ python3 "${script_dir}/build_minimax_h3_runtime_config.py" \
     --seq-parallel-size "${gpu_count}" \
     "${smoke_flag[@]}"
 
-python3 "${script_dir}/preflight_minimax_h3_day0.py" \
+python3 "${script_dir}/preflight_minimax_h3_gfx1201.py" \
     --model-dir "${model_path}" \
     --turbo-dir /models/minimax_h3_turbo \
     --first-frame "${image_path}" \
@@ -116,7 +116,7 @@ python3 "${script_dir}/preflight_minimax_h3_day0.py" \
 if (( gpu_count > 1 )) && [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 ]]; then
     ulysses_preflight_log="${ulysses_preflight_log:-${runtime_config_dir}/ulysses_preflight.log}"
     torchrun --standalone --nproc_per_node="${gpu_count}" \
-        "${script_dir}/preflight_minimax_h3_day0.py" \
+        "${script_dir}/preflight_minimax_h3_gfx1201.py" \
         --distributed-attention-only 2>&1 | tee "${ulysses_preflight_log}"
 fi
 
@@ -141,7 +141,11 @@ if (( gpu_count > 1 )); then
 fi
 echo "Parallel: ${parallel_mode}"
 echo "H1 PatchEmbed API: torch F.linear (ATen operator: addmm; measured device backend: hipBLASLt)"
+echo "H1/Refiner MHA: aiter_triton_mha"
 echo "Core Attention: aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201)"
+echo "Core Q/K RMS: minimax_h3_aiter_triton_qk"
+echo "Core RoPE: minimax_h3_triton_strict_rope"
+echo "H4 Video Attention: aiter_triton_mha"
 echo "Dense GEMM/LoRA: torch.mm -> default ROCm BLAS heuristic (TunableOp disabled)"
 echo "Source mode: ${source_mode}"
 echo "Model: ${model_path}"

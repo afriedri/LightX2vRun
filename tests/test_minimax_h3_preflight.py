@@ -11,8 +11,8 @@ from PIL import Image
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PREFLIGHT_PATH = REPO_ROOT / "scripts/lib/preflight_minimax_h3_day0.py"
-SPEC = importlib.util.spec_from_file_location("preflight_minimax_h3_day0", PREFLIGHT_PATH)
+PREFLIGHT_PATH = REPO_ROOT / "scripts/lib/preflight_minimax_h3_gfx1201.py"
+SPEC = importlib.util.spec_from_file_location("preflight_minimax_h3_gfx1201", PREFLIGHT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 PREFLIGHT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PREFLIGHT)
@@ -21,8 +21,8 @@ SPEC.loader.exec_module(PREFLIGHT)
 def test_h1_patch_embed_contract_separates_frontend_from_aten_operator():
     patch_embed = SimpleNamespace(
         _lightx2v_patch_embed_backend="torch_linear",
-        _lightx2v_runcollector_frontend_api="torch.nn.functional.linear",
-        _lightx2v_runcollector_aten_operator="addmm",
+        _lightx2v_collector_frontend_api="torch.nn.functional.linear",
+        _lightx2v_collector_aten_operator="addmm",
     )
 
     assert PREFLIGHT.check_h1_patch_embed_runtime(patch_embed) == {
@@ -168,10 +168,13 @@ def test_runtime_contract_accepts_only_pure_ulysses(tmp_path, world_size):
     config = {
         "video_flow_shift": 6.0,
         "h3_step_update": "training_euler",
-        "h3_refiner_attn_type": "aiter_triton_bf16_flash_attn",
+        "h3_refiner_attn_type": "aiter_triton_mha",
         "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
-        "attn_type": "aiter_triton_bf16_flash_attn",
-        "qwen3vl_attn_type": "aiter_triton_bf16_flash_attn",
+        "attn_type": "aiter_triton_mha",
+        "qwen3vl_attn_type": "aiter_triton_mha",
+        "h3_core_qk_rms_type": "minimax_h3_aiter_triton_qk",
+        "h3_core_rope_type": "minimax_h3_triton_strict_rope",
+        "h4_video_attn_type": "aiter_triton_mha",
         "dit_quant_scheme": "Default",
         "lora_dynamic_apply": True,
         "warmup": False,
@@ -207,15 +210,18 @@ def test_runtime_contract_accepts_only_pure_ulysses(tmp_path, world_size):
         ("seq_p_head_parallel", True),
     ),
 )
-def test_runtime_contract_rejects_non_day0_ulysses_options(tmp_path, key, value):
+def test_runtime_contract_rejects_unsupported_ulysses_options(tmp_path, key, value):
     config = {
         "enable_cfg": False,
         "video_flow_shift": 6.0,
         "h3_step_update": "training_euler",
-        "h3_refiner_attn_type": "aiter_triton_bf16_flash_attn",
+        "h3_refiner_attn_type": "aiter_triton_mha",
         "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
-        "attn_type": "aiter_triton_bf16_flash_attn",
-        "qwen3vl_attn_type": "aiter_triton_bf16_flash_attn",
+        "attn_type": "aiter_triton_mha",
+        "qwen3vl_attn_type": "aiter_triton_mha",
+        "h3_core_qk_rms_type": "minimax_h3_aiter_triton_qk",
+        "h3_core_rope_type": "minimax_h3_triton_strict_rope",
+        "h4_video_attn_type": "aiter_triton_mha",
         "dit_quant_scheme": "Default",
         "lora_dynamic_apply": True,
         "warmup": False,

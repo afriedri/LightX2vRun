@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ENTRY = REPO_ROOT / "scripts/run_minimax_h3_fl2av_4step_768p_day0.sh"
+ENTRY = REPO_ROOT / "scripts/run_minimax_h3_fl2av_4step_768p.sh"
 DEFAULT_MODEL_DIR = "/disk/ssd1/difumodels/MiniMax-h3"
 DEFAULT_TURBO_DIR = "/disk/ssd/difumodels-Dis/Minimax-h3-Turbo"
 DEFAULT_FIRST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png"
@@ -31,7 +31,7 @@ def run_dry(
         "bash",
         str(ENTRY),
         "--image",
-        "example.invalid/minimax-h3:day0",
+        "example.invalid/minimax-h3:production",
     ]
     if include_model_paths:
         arguments.extend(
@@ -120,7 +120,10 @@ def test_h3_dry_run_uses_image_source_without_overlay(tmp_path):
             "numerics": "int8_qk_fp8_pv",
             "route": "sage_attn_v2_gfx1201",
         },
-        "h3_refiner_attention": "aiter_triton_bf16_flash_attn",
+        "h3_core_qk_rms": "minimax_h3_aiter_triton_qk",
+        "h3_core_rope": "minimax_h3_triton_strict_rope",
+        "h3_refiner_attention": "aiter_triton_mha",
+        "h4_video_attention": "aiter_triton_mha",
     }
     assert "--env PYTORCH_TUNABLEOP_ENABLED=0" in completed.stdout
 

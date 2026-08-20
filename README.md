@@ -13,14 +13,14 @@ container entry, and the same rank-critical timing summarizer.
 | 06 | `scripts/run_06_wan22_720p_81f_16fps_scale.sh` | Wan2.2, 720P, 81f, 16 FPS | 2/4/8/16 |
 | 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
 
-MiniMax-H3 Day0 is a separate bring-up entry. Its default FL2V first and last
+MiniMax-H3 gfx1201 is a production entry. Its default FL2V first and last
 frames are read-only host inputs at
 `/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png` and
 `/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png`, so only the image and GPU ids
 are required:
 
 ```bash
-bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
+bash scripts/run_minimax_h3_fl2av_4step_768p.sh \
   --image IMAGE \
   --preflight-only
 ```
@@ -33,11 +33,13 @@ frames. It uses one continuous takeoff shot, explicit keyframe timing, identity
 constraints, and synchronized natural sound. The launcher renders the final
 keyframe mark as 5.17 seconds for every H3 test.
 
-The gfx1201 production overlay routes only H3 Core Attention through Aiter
-SageAttention2 (`aiter_fav3_sage_bf16_attn` / `sage_attn_v2_gfx1201`). The
-short Token Refiner stays on the BF16 Triton MHA route. Core Dense GEMM and
-dynamic rank-128 LoRA remain the measured `torch.mm` path using PyTorch's
-default ROCm BLAS heuristic (hipBLASLt on the collected hot shapes). The H3
+The gfx1201 production overlay routes H3 Core Attention through Aiter SageAttention2
+(`aiter_fav3_sage_bf16_attn` / `sage_attn_v2_gfx1201`), H1/Refiner and H4 Video
+Attention through canonical `aiter_triton_mha`, H3 Core Q/K normalization through
+`minimax_h3_aiter_triton_qk`, and H3 Core RoPE through strict/no-FMA
+`minimax_h3_triton_strict_rope`. Core Dense GEMM and dynamic rank-128 LoRA remain
+the measured `torch.mm` path using PyTorch's default ROCm BLAS heuristic
+(hipBLASLt on the collected hot shapes). The H3
 launcher explicitly disables TunableOp and does not load a tuning cache: its
 weighted gain was only 1.035x and QKV LoRA-up regressed. Preflight executes
 only static/runtime contracts during a normal inference start;
@@ -49,11 +51,11 @@ variables:
 
 ```bash
 # More camera and takeoff motion
-bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
+bash scripts/run_minimax_h3_fl2av_4step_768p.sh \
   --image IMAGE --prompt-preset bird-dynamic
 
 # Stronger synchronized sound design and non-diegetic music
-bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
+bash scripts/run_minimax_h3_fl2av_4step_768p.sh \
   --image IMAGE --prompt-preset bird-audio
 ```
 
@@ -71,7 +73,7 @@ tile parallelism; TP and Qwen text-encoder TP remain disabled. `--gpus 0` and
 Use `--collect` for one H3 backend-selection run:
 
 ```bash
-bash scripts/run_minimax_h3_fl2av_4step_768p_day0.sh \
+bash scripts/run_minimax_h3_fl2av_4step_768p.sh \
   --image IMAGE --gpus 0,1 --collect
 ```
 
@@ -102,15 +104,15 @@ is `aitertunecollection`, and the default object prefix is
 credential environment variables are both supported. Upload requires boto3;
 `--package-only` does not.
 
-Upload the current MiniMax-H3 Day0 result and print a one-day download URL:
+Upload the current MiniMax-H3 production result and print a one-day download URL:
 
 ```bash
 export MINIO_ACCESS_KEY=...
 export MINIO_SECRET_KEY=...
 
 python3 scripts/upload_result_bundle.py \
-  /disk/ssd/lightx2v-runtime/outputs/minimax_h3_fl2av_4step_768p_day0_20260817_064647 \
-  --prefix minimax-h3/day0 \
+  /disk/ssd/lightx2v-runtime/outputs/minimax_h3_fl2av_4step_768p_20260820_180000 \
+  --prefix minimax-h3/production \
   --presign-seconds 86400
 ```
 

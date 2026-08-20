@@ -233,10 +233,10 @@ fi
 if [[ "${inference_mode}" == "minimax_h3" ]]; then
     case "${gpu_count}" in
         1 | 2 | 4) ;;
-        *) die "MiniMax-H3 Day0 supports exactly 1 GPU, 2 GPU_DEVICES for Ulysses SP2, or 4 for Ulysses SP4" ;;
+        *) die "MiniMax-H3 gfx1201 supports exactly 1 GPU, 2 GPU_DEVICES for Ulysses SP2, or 4 for Ulysses SP4" ;;
     esac
     [[ "${LIGHTX2V_H3_EXPLICIT_IMAGE:-0}" == "1" ]] || \
-        die "MiniMax-H3 requires scripts/run_minimax_h3_fl2av_4step_768p_day0.sh --image IMAGE; the Wan default image is not an H3 source tree"
+        die "MiniMax-H3 requires scripts/run_minimax_h3_fl2av_4step_768p.sh --image IMAGE; the Wan default image is not an H3 source tree"
     h3_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_minimax_h3_in_container.sh"
 fi
 
@@ -283,7 +283,7 @@ fi
 if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     require_file "${RUN_REPO_DIR}/${h3_run_script#${CONTAINER_RUN_ROOT}/}"
     require_file "${RUN_REPO_DIR}/scripts/lib/build_minimax_h3_runtime_config.py"
-    require_file "${RUN_REPO_DIR}/scripts/lib/preflight_minimax_h3_day0.py"
+    require_file "${RUN_REPO_DIR}/scripts/lib/preflight_minimax_h3_gfx1201.py"
 fi
 encoder_mount_source="${ENCODERS_DIR}"
 encoder_mount_target="${CONTAINER_MODELS_ROOT}/encoders/t5"
@@ -516,6 +516,9 @@ if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     printf 'H3 turbo:       %s -> %s\n' "${H3_TURBO_DIR}" "${CONTAINER_H3_TURBO}"
     printf 'H3 frame source: %s\n' "${h3_frame_source}"
     printf 'H3 Core attn:   %s\n' "aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201)"
+    printf 'H3 Q/K RMS:     %s\n' "minimax_h3_aiter_triton_qk"
+    printf 'H3 Core RoPE:   %s\n' "minimax_h3_triton_strict_rope"
+    printf 'H4 Video attn:  %s\n' "aiter_triton_mha"
     printf 'H3 Dense GEMM:  %s\n' "torch.mm/default ROCm BLAS heuristic; TunableOp disabled"
     if [[ "${h3_frame_source}" == host ]]; then
         printf 'H3 first frame: %s -> %s\n' "${H3_FIRST_FRAME}" "${h3_first_frame_path}"

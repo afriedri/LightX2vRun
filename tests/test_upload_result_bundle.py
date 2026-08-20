@@ -230,8 +230,8 @@ class UploadResultBundleTests(unittest.TestCase):
             "http://compiler.hvat-ai.com:9000",
         )
         self.assertEqual(
-            MODULE.object_key_for("run.tar.gz", "/minimax-h3/day0/", None),
-            "minimax-h3/day0/run.tar.gz",
+            MODULE.object_key_for("run.tar.gz", "/minimax-h3/production/", None),
+            "minimax-h3/production/run.tar.gz",
         )
         self.assertEqual(
             MODULE.object_key_for(
