@@ -482,7 +482,13 @@ class MiniMaxH3PhaseTracker:
             ("H1", "h1"),
             ("H0", "h0"),
         ):
-            if re.search(rf"\[H3Stage\]\s+{stage}\b", text):
+            runtime_stage = re.search(
+                rf"\[Runtime\]\s+kind=stage\s+model=minimax_h3\s+"
+                rf"stage={stage}(?:-[A-Za-z0-9_]+)?\b",
+                text,
+            )
+            legacy_stage = re.search(rf"\[H3Stage\]\s+{stage}\b", text)
+            if runtime_stage or legacy_stage:
                 self._advance(name)
                 break
         return self.phase
@@ -677,7 +683,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--phase-schema",
         choices=("wan", "minimax_h3"),
         default="wan",
-        help="Log phase labels: wan keeps the existing Wan regex; minimax_h3 uses [H3Stage] H0-H6",
+        help="Log phase labels: wan keeps the existing Wan regex; minimax_h3 uses normalized [Runtime] stage events",
     )
     return parser
 

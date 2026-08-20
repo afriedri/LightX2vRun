@@ -83,7 +83,7 @@ def test_single_process_infer_is_accounted_as_rank_zero():
     assert '"inferred_single_process": inferred_single_process' in MONITOR.CONTAINER_PROBE
 
 
-def test_minimax_h3_phase_tracker_advances_without_touching_wan_regex(tmp_path):
+def test_minimax_h3_phase_tracker_accepts_legacy_stage_logs(tmp_path):
     log = tmp_path / "h3.log"
     log.write_text("[H3Stage] H0 request prepared\n", encoding="utf-8")
     tracker = MONITOR.MiniMaxH3PhaseTracker(log, expected_ranks=1)
@@ -94,6 +94,34 @@ def test_minimax_h3_phase_tracker_advances_without_touching_wan_regex(tmp_path):
     with log.open("a", encoding="utf-8") as stream:
         stream.write("[Profile] Single GPU - Total Cost cost 10.0 seconds\n")
     assert tracker.update() == "complete"
+
+
+def test_minimax_h3_phase_tracker_uses_normalized_runtime_stage_logs(tmp_path):
+    log = tmp_path / "h3-runtime.log"
+    log.write_text(
+        "[Runtime] kind=stage model=minimax_h3 stage=H0 component=request "
+        "status=ready rank=0/2 task=fl2av\n",
+        encoding="utf-8",
+    )
+    tracker = MONITOR.MiniMaxH3PhaseTracker(log, expected_ranks=2)
+    assert tracker.update() == "h0"
+    with log.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "[Runtime] kind=stage model=minimax_h3 stage=H3-Core "
+            "component=dit.denoise status=progress rank=0/2 step=1 total_steps=4\n"
+        )
+    assert tracker.update() == "h3"
+
+
+def test_minimax_h3_phase_tracker_ignores_future_route_plan(tmp_path):
+    log = tmp_path / "h3-routes.log"
+    log.write_text(
+        "[Runtime] kind=route model=minimax_h3 stage=H6 component=av.encode "
+        "status=configured backend=ffmpeg rank=0/2\n",
+        encoding="utf-8",
+    )
+    tracker = MONITOR.MiniMaxH3PhaseTracker(log, expected_ranks=2)
+    assert tracker.update() == "loading"
 
 
 def test_status_output_is_phase_immediate_and_periodically_rate_limited():

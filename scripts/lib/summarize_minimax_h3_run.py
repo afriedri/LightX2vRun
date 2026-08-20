@@ -10,13 +10,91 @@ import subprocess
 from pathlib import Path
 
 
-STAGE_RE = re.compile(r"\[H3Stage\]\s+(?P<stage>H[0-6](?:-\w+)?)\s*(?P<detail>.*)")
+LEGACY_STAGE_RE = re.compile(r"\[H3Stage\]\s+(?P<stage>H[0-6](?:-\w+)?)\s*(?P<detail>.*)")
+RUNTIME_EVENT_RE = re.compile(r"\[Runtime\]\s+(?P<fields>.+)$")
 PROFILE_RE = re.compile(
     r"\[Profile\]\s+(?:Rank (?P<rank>\d+)|(?P<single>Single GPU))\s+-\s+"
     r"(?:Level\d+_Log\s+)?(?P<name>.+?)\s+cost\s+"
     r"(?P<seconds>\d+(?:\.\d+)?)\s+seconds"
 )
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _runtime_value(value: str):
+    if value == "none":
+        return None
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return value
+
+
+def _runtime_tokens(text: str) -> list[str]:
+    """Split key/value fields while preserving compact JSON and quoted text."""
+
+    tokens = []
+    start = 0
+    depth = 0
+    quote = None
+    escaped = False
+    for index, character in enumerate(text):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {'"', "'"}:
+            quote = character
+        elif character in "[{(":
+            depth += 1
+        elif character in "]})":
+            depth = max(0, depth - 1)
+        elif character.isspace() and depth == 0:
+            if start < index:
+                tokens.append(text[start:index])
+            start = index + 1
+    if start < len(text):
+        tokens.append(text[start:])
+    return tokens
+
+
+def parse_runtime_events(text: str) -> list[dict]:
+    events = []
+    for line in text.splitlines():
+        match = RUNTIME_EVENT_RE.search(line)
+        if match is None:
+            continue
+        fields = {}
+        for token in _runtime_tokens(match.group("fields")):
+            if "=" not in token:
+                continue
+            name, value = token.split("=", 1)
+            fields[name] = _runtime_value(value)
+        if {"kind", "model", "stage", "component", "status"}.issubset(fields):
+            events.append(fields)
+    return events
+
+
+def parse_stages(text: str, runtime_events: list[dict] | None = None) -> list[dict]:
+    events = parse_runtime_events(text) if runtime_events is None else runtime_events
+    normalized = [event for event in events if event.get("kind") == "stage" and event.get("model") == "minimax_h3"]
+    if normalized:
+        return normalized
+    return [
+        {
+            "kind": "stage",
+            "model": "minimax_h3",
+            "stage": match.group("stage"),
+            "component": None,
+            "status": None,
+            "detail": match.group("detail"),
+            "format": "legacy",
+        }
+        for match in LEGACY_STAGE_RE.finditer(text)
+    ]
 
 
 def summarize_probe(payload: dict) -> dict:
@@ -59,7 +137,8 @@ def main() -> int:
     parser.add_argument("--output-json", type=Path)
     args = parser.parse_args()
     text = ANSI_RE.sub("", args.log.read_text(encoding="utf-8", errors="replace"))
-    stages = [match.groupdict() for match in STAGE_RE.finditer(text)]
+    runtime_events = parse_runtime_events(text)
+    stages = parse_stages(text, runtime_events)
     profiles = [
         {
             "name": match.group("name"),
@@ -73,6 +152,7 @@ def main() -> int:
         probe = ffprobe(args.video) if args.video and args.video.is_file() else None
     payload = {
         "log": str(args.log),
+        "runtime_events": runtime_events,
         "stages": stages,
         "profiles": profiles,
         "ffprobe": probe,

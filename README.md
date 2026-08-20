@@ -46,6 +46,22 @@ only static/runtime contracts during a normal inference start;
 `--preflight-only` additionally executes both Attention kernels and the real
 Ulysses-to-Sage adapter.
 
+Runtime status uses one stable LightX2V format:
+
+```text
+[Runtime] kind=route    model=minimax_h3 stage=H3-Core component=dit.core.rope status=configured backend=minimax_h3_triton_strict_rope rank=0/2
+[Runtime] kind=dispatch model=minimax_h3 stage=H3-Core component=dit.core.rope status=active backend=minimax_h3_triton_strict_rope rank=0/2 ...
+[Runtime] kind=stage    model=minimax_h3 stage=H4 component=video_vae.decode status=start rank=0/2
+```
+
+`route` is the resolved plan, `dispatch` confirms the first real tensor hit (or
+reports `status=fallback`), and `stage` tracks lifecycle progress. Route and
+stage events are rank-0-only; dispatch evidence is emitted once per process
+rank. The same `lightx2v_platform.base.BackendLogger` can be instantiated or
+subclassed by other models and backends. Run summaries retain all normalized
+events under `runtime_events` while still accepting historical `[H3Stage]`
+logs.
+
 Two additional prompts support controlled comparisons without editing shell
 variables:
 
