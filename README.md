@@ -46,6 +46,20 @@ only static/runtime contracts during a normal inference start;
 `--preflight-only` additionally executes both Attention kernels and the real
 Ulysses-to-Sage adapter.
 
+The final native Sage schedule selector lives only in Aiter revision
+`bec0d32c65b85caafc34bacc2607bfa22d4b684e`. LightX2V deliberately passes only
+`{"backend":"sage_attn_v2_gfx1201"}` so Aiter can route from the actual BSHD:
+
+```text
+finite allowlist without a key tail -> r32_kv
+finite allowlist with a key tail    -> p8kv_res8_peel
+other D128 shapes                   -> pad8_kv
+```
+
+The exact H3 SP2 shape `[1,42196,28,128]` is currently allowlisted. SP4, SP8,
+and Ring16 remain per-shape tuning work; the launcher must not select schedules
+from a model name or infer unmeasured head counts.
+
 Runtime status uses one stable LightX2V format:
 
 ```text
@@ -769,11 +783,10 @@ and kernels.
 The BF16-attention 16-GPU Ring path requires an image built from the LightX2V
 ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
 `--infer-sage-fp8` path additionally requires Aiter revision
-`24aa37dd72f98be15ad21deb97ddfd4ab8fc09b1`, whose native gfx1201
-SageAttention2 returns K-smoothing-corrected natural-log LSE without the
-one-off prepare/core timing hooks and enables the combined T1 VALU reductions
-internally, and LightX2V revision
-`14a87614f21f414e9e3a66339c3469640c550a4f`, where the ROCm adapter exposes
+`bec0d32c65b85caafc34bacc2607bfa22d4b684e`, whose native gfx1201
+SageAttention2 retains the corrected natural-log LSE/T1 contract and adds the
+finite D128 schedule dispatch plus static key-tail peeling, and LightX2V revision
+`b157de187316fef56c0c2f84c29785e1c995bbb7`, where the ROCm adapter exposes
 that LSE to Ring, uses direct-output activation quantization with self-attention
 Q/K/V reuse, includes the tuned gfx1201 fused Q/K RoPE implementation, routes
 eligible FP8 GEMMs through hipBLASLt scaled-mm, and records the T1 integration
