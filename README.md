@@ -111,23 +111,24 @@ bash scripts/run_minimax_h3_fl2av_4step_768p.sh \
 
 For Sage shape collection only, do not use `--collect`. The Sage adapter already
 emits one normalized first-real-dispatch event per rank. The dedicated Run sweep
-runs the frozen 1344x768, 124-frame workload sequentially at SP4 and SP8, checks
-that every rank reported one identical BSHD contract, and writes
-`sage_shapes.json`:
+runs the frozen 1344x768, 124-frame workload sequentially at Ulysses SP4,
+Ulysses SP8, and Ring16, checks every rank, reconstructs Ring's exact internal
+kernel contracts, and writes `sage_shapes.json`:
 
 ```bash
 cd /path/to/LightX2VRun
 
 bash scripts/run_minimax_h3_sage_shape_sweep.sh \
-  --image IMAGE \
-  --counts 4,8 \
-  --gpus 0,1,2,3,4,5,6,7
+  --image IMAGE
 ```
 
-The expected topology contracts are `[1,42196,14,128]` for SP4 and
-`[1,42196,7,128]` for SP8. These values are validation expectations only; the
-sweep output is derived from real runtime dispatches and fails on missing ranks,
-cross-rank disagreement, or a different global sequence length.
+The default GPU pool is `0..15`; override it with `--gpus` when needed. The
+expected Ulysses contracts are `[1,42196,14,128]` for SP4 and
+`[1,42196,7,128]` for SP8. Ring16 keeps all 56 heads and reports its local query
+contract; the collector combines that with the Ulysses global sequence to emit
+the non-final rectangular auxiliary, non-final square main-shard, and final
+combined-square contracts. Values come from real runtime dispatches and the
+sweep fails on missing ranks, route/head mismatches, or cross-rank disagreement.
 
 The schema-2 collector is MiniMax-H3-only and disabled by default. Each rank
 writes `h3_runcollector.rankNNN.json`; the launcher also writes

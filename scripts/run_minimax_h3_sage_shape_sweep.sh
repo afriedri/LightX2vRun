@@ -10,14 +10,14 @@ usage() {
 Usage:
   bash scripts/run_minimax_h3_sage_shape_sweep.sh --image IMAGE [options]
 
-Runs the frozen 1344x768/124-frame MiniMax-H3 workload sequentially at SP4 and
-SP8, then extracts only the first real Sage dispatch from every rank. The
-schema-2 H3 runcollector remains disabled.
+Runs the frozen 1344x768/124-frame MiniMax-H3 workload sequentially at Ulysses
+SP4, Ulysses SP8, and Ring16, then extracts only the first real Sage dispatch
+from every rank. The schema-2 H3 runcollector remains disabled.
 
 Options:
   --image IMAGE          Production gfx1201 H3 image with LightX2V/Aiter source
-  --counts LIST          4,8 (default), 4, or 8
-  --gpus IDS             Ordered physical GPU pool (default: 0,1,2,3,4,5,6,7)
+  --counts LIST          4,8,16 (default); Ring16 requires SP4 or SP8 as reference
+  --gpus IDS             Ordered physical GPU pool (default: GPU ids 0 through 15)
   --result-dir DIR       Exact sweep result directory (default: timestamped)
   --model-dir DIR        Host MiniMax-H3 checkpoint directory
   --turbo-dir DIR        Host Turbo LoRA directory
@@ -26,14 +26,14 @@ Options:
   --prompt-preset NAME   bird-stable (default), bird-dynamic, or bird-audio
   --prompt-file FILE     Custom H3-structured prompt; overrides the preset
 
-The first N ids from --gpus are used for SPN. For example, the default pool
-uses 0,1,2,3 for SP4 and 0,1,2,3,4,5,6,7 for SP8.
+The first N ids from --gpus are used for each topology, matching the unified
+Wan2.2 sweep convention. SP4/SP8 use Ulysses; 16 GPUs always use Ring.
 EOF
 }
 
 image=
-counts="${H3_SAGE_SHAPE_COUNTS:-4,8}"
-gpu_pool="${GPU_DEVICES:-0,1,2,3,4,5,6,7}"
+counts="${H3_SAGE_SHAPE_COUNTS:-4,8,16}"
+gpu_pool="${GPU_DEVICES:-0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}"
 result_dir="${H3_SAGE_SHAPE_RESULT_DIR:-}"
 model_dir="${H3_MODEL_DIR:-/disk/ssd1/difumodels/MiniMax-h3}"
 turbo_dir="${H3_TURBO_DIR:-/disk/ssd/difumodels-Dis/Minimax-h3-Turbo}"
@@ -116,8 +116,8 @@ done
     echo "ERROR: --first-frame and --last-frame must be provided together" >&2
     exit 2
 }
-[[ "${gpu_pool}" =~ ^[0-9]+(,[0-9]+){0,7}$ ]] || {
-    echo "ERROR: --gpus must contain up to eight comma-separated GPU ids" >&2
+[[ "${gpu_pool}" =~ ^[0-9]+(,[0-9]+){0,15}$ ]] || {
+    echo "ERROR: --gpus must contain up to sixteen comma-separated GPU ids" >&2
     exit 2
 }
 
@@ -136,8 +136,8 @@ declare -A seen_counts=()
 max_count=0
 for count in "${selected_counts[@]}"; do
     case "${count}" in
-        4 | 8) ;;
-        *) echo "ERROR: --counts supports only 4 and 8, got ${count}" >&2; exit 2 ;;
+        4 | 8 | 16) ;;
+        *) echo "ERROR: --counts supports only 4, 8, and 16, got ${count}" >&2; exit 2 ;;
     esac
     [[ -z "${seen_counts[${count}]:-}" ]] || {
         echo "ERROR: --counts contains duplicate SP${count}" >&2
@@ -146,6 +146,10 @@ for count in "${selected_counts[@]}"; do
     seen_counts["${count}"]=1
     (( count > max_count )) && max_count="${count}"
 done
+if [[ -n "${seen_counts[16]:-}" && -z "${seen_counts[4]:-}" && -z "${seen_counts[8]:-}" ]]; then
+    echo "ERROR: Ring16 requires SP4 or SP8 in --counts to reconstruct exact kernel shapes" >&2
+    exit 2
+fi
 (( ${#gpu_ids[@]} >= max_count )) || {
     echo "ERROR: SP${max_count} requires ${max_count} GPU ids, got ${#gpu_ids[@]}" >&2
     exit 2
@@ -171,10 +175,16 @@ payload = {
     "kind": "minimax_h3_sage_shape_sweep",
     "image": image,
     "sp_sizes": [int(value) for value in counts.split(",")],
+    "topologies": {
+        value: "ring" if int(value) == 16 else "ulysses"
+        for value in counts.split(",")
+    },
     "gpu_pool": [int(value) for value in gpu_pool.split(",")],
     "collector": {
         "source": "normalized runtime dispatch",
         "full_runcollector_enabled": False,
+        "schema_name": "lightx2v.minimax_h3.sage_shape_sweep",
+        "schema_version": 2,
         "output": "sage_shapes.json",
     },
     "workload": {
@@ -194,6 +204,7 @@ PY
 echo "MiniMax-H3 Sage-only shape sweep: ${result_dir}"
 echo "SP sizes: ${counts}"
 echo "GPU pool: ${gpu_pool}"
+echo "Topology policy: SP4/SP8=Ulysses, 16=Ring"
 echo "Full H3 collector: disabled"
 
 collector_args=()
@@ -213,7 +224,12 @@ for count in "${selected_counts[@]}"; do
     if [[ -n "${prompt_file}" ]]; then
         child_args+=(--prompt-file "${prompt_file}")
     fi
-    echo "[$(date +%H:%M:%S)] SP${count}: GPUs ${selected}"
+    if [[ "${count}" == 16 ]]; then
+        topology_label=Ring16
+    else
+        topology_label="SP${count} Ulysses"
+    fi
+    echo "[$(date +%H:%M:%S)] ${topology_label}: GPUs ${selected}"
     env LIGHTX2V_H3_RUN_COLLECTOR=0 \
         bash "${single_run}" "${child_args[@]}"
     collector_args+=(--run "${count}=${child_dir}/run.log")
