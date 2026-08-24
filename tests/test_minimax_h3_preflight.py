@@ -113,7 +113,7 @@ def test_distributed_worker_selects_local_device_before_backend_import(monkeypat
 
 @pytest.mark.parametrize(
     ("world_size", "expected"),
-    ((1, ((0, 56),)), (2, ()), (4, ()), (8, ())),
+    ((1, ((0, 56),)), (2, ()), (4, ()), (8, ()), (16, ())),
 )
 def test_parent_sage_smoke_is_only_used_for_single_gpu(world_size, expected):
     assert PREFLIGHT.standalone_sage_smoke_plan(world_size) == expected
@@ -156,6 +156,11 @@ def test_artifact_contract_accepts_published_component_layout(tmp_path):
     assert artifacts["turbo"].endswith("minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors")
 
 
+def test_artifact_contract_allows_ring16_without_head_divisibility(tmp_path):
+    artifacts = PREFLIGHT.check_artifacts(*make_artifacts(tmp_path), expected_world_size=16)
+    assert artifacts["attention_heads"] == 56
+
+
 def test_artifact_contract_rejects_incomplete_processor(tmp_path):
     model_dir, turbo_dir, first_frame, last_frame = make_artifacts(tmp_path)
     (model_dir / "processor/video_preprocessor_config.json").unlink()
@@ -177,6 +182,11 @@ def test_runtime_contract_accepts_only_pure_ulysses(tmp_path, world_size):
         "h4_video_attn_type": "aiter_triton_mha",
         "dit_quant_scheme": "Default",
         "lora_dynamic_apply": True,
+        "lazy_load": True,
+        "cpu_offload": True,
+        "offload_granularity": "block",
+        "text_encoder_rank0_only": True,
+        "text_encoder_unload_after_infer": True,
         "warmup": False,
         "enable_cfg": False,
         "tensor_parallel": False,
@@ -198,6 +208,43 @@ def test_runtime_contract_accepts_only_pure_ulysses(tmp_path, world_size):
     path.write_text(json.dumps(config), encoding="utf-8")
     with pytest.raises(SystemExit):
         PREFLIGHT.check_runtime_config(path, world_size)
+
+
+def test_runtime_contract_accepts_ring16_lazy_rank0_encoder(tmp_path):
+    config = {
+        "video_flow_shift": 6.0,
+        "h3_step_update": "training_euler",
+        "h3_refiner_attn_type": "aiter_triton_mha",
+        "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
+        "attn_type": "aiter_triton_mha",
+        "qwen3vl_attn_type": "aiter_triton_mha",
+        "h3_core_qk_rms_type": "minimax_h3_aiter_triton_qk",
+        "h3_core_rope_type": "minimax_h3_triton_strict_rope",
+        "h4_video_attn_type": "aiter_triton_mha",
+        "dit_quant_scheme": "Default",
+        "lora_dynamic_apply": True,
+        "lazy_load": True,
+        "cpu_offload": True,
+        "offload_granularity": "block",
+        "text_encoder_rank0_only": True,
+        "text_encoder_unload_after_infer": True,
+        "warmup": False,
+        "enable_cfg": False,
+        "tensor_parallel": False,
+        "text_encoder_tensor_parallel": False,
+        "seq_parallel": True,
+        "vae_decode_parallel": True,
+        "parallel": {
+            "seq_p_size": 16,
+            "seq_p_attn_type": "ring",
+            "seq_p_prepost_backend": "torch",
+            "seq_p_a2a_backend": "torch",
+        },
+    }
+    path = tmp_path / "runtime-ring16.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+
+    assert PREFLIGHT.check_runtime_config(path, 16)["parallel"]["seq_p_attn_type"] == "ring"
 
 
 @pytest.mark.parametrize(
@@ -224,6 +271,11 @@ def test_runtime_contract_rejects_unsupported_ulysses_options(tmp_path, key, val
         "h4_video_attn_type": "aiter_triton_mha",
         "dit_quant_scheme": "Default",
         "lora_dynamic_apply": True,
+        "lazy_load": True,
+        "cpu_offload": True,
+        "offload_granularity": "block",
+        "text_encoder_rank0_only": True,
+        "text_encoder_unload_after_infer": True,
         "warmup": False,
         "tensor_parallel": False,
         "text_encoder_tensor_parallel": False,

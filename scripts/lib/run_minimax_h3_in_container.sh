@@ -13,15 +13,15 @@ overlay_json="${BASE_CONFIG_JSON:-${lightx2v_path}/configs/platforms/amd_rocm/mi
 publish_json="${lightx2v_path}/configs/minimax_h3/dmd/minimax_h3_bf16_4step_single_gpu_offload.json"
 
 visible_devices="${HIP_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
-[[ "${visible_devices}" =~ ^[0-9]+(,[0-9]+){0,7}$ ]] || {
-    echo "ERROR: MiniMax-H3 gfx1201 requires one, two, four, or eight comma-separated HIP GPU ids, got '${visible_devices}'" >&2
+[[ "${visible_devices}" =~ ^[0-9]+(,[0-9]+){0,15}$ ]] || {
+    echo "ERROR: MiniMax-H3 gfx1201 requires one, two, four, eight, or sixteen comma-separated HIP GPU ids, got '${visible_devices}'" >&2
     exit 1
 }
 IFS=',' read -r -a visible_device_ids <<<"${visible_devices}"
 gpu_count="${#visible_device_ids[@]}"
 case "${gpu_count}" in
-    1 | 2 | 4 | 8) ;;
-    *) echo "ERROR: MiniMax-H3 gfx1201 supports exactly 1, 2, 4, or 8 GPUs" >&2; exit 1 ;;
+    1 | 2 | 4 | 8 | 16) ;;
+    *) echo "ERROR: MiniMax-H3 gfx1201 supports exactly 1, 2, 4, 8, or 16 GPUs" >&2; exit 1 ;;
 esac
 declare -A seen_visible_device_ids=()
 for visible_device_id in "${visible_device_ids[@]}"; do
@@ -73,8 +73,8 @@ if [[ -n "${evidence_dir}" ]]; then
 else
     runtime_config_json="${runtime_config_dir}/minimax-h3-$$.json"
     preflight_json="${runtime_config_dir}/minimax-h3-preflight-$$.json"
-    ulysses_preflight_log="${runtime_config_dir}/minimax-h3-ulysses-preflight-$$.log"
-    trap 'rm -f "${runtime_config_json}" "${preflight_json}" "${ulysses_preflight_log}"' EXIT
+    attention_preflight_log="${runtime_config_dir}/minimax-h3-attention-preflight-$$.log"
+    trap 'rm -f "${runtime_config_json}" "${preflight_json}" "${attention_preflight_log}"' EXIT
 fi
 
 smoke_flag=()
@@ -114,10 +114,10 @@ python3 "${script_dir}/preflight_minimax_h3_gfx1201.py" \
     "${kernel_smoke_flag[@]}" | tee "${preflight_json}"
 
 if (( gpu_count > 1 )) && [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 ]]; then
-    ulysses_preflight_log="${ulysses_preflight_log:-${runtime_config_dir}/ulysses_preflight.log}"
+    attention_preflight_log="${attention_preflight_log:-${runtime_config_dir}/attention_preflight.log}"
     torchrun --standalone --nproc_per_node="${gpu_count}" \
         "${script_dir}/preflight_minimax_h3_gfx1201.py" \
-        --distributed-attention-only 2>&1 | tee "${ulysses_preflight_log}"
+        --distributed-attention-only 2>&1 | tee "${attention_preflight_log}"
 fi
 
 if [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 || "${CONFIG_ONLY:-0}" == 1 ]]; then
@@ -137,12 +137,20 @@ echo "MiniMax-H3 FL2V gfx1201"
 echo "GPUs: ${visible_devices} (world_size=${gpu_count})"
 parallel_mode="single GPU"
 if (( gpu_count > 1 )); then
-    parallel_mode="Ulysses SP${gpu_count} + VAE tile parallel"
+    if (( gpu_count == 16 )); then
+        parallel_mode="Ring SP16 + VAE tile parallel"
+    else
+        parallel_mode="Ulysses SP${gpu_count} + VAE tile parallel"
+    fi
 fi
 echo "Parallel: ${parallel_mode}"
 echo "H1 PatchEmbed API: torch F.linear (ATen operator: addmm; measured device backend: hipBLASLt)"
 echo "H1/Refiner MHA: aiter_triton_mha"
-echo "Core Attention: aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201)"
+if (( gpu_count == 16 )); then
+    echo "Core Attention: aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201_ring_hybrid)"
+else
+    echo "Core Attention: aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201)"
+fi
 echo "Core Q/K RMS: minimax_h3_aiter_triton_qk"
 echo "Core RoPE: minimax_h3_triton_strict_rope"
 echo "H4 Video Attention: aiter_triton_mha"

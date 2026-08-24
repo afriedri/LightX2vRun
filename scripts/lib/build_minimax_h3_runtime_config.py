@@ -71,8 +71,8 @@ def load_json(path: Path) -> dict:
 
 
 def build(publish: dict, overlay: dict, *, smoke: bool, seq_parallel_size: int = 1) -> dict:
-    if seq_parallel_size not in (1, 2, 4, 8):
-        raise SystemExit(f"MiniMax-H3 gfx1201 supports seq_parallel_size 1, 2, 4, or 8, got {seq_parallel_size}")
+    if seq_parallel_size not in (1, 2, 4, 8, 16):
+        raise SystemExit(f"MiniMax-H3 gfx1201 supports seq_parallel_size 1, 2, 4, 8, or 16, got {seq_parallel_size}")
     missing = [key for key in REQUIRED_PUBLISH_KEYS if key not in publish]
     if missing:
         raise SystemExit(f"published H3 JSON is missing keys: {missing}")
@@ -104,12 +104,17 @@ def build(publish: dict, overlay: dict, *, smoke: bool, seq_parallel_size: int =
     config["lora_dynamic_apply"] = True
     config["tensor_parallel"] = False
     config["text_encoder_tensor_parallel"] = False
+    config["lazy_load"] = True
+    config["cpu_offload"] = True
+    config["offload_granularity"] = "block"
+    config["text_encoder_rank0_only"] = seq_parallel_size > 1
+    config["text_encoder_unload_after_infer"] = True
     config["seq_parallel"] = seq_parallel_size > 1
     config["vae_decode_parallel"] = seq_parallel_size > 1
     if seq_parallel_size > 1:
         config["parallel"] = {
             "seq_p_size": seq_parallel_size,
-            "seq_p_attn_type": "ulysses",
+            "seq_p_attn_type": "ring" if seq_parallel_size == 16 else "ulysses",
             "seq_p_prepost_backend": "torch",
             "seq_p_a2a_backend": "torch",
             "seq_p_tensor_fusion": False,
@@ -128,7 +133,7 @@ def main() -> int:
     parser.add_argument("--overlay-json", type=Path, required=True)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--smoke", action="store_true")
-    parser.add_argument("--seq-parallel-size", type=int, choices=(1, 2, 4, 8), default=1)
+    parser.add_argument("--seq-parallel-size", type=int, choices=(1, 2, 4, 8, 16), default=1)
     args = parser.parse_args()
     config = build(
         load_json(args.publish_json),

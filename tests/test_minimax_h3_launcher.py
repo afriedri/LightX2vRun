@@ -98,6 +98,15 @@ def test_h3_dry_run_uses_image_source_without_overlay(tmp_path):
         "tensor_parallel": False,
         "vae_decode_parallel": True,
     }
+    assert manifest["memory_policy"] == {
+        "cpu_block_buffers": 2,
+        "cpu_offload": True,
+        "gpu_block_buffers": 2,
+        "lazy_load": True,
+        "offload_granularity": "block",
+        "text_encoder_rank0_only": True,
+        "text_encoder_unload_after_infer": True,
+    }
     assert manifest["backends"] == {
         "dense_gemm_lora": {
             "measured_backend": "hipBLASLt",
@@ -263,6 +272,23 @@ def test_h3_dry_run_accepts_eight_gpu_ulysses_without_tp(tmp_path):
     }
 
 
+def test_h3_dry_run_accepts_sixteen_gpu_ring_without_tp(tmp_path):
+    gpu_ids = ",".join(str(index) for index in range(16))
+    completed, result_dir = run_dry(tmp_path, "--gpus", gpu_ids)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["gpus"] == list(range(16))
+    assert manifest["parallel"] == {
+        "seq_p_attn_type": "ring",
+        "seq_p_size": 16,
+        "seq_parallel": True,
+        "tensor_parallel": False,
+        "vae_decode_parallel": True,
+    }
+    assert manifest["backends"]["h3_core_attention"]["route"] == "sage_attn_v2_gfx1201_ring_hybrid"
+    assert manifest["memory_policy"]["text_encoder_rank0_only"] is True
+
+
 def test_h3_collect_is_opt_in_and_passed_to_each_rank(tmp_path):
     completed, result_dir = run_dry(tmp_path, "--collect", "--gpus", "0,1")
     assert completed.returncode == 0, completed.stdout + completed.stderr
@@ -297,11 +323,11 @@ def test_h3_launcher_rejects_duplicate_or_unsupported_gpu_counts(tmp_path):
 
     unsupported, _ = run_dry(tmp_path, "--gpus", "0,1,2")
     assert unsupported.returncode == 2
-    assert "supports exactly 1, 2, 4, or 8 GPUs" in unsupported.stderr
+    assert "supports exactly 1, 2, 4, 8, or 16 GPUs" in unsupported.stderr
 
-    too_many, _ = run_dry(tmp_path, "--gpus", "0,1,2,3,4,5,6,7,8")
+    too_many, _ = run_dry(tmp_path, "--gpus", ",".join(str(index) for index in range(17)))
     assert too_many.returncode == 2
-    assert "one, two, four, or eight comma-separated GPU ids" in too_many.stderr
+    assert "one, two, four, eight, or sixteen comma-separated GPU ids" in too_many.stderr
 
 
 def test_h3_launcher_rejects_host_source_overlay(tmp_path):

@@ -11,8 +11,8 @@ usage() {
 Usage:
   bash scripts/run_minimax_h3_fl2av_4step_768p.sh --image IMAGE
 
-Runs MiniMax-H3 FL2V on one, two, four, or eight gfx1201 GPUs. Multi-GPU runs use pure
-Ulysses sequence parallelism. --image is required and must contain
+Runs MiniMax-H3 FL2V on one, two, four, eight, or sixteen gfx1201 GPUs. SP2/SP4/SP8
+use Ulysses sequence parallelism; SP16 uses Ring. --image is required and must contain
 the complete production LightX2V source at /workspace/LightX2V. Host source overlays
 are deliberately unsupported; rebuild the image before production runs.
 
@@ -30,9 +30,9 @@ Options:
   --prompt-preset NAME   bird-stable (default), bird-dynamic, or bird-audio
   --prompt-file FILE     Custom H3-structured prompt; overrides the preset
   --smoke                Use 480x480 instead of 1344x768; both run 124 frames
-  --preflight-only       Run per-GPU MHA and RCCL/Ulysses smoke, then exit
+  --preflight-only       Run per-GPU MHA and RCCL Ulysses/Ring smoke, then exit
   --collect              Record schema-2 H3 T1 lifecycle/operator evidence
-  --gpus IDS             One, two, four, or eight comma-separated GPU ids
+  --gpus IDS             One, two, four, eight, or sixteen comma-separated GPU ids
                          (default: 0,1,2,3; four-GPU pure Ulysses SP4)
   --gpu IDS              Backward-compatible alias for --gpus
 
@@ -40,7 +40,7 @@ Environment:
   PROMPT / SEED          PROMPT overrides preset/file; seed defaults to 42
   H3_PROMPT_PRESET       Default prompt preset (default: bird-stable)
   H3_PROMPT_FILE         Custom prompt file, overridden by PROMPT
-  GPU_DEVICES            One, two, four, or eight ids; multi-GPU uses pure Ulysses
+  GPU_DEVICES            One, two, four, eight, or sixteen ids; SP16 uses Ring
   H3_MODEL_DIR           Override the default complete H3 checkpoint directory
   H3_TURBO_DIR           Override the default Turbo LoRA directory
   MEMORY_MONITOR         1 (default) records host RAM, process RSS/PSS and VRAM
@@ -143,15 +143,15 @@ if [[ -z "${first_frame}" || -z "${last_frame}" ]]; then
     echo "ERROR: --first-frame and --last-frame must be provided together" >&2
     exit 2
 fi
-[[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+){0,7}$ ]] || {
-    echo "ERROR: MiniMax-H3 gfx1201 requires one, two, four, or eight comma-separated GPU ids" >&2
+[[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+){0,15}$ ]] || {
+    echo "ERROR: MiniMax-H3 gfx1201 requires one, two, four, eight, or sixteen comma-separated GPU ids" >&2
     exit 2
 }
 IFS=',' read -r -a gpu_device_ids <<<"${gpu_devices}"
 gpu_count="${#gpu_device_ids[@]}"
 case "${gpu_count}" in
-    1 | 2 | 4 | 8) ;;
-    *) echo "ERROR: MiniMax-H3 gfx1201 supports exactly 1, 2, 4, or 8 GPUs" >&2; exit 2 ;;
+    1 | 2 | 4 | 8 | 16) ;;
+    *) echo "ERROR: MiniMax-H3 gfx1201 supports exactly 1, 2, 4, 8, or 16 GPUs" >&2; exit 2 ;;
 esac
 declare -A seen_gpu_device_ids=()
 for gpu_device_id in "${gpu_device_ids[@]}"; do
@@ -253,8 +253,17 @@ payload = {
         "tensor_parallel": False,
         "seq_parallel": len(gpus) > 1,
         "seq_p_size": len(gpus),
-        "seq_p_attn_type": "ulysses" if len(gpus) > 1 else None,
+        "seq_p_attn_type": "ring" if len(gpus) == 16 else "ulysses" if len(gpus) > 1 else None,
         "vae_decode_parallel": len(gpus) > 1,
+    },
+    "memory_policy": {
+        "lazy_load": True,
+        "cpu_offload": True,
+        "offload_granularity": "block",
+        "cpu_block_buffers": 2,
+        "gpu_block_buffers": 2,
+        "text_encoder_rank0_only": len(gpus) > 1,
+        "text_encoder_unload_after_infer": True,
     },
     "backends": {
         "h1_patch_embed": {
@@ -269,7 +278,7 @@ payload = {
         },
         "h3_core_attention": {
             "name": "aiter_fav3_sage_bf16_attn",
-            "route": "sage_attn_v2_gfx1201",
+            "route": "sage_attn_v2_gfx1201_ring_hybrid" if len(gpus) == 16 else "sage_attn_v2_gfx1201",
             "numerics": "int8_qk_fp8_pv",
         },
         "h3_refiner_attention": "aiter_triton_mha",

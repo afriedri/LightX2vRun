@@ -43,7 +43,7 @@ Usage:
   ./lightx2vModelrun --run-wan21-gfx1201    Run the consolidated Wan2.1 container entry
   ./lightx2vModelrun --run-wan22-gfx1201    Run the consolidated Wan2.2 lazy/B1 entry
   ./lightx2vModelrun --run-minimax-h3-gfx1201
-                                            Run MiniMax-H3 FL2V on 1 GPU or pure Ulysses SP2/SP4/SP8
+                                            Run MiniMax-H3 FL2V on 1 GPU, Ulysses SP2/SP4/SP8, or Ring SP16
                                             (H3 launcher only; TP stays disabled)
   ./lightx2vModelrun COMMAND [ARG...]        Run a command in the container
 
@@ -232,8 +232,8 @@ if [[ "${inference_mode}" == "wan22_unified" ]]; then
 fi
 if [[ "${inference_mode}" == "minimax_h3" ]]; then
     case "${gpu_count}" in
-        1 | 2 | 4 | 8) ;;
-        *) die "MiniMax-H3 gfx1201 supports exactly 1 GPU or 2/4/8 GPU_DEVICES for pure Ulysses SP2/SP4/SP8" ;;
+        1 | 2 | 4 | 8 | 16) ;;
+        *) die "MiniMax-H3 gfx1201 supports exactly 1/2/4/8/16 GPU_DEVICES; SP2/SP4/SP8 use Ulysses and SP16 uses Ring" ;;
     esac
     [[ "${LIGHTX2V_H3_EXPLICIT_IMAGE:-0}" == "1" ]] || \
         die "MiniMax-H3 requires scripts/run_minimax_h3_fl2av_4step_768p.sh --image IMAGE; the Wan default image is not an H3 source tree"

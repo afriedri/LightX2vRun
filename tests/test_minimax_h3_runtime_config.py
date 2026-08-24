@@ -79,6 +79,11 @@ def test_builder_freezes_full_and_smoke_geometry():
     assert full["h4_video_attn_type"] == "aiter_triton_mha"
     assert full["dit_quant_scheme"] == "Default"
     assert full["lora_dynamic_apply"] is True
+    assert full["lazy_load"] is True
+    assert full["cpu_offload"] is True
+    assert full["offload_granularity"] == "block"
+    assert full["text_encoder_rank0_only"] is False
+    assert full["text_encoder_unload_after_infer"] is True
 
 
 def test_builder_enables_pure_ulysses_sp2_and_parallel_vae_decode():
@@ -88,6 +93,7 @@ def test_builder_enables_pure_ulysses_sp2_and_parallel_vae_decode():
     assert config["text_encoder_tensor_parallel"] is False
     assert config["seq_parallel"] is True
     assert config["vae_decode_parallel"] is True
+    assert config["text_encoder_rank0_only"] is True
     assert config["parallel"] == {
         "seq_p_size": 2,
         "seq_p_attn_type": "ulysses",
@@ -105,6 +111,7 @@ def test_builder_enables_pure_ulysses_sp4_and_parallel_vae_decode():
     assert config["text_encoder_tensor_parallel"] is False
     assert config["seq_parallel"] is True
     assert config["vae_decode_parallel"] is True
+    assert config["text_encoder_rank0_only"] is True
     assert config["parallel"] == {
         "seq_p_size": 4,
         "seq_p_attn_type": "ulysses",
@@ -122,6 +129,7 @@ def test_builder_enables_pure_ulysses_sp8_and_parallel_vae_decode():
     assert config["text_encoder_tensor_parallel"] is False
     assert config["seq_parallel"] is True
     assert config["vae_decode_parallel"] is True
+    assert config["text_encoder_rank0_only"] is True
     assert config["parallel"] == {
         "seq_p_size": 8,
         "seq_p_attn_type": "ulysses",
@@ -132,8 +140,28 @@ def test_builder_enables_pure_ulysses_sp8_and_parallel_vae_decode():
     }
 
 
+def test_builder_enables_ring16_without_head_divisibility_requirement():
+    config = BUILDER.build(published_config(), amd_overlay(), smoke=False, seq_parallel_size=16)
+
+    assert config["tensor_parallel"] is False
+    assert config["text_encoder_tensor_parallel"] is False
+    assert config["text_encoder_rank0_only"] is True
+    assert config["text_encoder_unload_after_infer"] is True
+    assert config["lazy_load"] is True
+    assert config["seq_parallel"] is True
+    assert config["vae_decode_parallel"] is True
+    assert config["parallel"] == {
+        "seq_p_size": 16,
+        "seq_p_attn_type": "ring",
+        "seq_p_prepost_backend": "torch",
+        "seq_p_a2a_backend": "torch",
+        "seq_p_tensor_fusion": False,
+        "seq_p_head_parallel": False,
+    }
+
+
 def test_builder_rejects_unsupported_sequence_parallel_size():
-    with pytest.raises(SystemExit, match="seq_parallel_size 1, 2, 4, or 8"):
+    with pytest.raises(SystemExit, match="seq_parallel_size 1, 2, 4, 8, or 16"):
         BUILDER.build(published_config(), amd_overlay(), smoke=False, seq_parallel_size=3)
 
 
