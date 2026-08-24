@@ -66,6 +66,14 @@ FIELDS = {
     "Shared_Clean", "Shared_Dirty", "Private_Clean", "Private_Dirty",
     "Anonymous", "AnonHugePages", "Locked", "Swap", "SwapPss",
 }
+RUNTIME_ENV_KEYS = {
+    "AITER_JIT_DIR", "AITER_ROCM_ARCH", "CUDA_VISIBLE_DEVICES",
+    "GPU_ARCHS", "HIP_VISIBLE_DEVICES", "HSA_FORCE_FINE_GRAIN_PCIE",
+    "LIGHTX2V_H3_RUN_COLLECTOR", "LOCAL_RANK", "MASTER_ADDR",
+    "MASTER_PORT", "NCCL_P2P_LEVEL", "OMP_NUM_THREADS", "RANK",
+    "ROCR_VISIBLE_DEVICES", "TORCH_NCCL_ASYNC_ERROR_HANDLING",
+    "TORCH_NCCL_BLOCKING_WAIT", "WORLD_SIZE", "PYTORCH_TUNABLEOP_ENABLED",
+}
 
 def read_text(path):
     try:
@@ -121,7 +129,49 @@ def parse_status(pid):
             result["cpus_allowed_list"] = line.split(":", 1)[1].strip()
         elif line.startswith("Mems_allowed_list:"):
             result["mems_allowed_list"] = line.split(":", 1)[1].strip()
+        elif line.startswith("voluntary_ctxt_switches:"):
+            result["voluntary_ctxt_switches"] = int(line.split(":", 1)[1])
+        elif line.startswith("nonvoluntary_ctxt_switches:"):
+            result["nonvoluntary_ctxt_switches"] = int(line.split(":", 1)[1])
     return result
+
+def parse_proc_stat(pid):
+    text = read_text("/proc/{}/stat".format(pid))
+    if not text or ")" not in text:
+        return {}
+    fields = text[text.rfind(")") + 2:].split()
+    if len(fields) < 40:
+        return {}
+    return {
+        "state": fields[0],
+        "minflt": int(fields[7]),
+        "majflt": int(fields[9]),
+        "utime_ticks": int(fields[11]),
+        "stime_ticks": int(fields[12]),
+        "num_threads_stat": int(fields[17]),
+        "processor": int(fields[36]),
+        "delayacct_blkio_ticks": int(fields[39]),
+    }
+
+def parse_proc_io(pid):
+    text = read_text("/proc/{}/io".format(pid)) or ""
+    result = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition(":")
+        if sep and value.strip().isdigit():
+            result[key] = int(value.strip())
+    return result
+
+def parse_schedstat(pid):
+    text = read_text("/proc/{}/schedstat".format(pid)) or ""
+    fields = text.split()
+    if len(fields) < 3 or not all(value.isdigit() for value in fields[:3]):
+        return {}
+    return {
+        "cpu_runtime_ns": int(fields[0]),
+        "runqueue_wait_ns": int(fields[1]),
+        "timeslices": int(fields[2]),
+    }
 
 def parse_numa_maps(pid):
     text = read_text("/proc/{}/numa_maps".format(pid)) or ""
@@ -161,8 +211,14 @@ def find_ranks():
             "local_rank": int(local_rank) if local_rank is not None and local_rank.lstrip("-").isdigit() else local_rank,
             "inferred_single_process": inferred_single_process,
             "cmdline": cmdline,
+            "runtime_environment": {
+                key: env[key] for key in sorted(RUNTIME_ENV_KEYS) if key in env
+            },
         }
         item.update(parse_status(pid))
+        item["proc_stat"] = parse_proc_stat(pid)
+        item["proc_io"] = parse_proc_io(pid)
+        item["schedstat"] = parse_schedstat(pid)
         item["numa_pages_by_node"] = parse_numa_maps(pid)
         smaps = parse_kib_file("/proc/{}/smaps_rollup".format(pid))
         if smaps is None:
@@ -200,7 +256,26 @@ def read_cgroup():
             parts = line.split()
             if len(parts) == 2 and parts[1].isdigit():
                 stat[parts[0]] = int(parts[1])
-    return {"version": version, "current_bytes": current, "peak_bytes": peak, "stat_bytes": stat}
+    io_stat_text = read_text("/sys/fs/cgroup/io.stat") if version == 2 else None
+    io_stat = {}
+    if io_stat_text:
+        for line in io_stat_text.splitlines():
+            fields = line.split()
+            if not fields:
+                continue
+            io_stat[fields[0]] = {
+                key: int(value)
+                for field in fields[1:]
+                for key, separator, value in (field.partition("="),)
+                if separator and value.isdigit()
+            }
+    return {
+        "version": version,
+        "current_bytes": current,
+        "peak_bytes": peak,
+        "stat_bytes": stat,
+        "io_stat": io_stat,
+    }
 
 print(json.dumps({"ranks": find_ranks(), "cgroup": read_cgroup()}, sort_keys=True))
 '''
@@ -285,6 +360,105 @@ def sample_host_memory() -> dict[str, int | None]:
         "shmem_bytes": values.get("Shmem"),
         "slab_bytes": values.get("Slab"),
     }
+
+
+VMSTAT_COUNTERS = (
+    "pgfault",
+    "pgmajfault",
+    "pgpgin",
+    "pgpgout",
+    "pswpin",
+    "pswpout",
+    "workingset_refault_anon",
+    "workingset_refault_file",
+    "numa_hit",
+    "numa_miss",
+    "numa_foreign",
+    "numa_interleave",
+    "numa_local",
+    "numa_other",
+)
+
+
+def sample_vmstat() -> dict[str, int]:
+    values: dict[str, int] = {}
+    try:
+        lines = Path("/proc/vmstat").read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, PermissionError, OSError):
+        return values
+    selected = set(VMSTAT_COUNTERS)
+    for line in lines:
+        fields = line.split()
+        if len(fields) == 2 and fields[0] in selected and fields[1].isdigit():
+            values[fields[0]] = int(fields[1])
+    return values
+
+
+def sample_pressure() -> dict[str, str]:
+    result = {}
+    for resource in ("cpu", "memory", "io"):
+        value = read_optional_text(Path("/proc/pressure") / resource)
+        if value is not None:
+            result[resource] = value
+    return result
+
+
+def parse_diskstats(text: str) -> dict[str, dict[str, int]]:
+    result = {}
+    names = (
+        "reads_completed",
+        "reads_merged",
+        "sectors_read",
+        "read_ms",
+        "writes_completed",
+        "writes_merged",
+        "sectors_written",
+        "write_ms",
+        "io_in_progress",
+        "io_ms",
+        "weighted_io_ms",
+    )
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 14 or not fields[0].isdigit() or not fields[1].isdigit():
+            continue
+        values = fields[3:14]
+        if not all(value.isdigit() for value in values):
+            continue
+        result[fields[2]] = {
+            "major": int(fields[0]),
+            "minor": int(fields[1]),
+            **{name: int(value) for name, value in zip(names, values)},
+        }
+    return result
+
+
+def sample_diskstats() -> dict[str, dict[str, int]]:
+    try:
+        text = Path("/proc/diskstats").read_text(encoding="utf-8")
+    except (FileNotFoundError, PermissionError, OSError):
+        return {}
+    return parse_diskstats(text)
+
+
+def sample_host() -> dict[str, Any]:
+    result: dict[str, Any] = sample_host_memory()
+    result["vmstat"] = sample_vmstat()
+    result["pressure"] = sample_pressure()
+    result["diskstats"] = sample_diskstats()
+    return result
+
+
+def counter_delta(first: Any, last: Any) -> Any:
+    if isinstance(first, int) and isinstance(last, int):
+        return last - first
+    if isinstance(first, dict) and isinstance(last, dict):
+        return {
+            key: delta
+            for key in sorted(first.keys() & last.keys())
+            if (delta := counter_delta(first[key], last[key])) is not None
+        }
+    return None
 
 
 def read_optional_int(path: Path) -> int | None:
@@ -547,6 +721,8 @@ class Summary:
         self.phase_maxima: dict[str, dict[str, int]] = {}
         self.rank_lifecycle: dict[str, dict[str, Any]] = {}
         self.active_rank_keys: set[str] = set()
+        self.first_host_counters: dict[str, Any] | None = None
+        self.last_host_counters: dict[str, Any] | None = None
 
     @staticmethod
     def _rank_key(rank: dict[str, Any]) -> str:
@@ -578,6 +754,25 @@ class Summary:
             lifecycle["cpus_allowed_list"] = rank.get("cpus_allowed_list")
             lifecycle["mems_allowed_list"] = rank.get("mems_allowed_list")
             lifecycle["last_numa_pages_by_node"] = rank.get("numa_pages_by_node", {})
+            counters = {
+                "proc_stat": {
+                    key: value
+                    for key, value in rank.get("proc_stat", {}).items()
+                    if key in {
+                        "minflt",
+                        "majflt",
+                        "utime_ticks",
+                        "stime_ticks",
+                        "delayacct_blkio_ticks",
+                    }
+                },
+                "proc_io": rank.get("proc_io", {}),
+                "schedstat": rank.get("schedstat", {}),
+                "voluntary_ctxt_switches": rank.get("voluntary_ctxt_switches"),
+                "nonvoluntary_ctxt_switches": rank.get("nonvoluntary_ctxt_switches"),
+            }
+            lifecycle.setdefault("first_process_counters", counters)
+            lifecycle["last_process_counters"] = counters
 
         for rank_key in self.active_rank_keys - current_rank_keys:
             lifecycle = self.rank_lifecycle[rank_key]
@@ -602,6 +797,21 @@ class Summary:
     def add(self, sample: dict[str, Any]) -> None:
         self.samples += 1
         self._observe_rank_lifecycle(sample)
+        host = sample.get("host", {})
+        host_counters = {
+            "vmstat": host.get("vmstat", {}),
+            "diskstats": {
+                device: {
+                    key: value
+                    for key, value in counters.items()
+                    if key not in {"major", "minor", "io_in_progress"}
+                }
+                for device, counters in host.get("diskstats", {}).items()
+            },
+        }
+        if self.first_host_counters is None:
+            self.first_host_counters = host_counters
+        self.last_host_counters = host_counters
         for key, value in sample.get("rank_sums", {}).items():
             if isinstance(value, int):
                 self.max_rank_sums[key] = max(self.max_rank_sums.get(key, 0), value)
@@ -639,6 +849,14 @@ class Summary:
             phase_max[key] = max(phase_max.get(key, 0), value)
 
     def as_dict(self) -> dict[str, Any]:
+        rank_lifecycle = {}
+        for rank, lifecycle in self.rank_lifecycle.items():
+            entry = dict(lifecycle)
+            entry["process_counter_deltas"] = counter_delta(
+                entry.get("first_process_counters", {}),
+                entry.get("last_process_counters", {}),
+            )
+            rank_lifecycle[rank] = entry
         return {
             "samples": self.samples,
             "max_simultaneous_rank_sums_bytes": self.max_rank_sums,
@@ -650,7 +868,15 @@ class Summary:
             "physical_gpu_peak_used_bytes": self.gpu_peaks,
             "physical_gpu_total_bytes": self.gpu_totals,
             "phase_maxima": self.phase_maxima,
-            "rank_lifecycle": self.rank_lifecycle,
+            "rank_lifecycle": rank_lifecycle,
+            "host_counter_window": {
+                "first": self.first_host_counters or {},
+                "last": self.last_host_counters or {},
+                "deltas": counter_delta(
+                    self.first_host_counters or {},
+                    self.last_host_counters or {},
+                ),
+            },
         }
 
 
@@ -738,13 +964,13 @@ def main() -> int:
                 final_state = state
                 break
             sample: dict[str, Any] = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "timestamp_utc": utc_now(),
                 "monotonic_seconds": time.monotonic(),
                 "phase": tracker.update(),
                 "container_name": args.container,
                 "container": sample_container(args.container),
-                "host": sample_host_memory(),
+                "host": sample_host(),
                 "gpus": sample_gpus(
                     set(args.gpu_indices) if args.gpu_indices is not None else None
                 ),

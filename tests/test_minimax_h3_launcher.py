@@ -8,6 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY = REPO_ROOT / "scripts/run_minimax_h3_fl2av_4step_768p.sh"
+SUPERCOLLECT_ENTRY = REPO_ROOT / "scripts/run_minimax_h3_sp8_supercollect.sh"
 DEFAULT_MODEL_DIR = "/disk/ssd1/difumodels/MiniMax-h3"
 DEFAULT_TURBO_DIR = "/disk/ssd/difumodels-Dis/Minimax-h3-Turbo"
 DEFAULT_FIRST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png"
@@ -314,6 +315,74 @@ def test_h3_runcollector_is_disabled_by_default(tmp_path):
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["runcollector"]["enabled"] is False
     assert "H3 T1 collector:" not in completed.stdout
+
+
+def test_sp8_supercollect_is_observer_only_and_freezes_production_contract(tmp_path):
+    result_dir = tmp_path / "supercollect"
+    completed = subprocess.run(
+        [
+            "bash",
+            str(SUPERCOLLECT_ENTRY),
+            "--image",
+            "example.invalid/minimax-h3:production",
+            "--model-dir",
+            str(tmp_path / "MiniMax-H3"),
+            "--turbo-dir",
+            str(tmp_path / "Minimax-h3-Turbo"),
+            "--first-frame",
+            str(tmp_path / "first.png"),
+            "--last-frame",
+            str(tmp_path / "last.png"),
+            "--result-dir",
+            str(result_dir),
+            "--gpus",
+            "8,9,10,11,12,13,14,15",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "DRY_RUN": "1",
+            "RUN_REPO_DIR": str(REPO_ROOT),
+            "MODEL_RUN": str(REPO_ROOT / "lightx2vModelrun"),
+            "H3_MODEL_DIR": "",
+            "H3_TURBO_DIR": "",
+            "GPU_DEVICES": "",
+            "H3_PROMPT_FILE": "",
+            "H3_PROMPT_PRESET": "",
+            "PROMPT": "",
+        },
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "SP8 SuperCollect: enabled (observer-only; production contract unchanged)" in completed.stdout
+    assert r"HIP_VISIBLE_DEVICES=8\,9\,10\,11\,12\,13\,14\,15" in completed.stdout
+    assert "--env LIGHTX2V_H3_RUN_COLLECTOR=1" in completed.stdout
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["gpus"] == list(range(8, 16))
+    assert manifest["parallel"]["seq_p_attn_type"] == "ulysses"
+    assert manifest["memory_policy"]["cpu_block_buffers"] == 2
+    assert manifest["memory_policy"]["gpu_block_buffers"] == 2
+    assert manifest["runcollector"]["enabled"] is True
+    assert manifest["supercollect"] == {
+        "enabled": True,
+        "host_snapshots": ["supercollect_host_before.json", "supercollect_host_after.json"],
+        "memory_monitor_interval_seconds": 1.0,
+        "observer_only": True,
+        "production_contract_changed": False,
+        "profile": "sp8_system_wide_v1",
+        "runtime_evidence": "memory.jsonl",
+    }
+
+
+def test_sp8_supercollect_rejects_non_sp8_or_smoke(tmp_path):
+    common = ["bash", str(SUPERCOLLECT_ENTRY), "--image", "image", "--result-dir", str(tmp_path / "result")]
+    four = subprocess.run(common + ["--gpus", "0,1,2,3"], capture_output=True, text=True, check=False)
+    smoke = subprocess.run(common + ["--smoke"], capture_output=True, text=True, check=False)
+    assert four.returncode == 2
+    assert "exactly eight" in four.stderr
+    assert smoke.returncode == 2
+    assert "full production workload" in smoke.stderr
 
 
 def test_h3_launcher_rejects_duplicate_or_unsupported_gpu_counts(tmp_path):

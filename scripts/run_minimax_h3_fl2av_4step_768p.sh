@@ -46,6 +46,7 @@ Environment:
   MEMORY_MONITOR         1 (default) records host RAM, process RSS/PSS and VRAM
   LIGHTX2V_H3_RUN_COLLECTOR
                          Prefer --collect; direct environment use accepts 0/1
+  H3_SUPERCOLLECT        1 enables the read-only SP8 SuperCollect evidence set
 EOF
 }
 
@@ -62,6 +63,7 @@ prompt_file="${H3_PROMPT_FILE:-}"
 smoke=0
 preflight_only=0
 collect="${LIGHTX2V_H3_RUN_COLLECTOR:-0}"
+super_collect="${H3_SUPERCOLLECT:-0}"
 
 while (( $# > 0 )); do
     case "$1" in
@@ -162,7 +164,22 @@ for gpu_device_id in "${gpu_device_ids[@]}"; do
     seen_gpu_device_ids["${gpu_device_id}"]=1
 done
 
+case "${super_collect}" in
+    0 | 1) ;;
+    *) echo "ERROR: H3_SUPERCOLLECT must be 0 or 1" >&2; exit 2 ;;
+esac
+if [[ "${super_collect}" == 1 ]]; then
+    [[ "${gpu_count}" == 8 ]] || { echo "ERROR: MiniMax-H3 SuperCollect is fixed at SP8" >&2; exit 2; }
+    [[ "${smoke}" == 0 && "${preflight_only}" == 0 ]] || {
+        echo "ERROR: MiniMax-H3 SuperCollect requires the full 1344x768 production run" >&2
+        exit 2
+    }
+    collect=1
+fi
 memory_monitor_enabled="${MEMORY_MONITOR:-1}"
+if [[ "${super_collect}" == 1 ]]; then
+    memory_monitor_enabled=1
+fi
 case "${memory_monitor_enabled}" in
     0 | 1) ;;
     *) echo "ERROR: MEMORY_MONITOR must be 0 or 1" >&2; exit 2 ;;
@@ -175,7 +192,12 @@ prompt_duration_seconds=5.17
 resolve_minimax_h3_prompt "${run_root}" "${prompt_preset}" "${prompt_file}" "${prompt_duration_seconds}" || exit $?
 prompt="${MINIMAX_H3_PROMPT}"
 prompt_source="${MINIMAX_H3_PROMPT_SOURCE}"
-run_tag="${H3_RUN_TAG:-minimax_h3_fl2av_4step_768p_$(date +%Y%m%d_%H%M%S)}"
+if [[ "${super_collect}" == 1 ]]; then
+    default_run_tag="minimax_h3_sp8_supercollect_$(date +%Y%m%d_%H%M%S)"
+else
+    default_run_tag="minimax_h3_fl2av_4step_768p_$(date +%Y%m%d_%H%M%S)"
+fi
+run_tag="${H3_RUN_TAG:-${default_run_tag}}"
 if [[ -z "${result_dir}" ]]; then
     result_dir="${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}"
 fi
@@ -193,11 +215,17 @@ memory_path="${result_dir}/memory.jsonl"
 video_path="${result_dir}/minimax_h3_fl2av.mp4"
 summary_path="${result_dir}/summary.json"
 container_evidence_dir=/workspace/LightX2V/save_results
+if [[ "${super_collect}" == 1 ]]; then
+    memory_monitor_interval="${MEMORY_MONITOR_INTERVAL:-1.0}"
+else
+    memory_monitor_interval="${MEMORY_MONITOR_INTERVAL:-2.0}"
+fi
 
 python3 - "${result_dir}/run_manifest.json" "${image}" "${source_mode}" \
     "${model_dir}" "${turbo_dir}" "${first_frame}" "${last_frame}" \
     "${frame_source}" "${gpu_devices}" "${smoke}" "${preflight_only}" \
-    "${prompt}" "${prompt_source}" "${prompt_preset}" "${seed}" "${collect}" <<'PY'
+    "${prompt}" "${prompt_source}" "${prompt_preset}" "${seed}" "${collect}" \
+    "${super_collect}" "${memory_monitor_interval}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -220,6 +248,8 @@ import sys
     prompt_preset,
     seed,
     collect,
+    super_collect,
+    memory_monitor_interval,
 ) = sys.argv[1:]
 
 def sha256(path):
@@ -304,6 +334,15 @@ payload = {
         "profiling_only": True,
         "numerical_path_changed": False,
     },
+    "supercollect": {
+        "enabled": super_collect == "1",
+        "profile": "sp8_system_wide_v1" if super_collect == "1" else None,
+        "observer_only": True,
+        "memory_monitor_interval_seconds": float(memory_monitor_interval),
+        "host_snapshots": ["supercollect_host_before.json", "supercollect_host_after.json"] if super_collect == "1" else [],
+        "runtime_evidence": "memory.jsonl" if super_collect == "1" else None,
+        "production_contract_changed": False,
+    },
     "seed": int(seed),
     "prompt": prompt,
     "prompt_source": prompt_source,
@@ -340,6 +379,7 @@ export OUTPUT_DIR="${result_dir}"
 export CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-minimax-h3}"
 
 monitor_pid=
+supercollect_after_written=0
 stop_monitor() {
     if [[ -n "${monitor_pid:-}" ]]; then
         if kill -0 "${monitor_pid}" 2>/dev/null; then
@@ -364,14 +404,54 @@ wait_monitor() {
         return "${status}"
     fi
 }
-trap stop_monitor EXIT
+
+collect_supercollect_host_snapshot() {
+    local phase="$1"
+    PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/lib/collect_minimax_h3_host_evidence.py" \
+        --output "${result_dir}/supercollect_host_${phase}.json" \
+        --phase "${phase}" \
+        --gpu-indices "${gpu_devices}" \
+        --image "${image}" \
+        --run-root "${run_root}" \
+        --path "model=${model_dir}" \
+        --path "turbo=${turbo_dir}" \
+        --path "first_frame=${first_frame}" \
+        --path "last_frame=${last_frame}" \
+        --path "result=${result_dir}"
+}
+
+cleanup() {
+    local status=$?
+    local snapshot_status=0
+    trap - EXIT
+    stop_monitor
+    if [[ "${super_collect}" == 1 && "${DRY_RUN:-0}" != 1 && "${supercollect_after_written}" == 0 ]]; then
+        set +e
+        collect_supercollect_host_snapshot after
+        snapshot_status=$?
+        set -e
+        supercollect_after_written=1
+        if (( snapshot_status != 0 )); then
+            echo "ERROR: SuperCollect after snapshot failed with status ${snapshot_status}" >&2
+            if (( status == 0 )); then
+                status=${snapshot_status}
+            fi
+        fi
+    fi
+    exit "${status}"
+}
+trap cleanup EXIT
+
+if [[ "${super_collect}" == 1 && "${DRY_RUN:-0}" != 1 ]]; then
+    collect_supercollect_host_snapshot before
+fi
 
 if [[ "${memory_monitor_enabled}" == 1 && "${DRY_RUN:-0}" != 1 ]]; then
     PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/lib/monitor_run_memory.py" \
         --container "${CONTAINER_NAME}" \
         --log "${log_path}" \
         --output "${memory_path}" \
-        --interval "${MEMORY_MONITOR_INTERVAL:-2.0}" \
+        --interval "${memory_monitor_interval}" \
         --print-interval "${MEMORY_MONITOR_PRINT_INTERVAL:-30.0}" \
         --start-timeout "${MEMORY_MONITOR_START_TIMEOUT:-900}" \
         --expected-ranks "${gpu_count}" \
@@ -385,6 +465,9 @@ fi
 echo "MiniMax-H3 gfx1201 results: ${result_dir}"
 echo "Source mode: ${source_mode}"
 echo "Prompt: ${prompt_source} (${prompt_duration_seconds}s alignment)"
+if [[ "${super_collect}" == 1 ]]; then
+    echo "SP8 SuperCollect: enabled (observer-only; production contract unchanged)"
+fi
 if [[ "${collect}" == 1 ]]; then
     echo "H3 T1 collector: ${result_dir}/h3_runcollector.rankNNN.json (schema-2, profiling only)"
 fi
@@ -434,4 +517,7 @@ fi
 if [[ "${collect}" == 1 ]]; then
     echo "Runcollector: ${result_dir}/h3_runcollector.rankNNN.json"
     echo "T1 summary: ${result_dir}/h3_t1_summary.json"
+fi
+if [[ "${super_collect}" == 1 ]]; then
+    echo "SuperCollect: ${result_dir}/supercollect_host_{before,after}.json"
 fi

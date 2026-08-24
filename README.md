@@ -153,6 +153,26 @@ profiling overhead, so a `--collect` run is not a production performance
 baseline. The generic result bundle uploader includes these JSON files
 automatically.
 
+For the system-wide SP8 investigation, use the dedicated SuperCollect entry.
+It runs only the frozen 1344x768, 124-frame, 24 FPS production workload and
+keeps BF16 DiT, dynamic LoRA, Ulysses SP8, lazy B1's two CPU/two GPU block
+buffers, default ROCm BLAS, and the tuned kernels unchanged:
+
+```bash
+bash scripts/run_minimax_h3_sp8_supercollect.sh \
+  --image IMAGE \
+  --gpus 0,1,2,3,4,5,6,7
+```
+
+In addition to the normal video, log, manifest, memory JSONL, per-rank schema-2
+collectors, and `h3_t1_summary.json`, the result directory contains read-only
+before/after host snapshots. Runtime samples include rank page faults, process
+I/O, CPU/run-queue counters, NUMA placement, host VM/PSI counters, and block
+device activity. `host_prefetch_wait_wall_ms` measures blocking on the existing
+safetensors/page-cache-to-pinned-CPU fill and remains separate from additive GPU
+metrics. SuperCollect is diagnostic and its latency is not a production timing
+baseline.
+
 ## Package and upload any result directory
 
 `scripts/upload_result_bundle.py` recursively packages a complete result

@@ -45,8 +45,8 @@ def test_cross_rank_summary_uses_per_step_critical_path(tmp_path):
         0,
         2,
         [
-            {"h3_step_gpu_ms": 10, "dynamic_lora_gpu_ms": 2, "exposed_h2d_gpu_ms": 0.5},
-            {"h3_step_gpu_ms": 12, "dynamic_lora_gpu_ms": 3, "exposed_h2d_gpu_ms": 0.0},
+            {"h3_step_gpu_ms": 10, "dynamic_lora_gpu_ms": 2, "exposed_h2d_gpu_ms": 0.5, "host_prefetch_wait_wall_ms": 4},
+            {"h3_step_gpu_ms": 12, "dynamic_lora_gpu_ms": 3, "exposed_h2d_gpu_ms": 0.0, "host_prefetch_wait_wall_ms": 2},
         ],
     )
     _write_report(
@@ -54,8 +54,8 @@ def test_cross_rank_summary_uses_per_step_critical_path(tmp_path):
         1,
         2,
         [
-            {"h3_step_gpu_ms": 11, "dynamic_lora_gpu_ms": 1, "exposed_h2d_gpu_ms": 1.0},
-            {"h3_step_gpu_ms": 9, "dynamic_lora_gpu_ms": 4, "exposed_h2d_gpu_ms": 0.25},
+            {"h3_step_gpu_ms": 11, "dynamic_lora_gpu_ms": 1, "exposed_h2d_gpu_ms": 1.0, "host_prefetch_wait_wall_ms": 7},
+            {"h3_step_gpu_ms": 9, "dynamic_lora_gpu_ms": 4, "exposed_h2d_gpu_ms": 0.25, "host_prefetch_wait_wall_ms": 5},
         ],
     )
 
@@ -73,6 +73,8 @@ def test_cross_rank_summary_uses_per_step_critical_path(tmp_path):
     assert summary["critical_path_totals_ms"]["exposed_h2d_gpu_ms"] == pytest.approx(1.0)
     assert summary["steps"][0]["per_metric_rank_max_ms"]["dynamic_lora_gpu_ms"] == 2
     assert summary["steps"][1]["per_metric_rank_max_ms"]["dynamic_lora_gpu_ms"] == 4
+    assert summary["rank_max_wall_diagnostic_totals_ms"]["host_prefetch_wait_wall_ms"] == 12
+    assert summary["rank_max_wall_diagnostic_totals_ms"]["swap_wait_wall_ms"] == 0
 
 
 def test_cross_rank_summary_rejects_old_schema(tmp_path):

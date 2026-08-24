@@ -77,6 +77,36 @@ def test_gpu_index_parser_rejects_duplicates_and_preserves_order():
         raise AssertionError("duplicate GPU indices were accepted")
 
 
+def test_diskstats_parser_keeps_runtime_io_counters():
+    payload = MONITOR.parse_diskstats(
+        "259 0 nvme0n1 10 2 300 40 50 6 700 80 1 90 100 0 0 0 0 0 0\n"
+    )
+    assert payload["nvme0n1"] == {
+        "major": 259,
+        "minor": 0,
+        "reads_completed": 10,
+        "reads_merged": 2,
+        "sectors_read": 300,
+        "read_ms": 40,
+        "writes_completed": 50,
+        "writes_merged": 6,
+        "sectors_written": 700,
+        "write_ms": 80,
+        "io_in_progress": 1,
+        "io_ms": 90,
+        "weighted_io_ms": 100,
+    }
+
+
+def test_recursive_counter_delta_preserves_rank_and_device_structure():
+    first = {"vmstat": {"pgmajfault": 10}, "disk": {"nvme0": {"read_ms": 20}}}
+    last = {"vmstat": {"pgmajfault": 13}, "disk": {"nvme0": {"read_ms": 27}}}
+    assert MONITOR.counter_delta(first, last) == {
+        "disk": {"nvme0": {"read_ms": 7}},
+        "vmstat": {"pgmajfault": 3},
+    }
+
+
 def test_single_process_infer_is_accounted_as_rank_zero():
     assert 'local_rank = "0"' in MONITOR.CONTAINER_PROBE
     assert 'rank = "0"' in MONITOR.CONTAINER_PROBE

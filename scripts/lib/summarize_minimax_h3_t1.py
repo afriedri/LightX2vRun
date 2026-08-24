@@ -141,6 +141,17 @@ def build_summary(reports: list[tuple[Path, dict]]) -> dict:
         key=lambda item: item["critical_path_total_ms"],
         reverse=True,
     )
+    wall_diagnostic_names = (
+        "host_prefetch_wait_wall_ms",
+        "swap_wait_wall_ms",
+    )
+    rank_max_wall_diagnostic_totals = {
+        name: sum(
+            float(step["per_metric_rank_max_ms"].get(name, 0.0))
+            for step in steps
+        )
+        for name in wall_diagnostic_names
+    }
     first_payload = by_rank[min(by_rank)]
     return {
         "schema_name": SUMMARY_SCHEMA,
@@ -156,6 +167,7 @@ def build_summary(reports: list[tuple[Path, dict]]) -> dict:
         "steps": steps,
         "critical_path_totals_ms": critical_totals,
         "opportunity_ranking": opportunities,
+        "rank_max_wall_diagnostic_totals_ms": rank_max_wall_diagnostic_totals,
         "per_rank_totals_ms": {
             str(rank): payload["h3_t1"]["summary"].get("totals_ms", {})
             for rank, payload in sorted(by_rank.items())
@@ -166,6 +178,7 @@ def build_summary(reports: list[tuple[Path, dict]]) -> dict:
             "Total H2D includes overlapped copies; only exposed_h2d_gpu_ms is a critical-path optimization candidate.",
             "core_non_block_gpu_ms includes exposed transfer/barrier work and must not be added to exposed_h2d_gpu_ms.",
             "swap_wait_wall_ms is a host-barrier diagnostic and must not be added to accelerator-event metrics.",
+            "host_prefetch_wait_wall_ms is time blocked on safetensors/page-cache-to-pinned-CPU fill; use rank_max_wall_diagnostic_totals_ms, not GPU critical-path shares.",
             "elementwise_and_unattributed is a residual bucket and requires a follow-up single-variable experiment before backend work.",
             "per_metric_rank_max_ms is an imbalance diagnostic only; do not add values that came from different ranks.",
         ],
