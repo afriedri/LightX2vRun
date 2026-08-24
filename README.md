@@ -58,7 +58,9 @@ other D128 shapes                   -> pad8_kv
 
 The exact H3 SP2 shape `[1,42196,28,128]` is currently allowlisted. SP4, SP8,
 and Ring16 remain per-shape tuning work; the launcher must not select schedules
-from a model name or infer unmeasured head counts.
+from a model name or infer unmeasured head counts. H3 production launch accepts
+pure Ulysses SP8 while retaining the safe generic Sage fallback until an exact
+SP8 shape is measured and separately tuned.
 
 Runtime status uses one stable LightX2V format:
 
@@ -106,6 +108,26 @@ Use `--collect` for one H3 backend-selection run:
 bash scripts/run_minimax_h3_fl2av_4step_768p.sh \
   --image IMAGE --gpus 0,1 --collect
 ```
+
+For Sage shape collection only, do not use `--collect`. The Sage adapter already
+emits one normalized first-real-dispatch event per rank. The dedicated Run sweep
+runs the frozen 1344x768, 124-frame workload sequentially at SP4 and SP8, checks
+that every rank reported one identical BSHD contract, and writes
+`sage_shapes.json`:
+
+```bash
+cd /path/to/LightX2VRun
+
+bash scripts/run_minimax_h3_sage_shape_sweep.sh \
+  --image IMAGE \
+  --counts 4,8 \
+  --gpus 0,1,2,3,4,5,6,7
+```
+
+The expected topology contracts are `[1,42196,14,128]` for SP4 and
+`[1,42196,7,128]` for SP8. These values are validation expectations only; the
+sweep output is derived from real runtime dispatches and fails on missing ranks,
+cross-rank disagreement, or a different global sequence length.
 
 The schema-2 collector is MiniMax-H3-only and disabled by default. Each rank
 writes `h3_runcollector.rankNNN.json`; the launcher also writes

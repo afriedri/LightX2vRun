@@ -13,15 +13,15 @@ overlay_json="${BASE_CONFIG_JSON:-${lightx2v_path}/configs/platforms/amd_rocm/mi
 publish_json="${lightx2v_path}/configs/minimax_h3/dmd/minimax_h3_bf16_4step_single_gpu_offload.json"
 
 visible_devices="${HIP_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
-[[ "${visible_devices}" =~ ^[0-9]+(,[0-9]+){0,3}$ ]] || {
-    echo "ERROR: MiniMax-H3 gfx1201 requires one, two, or four comma-separated HIP GPU ids, got '${visible_devices}'" >&2
+[[ "${visible_devices}" =~ ^[0-9]+(,[0-9]+){0,7}$ ]] || {
+    echo "ERROR: MiniMax-H3 gfx1201 requires one, two, four, or eight comma-separated HIP GPU ids, got '${visible_devices}'" >&2
     exit 1
 }
 IFS=',' read -r -a visible_device_ids <<<"${visible_devices}"
 gpu_count="${#visible_device_ids[@]}"
 case "${gpu_count}" in
-    1 | 2 | 4) ;;
-    *) echo "ERROR: MiniMax-H3 gfx1201 supports exactly 1, 2, or 4 GPUs" >&2; exit 1 ;;
+    1 | 2 | 4 | 8) ;;
+    *) echo "ERROR: MiniMax-H3 gfx1201 supports exactly 1, 2, 4, or 8 GPUs" >&2; exit 1 ;;
 esac
 declare -A seen_visible_device_ids=()
 for visible_device_id in "${visible_device_ids[@]}"; do

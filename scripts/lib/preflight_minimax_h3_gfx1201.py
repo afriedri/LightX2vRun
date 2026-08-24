@@ -336,8 +336,8 @@ def smoke_sage_attention(device_index: int, heads: int) -> dict:
         AiterFav3SageBf16AttnWeight,
     )
 
-    if heads not in (14, 28, 56):
-        die(f"MiniMax-H3 Sage preflight expects 14, 28, or 56 heads, got {heads}")
+    if heads not in (7, 14, 28, 56):
+        die(f"MiniMax-H3 Sage preflight expects 7, 14, 28, or 56 heads, got {heads}")
     seq_len, head_dim = 257, 128
     torch.cuda.set_device(device_index)
     device = torch.device(f"cuda:{device_index}")
@@ -378,7 +378,7 @@ def smoke_sage_attention(device_index: int, heads: int) -> dict:
 
 def standalone_sage_smoke_plan(world_size: int) -> tuple[tuple[int, int], ...]:
     """Plan parent-process Sage coverage without cross-device reuse."""
-    if world_size not in (1, 2, 4):
+    if world_size not in (1, 2, 4, 8):
         raise ValueError(f"MiniMax-H3 Sage preflight does not support world_size={world_size}")
     # Multi-GPU runs are covered once, through the exact torchrun
     # Ulysses-to-Sage production path. A second parent-process Sage check would
@@ -410,8 +410,8 @@ def smoke_distributed_ulysses() -> int:
     try:
         world_size = dist.get_world_size()
         rank = dist.get_rank()
-        if world_size not in (2, 4):
-            raise RuntimeError(f"MiniMax-H3 distributed preflight requires world_size 2 or 4, got {world_size}")
+        if world_size not in (2, 4, 8):
+            raise RuntimeError(f"MiniMax-H3 distributed preflight requires world_size 2, 4, or 8, got {world_size}")
         device = torch.device(f"cuda:{local_rank}")
         aux_len = 3
         torch.manual_seed(20260817)
@@ -606,7 +606,7 @@ def main() -> int:
     parser.add_argument("--runtime-config", type=Path)
     parser.add_argument("--source-mode", choices=("image",), default="image")
     parser.add_argument("--skip-artifacts", action="store_true")
-    parser.add_argument("--expected-world-size", type=int, choices=(1, 2, 4), default=1)
+    parser.add_argument("--expected-world-size", type=int, choices=(1, 2, 4, 8), default=1)
     parser.add_argument("--required-runcollector-schema", type=int)
     parser.add_argument("--kernel-smoke", action="store_true", help="Run standalone Triton/Sage GPU kernels; reserved for explicit preflight-only runs")
     parser.add_argument("--distributed-attention-only", action="store_true")

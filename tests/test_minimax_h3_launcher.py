@@ -248,6 +248,21 @@ def test_h3_dry_run_accepts_four_gpu_ulysses_without_tp(tmp_path):
     }
 
 
+def test_h3_dry_run_accepts_eight_gpu_ulysses_without_tp(tmp_path):
+    completed, result_dir = run_dry(tmp_path, "--gpus", "0,1,2,3,4,5,6,7")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert r"HIP_VISIBLE_DEVICES=0\,1\,2\,3\,4\,5\,6\,7" in completed.stdout
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["gpus"] == [0, 1, 2, 3, 4, 5, 6, 7]
+    assert manifest["parallel"] == {
+        "seq_p_attn_type": "ulysses",
+        "seq_p_size": 8,
+        "seq_parallel": True,
+        "tensor_parallel": False,
+        "vae_decode_parallel": True,
+    }
+
+
 def test_h3_collect_is_opt_in_and_passed_to_each_rank(tmp_path):
     completed, result_dir = run_dry(tmp_path, "--collect", "--gpus", "0,1")
     assert completed.returncode == 0, completed.stdout + completed.stderr
@@ -282,11 +297,11 @@ def test_h3_launcher_rejects_duplicate_or_unsupported_gpu_counts(tmp_path):
 
     unsupported, _ = run_dry(tmp_path, "--gpus", "0,1,2")
     assert unsupported.returncode == 2
-    assert "supports exactly 1, 2, or 4 GPUs" in unsupported.stderr
+    assert "supports exactly 1, 2, 4, or 8 GPUs" in unsupported.stderr
 
-    too_many, _ = run_dry(tmp_path, "--gpus", "0,1,2,3,4")
+    too_many, _ = run_dry(tmp_path, "--gpus", "0,1,2,3,4,5,6,7,8")
     assert too_many.returncode == 2
-    assert "one, two, or four comma-separated GPU ids" in too_many.stderr
+    assert "one, two, four, or eight comma-separated GPU ids" in too_many.stderr
 
 
 def test_h3_launcher_rejects_host_source_overlay(tmp_path):

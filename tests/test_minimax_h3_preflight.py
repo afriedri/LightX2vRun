@@ -113,7 +113,7 @@ def test_distributed_worker_selects_local_device_before_backend_import(monkeypat
 
 @pytest.mark.parametrize(
     ("world_size", "expected"),
-    ((1, ((0, 56),)), (2, ()), (4, ())),
+    ((1, ((0, 56),)), (2, ()), (4, ()), (8, ())),
 )
 def test_parent_sage_smoke_is_only_used_for_single_gpu(world_size, expected):
     assert PREFLIGHT.standalone_sage_smoke_plan(world_size) == expected
@@ -163,7 +163,7 @@ def test_artifact_contract_rejects_incomplete_processor(tmp_path):
         PREFLIGHT.check_artifacts(model_dir, turbo_dir, first_frame, last_frame, expected_world_size=2)
 
 
-@pytest.mark.parametrize("world_size", (2, 4))
+@pytest.mark.parametrize("world_size", (2, 4, 8))
 def test_runtime_contract_accepts_only_pure_ulysses(tmp_path, world_size):
     config = {
         "video_flow_shift": 6.0,

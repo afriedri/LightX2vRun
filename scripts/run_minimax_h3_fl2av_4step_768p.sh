@@ -11,7 +11,7 @@ usage() {
 Usage:
   bash scripts/run_minimax_h3_fl2av_4step_768p.sh --image IMAGE
 
-Runs MiniMax-H3 FL2V on one, two, or four gfx1201 GPUs. Multi-GPU runs use pure
+Runs MiniMax-H3 FL2V on one, two, four, or eight gfx1201 GPUs. Multi-GPU runs use pure
 Ulysses sequence parallelism. --image is required and must contain
 the complete production LightX2V source at /workspace/LightX2V. Host source overlays
 are deliberately unsupported; rebuild the image before production runs.
@@ -32,7 +32,7 @@ Options:
   --smoke                Use 480x480 instead of 1344x768; both run 124 frames
   --preflight-only       Run per-GPU MHA and RCCL/Ulysses smoke, then exit
   --collect              Record schema-2 H3 T1 lifecycle/operator evidence
-  --gpus IDS             One, two, or four comma-separated GPU ids
+  --gpus IDS             One, two, four, or eight comma-separated GPU ids
                          (default: 0,1,2,3; four-GPU pure Ulysses SP4)
   --gpu IDS              Backward-compatible alias for --gpus
 
@@ -40,7 +40,7 @@ Environment:
   PROMPT / SEED          PROMPT overrides preset/file; seed defaults to 42
   H3_PROMPT_PRESET       Default prompt preset (default: bird-stable)
   H3_PROMPT_FILE         Custom prompt file, overridden by PROMPT
-  GPU_DEVICES            One, two, or four ids; multi-GPU uses pure Ulysses
+  GPU_DEVICES            One, two, four, or eight ids; multi-GPU uses pure Ulysses
   H3_MODEL_DIR           Override the default complete H3 checkpoint directory
   H3_TURBO_DIR           Override the default Turbo LoRA directory
   MEMORY_MONITOR         1 (default) records host RAM, process RSS/PSS and VRAM
@@ -143,15 +143,15 @@ if [[ -z "${first_frame}" || -z "${last_frame}" ]]; then
     echo "ERROR: --first-frame and --last-frame must be provided together" >&2
     exit 2
 fi
-[[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+){0,3}$ ]] || {
-    echo "ERROR: MiniMax-H3 gfx1201 requires one, two, or four comma-separated GPU ids" >&2
+[[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+){0,7}$ ]] || {
+    echo "ERROR: MiniMax-H3 gfx1201 requires one, two, four, or eight comma-separated GPU ids" >&2
     exit 2
 }
 IFS=',' read -r -a gpu_device_ids <<<"${gpu_devices}"
 gpu_count="${#gpu_device_ids[@]}"
 case "${gpu_count}" in
-    1 | 2 | 4) ;;
-    *) echo "ERROR: MiniMax-H3 gfx1201 supports exactly 1, 2, or 4 GPUs" >&2; exit 2 ;;
+    1 | 2 | 4 | 8) ;;
+    *) echo "ERROR: MiniMax-H3 gfx1201 supports exactly 1, 2, 4, or 8 GPUs" >&2; exit 2 ;;
 esac
 declare -A seen_gpu_device_ids=()
 for gpu_device_id in "${gpu_device_ids[@]}"; do
