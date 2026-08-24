@@ -16,6 +16,7 @@ FIX1_IMAGE = (
     "compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:"
     "gfx1201-R9600-FP8-260813-CKConv3dV1-Hot28-B0B1-Fix1"
 )
+H3_IMAGE = "example.invalid/lightx2v:h3-production"
 
 
 TASKS = {
@@ -25,18 +26,28 @@ TASKS = {
     "run_05_wan22_480p_121f_24fps_scale.sh": ("wan22", 480, 832, 121, 24, [2, 4, 8, 16]),
     "run_06_wan22_720p_81f_16fps_scale.sh": ("wan22", 720, 1280, 81, 16, [2, 4, 8, 16]),
     "run_07_wan22_720p_121f_24fps_scale.sh": ("wan22", 720, 1280, 121, 24, [2, 4, 8, 16]),
+    "run_08_minimax_h3_768p_124f_24fps_scale.sh": ("minimax_h3", 768, 1344, 124, 24, [2, 4, 8, 16]),
 }
 
 
-class ConsolidatedWanLauncherTest(unittest.TestCase):
-    def test_six_numbered_entries_have_exact_workloads(self):
+class ConsolidatedTimingLauncherTest(unittest.TestCase):
+    def test_numbered_entries_have_exact_workloads(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for name, expected in TASKS.items():
                 with self.subTest(entry=name):
                     result_dir = root / name.removesuffix(".sh")
+                    model, height, width, frames, fps, counts = expected
+                    command = [
+                        "bash",
+                        str(SCRIPTS / name),
+                        "--gpu-count",
+                        str(counts[0]),
+                    ]
+                    if model == "minimax_h3":
+                        command.extend(("--image", H3_IMAGE))
                     completed = subprocess.run(
-                        ["bash", str(SCRIPTS / name), "--gpu-count", str(expected[-1][0])],
+                        command,
                         check=False,
                         capture_output=True,
                         text=True,
@@ -56,7 +67,6 @@ class ConsolidatedWanLauncherTest(unittest.TestCase):
                     manifest = json.loads(
                         (result_dir / "run_manifest.json").read_text(encoding="utf-8")
                     )
-                    model, height, width, frames, fps, counts = expected
                     self.assertEqual(manifest["model"], model)
                     self.assertEqual(manifest["height"], height)
                     self.assertEqual(manifest["width"], width)
@@ -67,11 +77,75 @@ class ConsolidatedWanLauncherTest(unittest.TestCase):
                         f"scripts/lib/run_{model}_in_container.sh",
                         completed.stdout,
                     )
-                    self.assertIn(f"Image:          {FIX1_IMAGE}", completed.stdout)
+                    expected_image = H3_IMAGE if model == "minimax_h3" else FIX1_IMAGE
+                    self.assertIn(f"Image:          {expected_image}", completed.stdout)
                     self.assertIn(
                         "Memory monitor: enabled (sample=2.0s, terminal=30.0s + phase changes)",
                         completed.stdout,
                     )
+                    if model == "minimax_h3":
+                        self.assertEqual(manifest["duration_seconds"], 5.17)
+                        self.assertEqual(manifest["parallel_topologies"], {"2": "ulysses"})
+                        self.assertIn(
+                            "MiniMax-H3 topology: SP2/SP4/SP8=Ulysses, SP16=Ring",
+                            completed.stdout,
+                        )
+                        self.assertIn("--env TARGET_VIDEO_LENGTH=124", completed.stdout)
+
+    def test_minimax_h3_timing_requires_an_explicit_image(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(SCRIPTS / "run_08_minimax_h3_768p_124f_24fps_scale.sh"),
+                    "--gpu-count",
+                    "2",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "DRY_RUN": "1",
+                    "IMAGE": "example.invalid/stale:must-be-ignored",
+                    "TIMING_RESULT_DIR": str(Path(temporary) / "result"),
+                    "RUN_REPO_DIR": str(REPO_ROOT),
+                },
+            )
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("MiniMax-H3 timing requires --image", completed.stderr)
+
+    def test_minimax_h3_default_sweep_covers_all_production_topologies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result_dir = Path(temporary) / "result"
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(SCRIPTS / "run_08_minimax_h3_768p_124f_24fps_scale.sh"),
+                    "--image",
+                    H3_IMAGE,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "DRY_RUN": "1",
+                    "TIMING_RESULT_DIR": str(result_dir),
+                    "RUN_REPO_DIR": str(REPO_ROOT),
+                },
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            manifest = json.loads(
+                (result_dir / "run_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["gpu_counts"], [2, 4, 8, 16])
+            self.assertEqual(
+                manifest["parallel_topologies"],
+                {"2": "ulysses", "4": "ulysses", "8": "ulysses", "16": "ring"},
+            )
+            for count in (2, 4, 8, 16):
+                self.assertTrue((result_dir / f"{count}gpu.log").is_file())
 
     def wan22_config(self, count: int, schedule: str = "auto") -> tuple[dict, str]:
         devices = ",".join(str(index) for index in range(count))
@@ -171,6 +245,43 @@ DiT summary: status=complete, steps=4/4, total=40.000s, average=10.000s/it
         self.assertIn("Baseline 与 B1 使用完全相同的起止边界", table)
         self.assertIn("RUN 上升而 Total 下降并不表示漏计", table)
         self.assertIn("Encoders 合计,6.100000", csv_text)
+
+    def test_minimax_h3_summary_uses_the_same_table_contract(self):
+        log = """
+[Profile] Rank 0 - Run VAE Encoder cost 2.000 seconds
+[Profile] Rank 0 - Run Text Encoder cost 3.000 seconds
+DiT summary: status=complete, steps=4/4, total=40.000s, average=10.000s/it
+[Profile] Rank 0 - Run VAE Decoder cost 4.000 seconds
+[Profile] Rank 0 - RUN pipeline cost 50.000 seconds
+[Profile] Rank 0 - Total Cost cost 55.000 seconds
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "2gpu.log").write_text(log, encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    "python3",
+                    str(SUMMARY),
+                    "--model",
+                    "minimax_h3",
+                    "--log-dir",
+                    str(root),
+                    "--counts",
+                    "2",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            table = (root / "timings.md").read_text(encoding="utf-8")
+            csv_text = (root / "timings.csv").read_text(encoding="utf-8")
+        self.assertIn("| Image Encoder | N/A |", table)
+        self.assertIn("| Encoders 合计 | 5.000s |", table)
+        self.assertIn("| DiT 4 steps | 40.000s |", table)
+        self.assertIn("2/4/8 卡使用 Ulysses，16 卡使用 Ring", table)
+        self.assertIn("Encoders 合计,5.000000", csv_text)
 
 
 if __name__ == "__main__":

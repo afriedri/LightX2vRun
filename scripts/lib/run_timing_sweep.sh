@@ -17,9 +17,10 @@ Examples:
   bash scripts/${RUN_ENTRY_NAME} ${RUN_EXAMPLE_COUNT}
 
 Overrides:
-  WAN_GPU_GROUPS       Semicolon-separated physical GPU groups in supported-count order.
-  WAN_RUN_TAG          Result directory name.
-  WAN_RESULT_DIR       Exact result directory.
+  TIMING_GPU_GROUPS    Semicolon-separated physical GPU groups in supported-count order.
+  TIMING_RUN_TAG       Result directory name.
+  TIMING_RESULT_DIR    Exact result directory.
+  WAN_GPU_GROUPS / WAN_RUN_TAG / WAN_RESULT_DIR remain supported aliases.
   MODEL_RUN            Host container launcher.
   MEMORY_MONITOR       1 (default) enables host RAM/rank RSS/PSS/GPU VRAM sampling; 0 disables it.
   MEMORY_MONITOR_INTERVAL        JSONL sampling interval in seconds (default: 2).
@@ -44,13 +45,20 @@ case "${RUN_MODEL_VERSION}" in
     wan21)
         model_run_mode=--run-wan21-gfx1201
         summary_model=wan21
+        memory_phase_schema=wan
         ;;
     wan22)
         model_run_mode=--run-wan22-gfx1201
         summary_model=wan22
+        memory_phase_schema=wan
+        ;;
+    minimax_h3)
+        model_run_mode=--run-minimax-h3-gfx1201
+        summary_model=minimax_h3
+        memory_phase_schema=minimax_h3
         ;;
     *)
-        echo "ERROR: RUN_MODEL_VERSION must be wan21 or wan22" >&2
+        echo "ERROR: RUN_MODEL_VERSION must be wan21, wan22, or minimax_h3" >&2
         exit 2
         ;;
 esac
@@ -110,11 +118,15 @@ done
     echo "ERROR: image reference may not contain whitespace" >&2
     exit 2
 }
+if [[ "${RUN_MODEL_VERSION}" == minimax_h3 && -z "${image_override}" ]]; then
+    echo "ERROR: MiniMax-H3 timing requires --image with the rebuilt production image" >&2
+    exit 2
+fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 model_run="${MODEL_RUN:-${repo_root}/lightx2vModelrun}"
-summary_script="${WAN_TIMING_SUMMARY_SCRIPT:-${script_dir}/summarize_timings.py}"
+summary_script="${TIMING_SUMMARY_SCRIPT:-${WAN_TIMING_SUMMARY_SCRIPT:-${script_dir}/summarize_timings.py}}"
 memory_monitor_script="${MEMORY_MONITOR_SCRIPT:-${script_dir}/monitor_run_memory.py}"
 memory_monitor_enabled="${MEMORY_MONITOR:-1}"
 memory_monitor_interval="${MEMORY_MONITOR_INTERVAL:-2.0}"
@@ -123,9 +135,9 @@ memory_monitor_start_timeout="${MEMORY_MONITOR_START_TIMEOUT:-900}"
 memory_monitor_host_limit_gib="${MEMORY_MONITOR_HOST_LIMIT_GIB:-512}"
 memory_monitor_gpu_limit_gib="${MEMORY_MONITOR_GPU_LIMIT_GIB:-32}"
 memory_monitor_container="${MEMORY_MONITOR_CONTAINER:-${CONTAINER_NAME:-lightx2v-gfx1201}}"
-run_tag="${WAN_RUN_TAG:-${RUN_TASK_ID}_$(date +%Y%m%d_%H%M%S)}"
-result_dir="${WAN_RESULT_DIR:-${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}}"
-gpu_groups_value="${WAN_GPU_GROUPS:-${RUN_DEFAULT_GPU_GROUPS}}"
+run_tag="${TIMING_RUN_TAG:-${WAN_RUN_TAG:-${RUN_TASK_ID}_$(date +%Y%m%d_%H%M%S)}}"
+result_dir="${TIMING_RESULT_DIR:-${WAN_RESULT_DIR:-${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}}}"
+gpu_groups_value="${TIMING_GPU_GROUPS:-${WAN_GPU_GROUPS:-${RUN_DEFAULT_GPU_GROUPS}}}"
 
 [[ -x "${model_run}" ]] || { echo "ERROR: launcher is not executable: ${model_run}" >&2; exit 1; }
 [[ -f "${summary_script}" ]] || { echo "ERROR: timing summary not found: ${summary_script}" >&2; exit 1; }
@@ -151,7 +163,7 @@ mkdir -p "${result_dir}"
 IFS=',' read -r -a supported_counts <<<"${RUN_SUPPORTED_COUNTS}"
 IFS=';' read -r -a gpu_groups <<<"${gpu_groups_value}"
 if [[ "${#gpu_groups[@]}" -ne "${#supported_counts[@]}" ]]; then
-    echo "ERROR: WAN_GPU_GROUPS must provide ${#supported_counts[@]} groups for ${RUN_SUPPORTED_COUNTS}" >&2
+    echo "ERROR: timing GPU groups must provide ${#supported_counts[@]} groups for ${RUN_SUPPORTED_COUNTS}" >&2
     exit 2
 fi
 
@@ -227,7 +239,8 @@ start_memory_monitor() {
         --expected-ranks "${ranks}" \
         --gpu-indices "${gpu_indices}" \
         --host-limit-gib "${memory_monitor_host_limit_gib}" \
-        --gpu-limit-gib "${memory_monitor_gpu_limit_gib}" &
+        --gpu-limit-gib "${memory_monitor_gpu_limit_gib}" \
+        --phase-schema "${memory_phase_schema}" &
     memory_monitor_pid=$!
     echo "Memory monitor: ${memory_output} (sample=${memory_monitor_interval}s, terminal=${memory_monitor_print_interval}s + phase changes)"
 }
@@ -249,11 +262,12 @@ wait_memory_monitor() {
     fi
 }
 
-duration_seconds="$(( (RUN_TARGET_FRAMES - 1) / RUN_TARGET_FPS ))"
+duration_seconds="${RUN_DURATION_SECONDS:-$(( (RUN_TARGET_FRAMES - 1) / RUN_TARGET_FPS ))}"
 python3 - "${result_dir}/run_manifest.json" <<PY
 import json
 import pathlib
 
+gpu_counts = [${selected_counts//,/, }]
 payload = {
     "kind": "lightx2v_gfx1201_timing_sweep",
     "task_id": "${RUN_TASK_ID}",
@@ -264,7 +278,11 @@ payload = {
     "frames": ${RUN_TARGET_FRAMES},
     "fps": ${RUN_TARGET_FPS},
     "duration_seconds": ${duration_seconds},
-    "gpu_counts": [${selected_counts//,/, }],
+    "gpu_counts": gpu_counts,
+    "parallel_topologies": {
+        str(count): ("ring" if count == 16 else "ulysses")
+        for count in gpu_counts
+    } if "${RUN_MODEL_VERSION}" == "minimax_h3" else None,
     "video_pattern": "/workspace/LightX2V/save_results/${run_tag}/<count>gpu.mp4",
     "b1_policy": "2/4 baseline, 8/16 b1" if "${RUN_MODEL_VERSION}" == "wan22" else None,
 }
@@ -275,7 +293,7 @@ pathlib.Path("${result_dir}/run_manifest.json").write_text(
 PY
 
 echo "Task: ${RUN_TASK_LABEL}"
-echo "Workload: ${RUN_TARGET_HEIGHT}x${RUN_TARGET_WIDTH}, ${RUN_TARGET_FRAMES} frames @ ${RUN_TARGET_FPS} FPS (${duration_seconds}s)"
+echo "Workload: ${RUN_TARGET_WIDTH}x${RUN_TARGET_HEIGHT}, ${RUN_TARGET_FRAMES} frames @ ${RUN_TARGET_FPS} FPS (${duration_seconds}s)"
 echo "GPU counts: ${selected_counts}"
 echo "Results: ${result_dir}"
 if [[ "${memory_monitor_enabled}" == "1" ]]; then
@@ -285,6 +303,8 @@ else
 fi
 if [[ "${RUN_MODEL_VERSION}" == wan22 ]]; then
     echo "Wan2.2 B1 policy: auto (2/4=baseline, 8/16=b1; explicit override remains available)"
+elif [[ "${RUN_MODEL_VERSION}" == minimax_h3 ]]; then
+    echo "MiniMax-H3 topology: SP2/SP4/SP8=Ulysses, SP16=Ring"
 fi
 
 for count in "${counts[@]}"; do
@@ -305,6 +325,14 @@ for count in "${counts[@]}"; do
     )
     if [[ "${RUN_MODEL_VERSION}" == wan22 ]]; then
         run_environment+=(LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE="${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE:-auto}")
+    elif [[ "${RUN_MODEL_VERSION}" == minimax_h3 ]]; then
+        run_environment+=(
+            LIGHTX2V_H3_EXPLICIT_IMAGE=1
+            H3_FRAME_SOURCE="${H3_FRAME_SOURCE:-host}"
+            H3_FIRST_FRAME="${H3_FIRST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png}"
+            H3_LAST_FRAME="${H3_LAST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png}"
+            H3_PROMPT_PRESET="${H3_PROMPT_PRESET:-bird-stable}"
+        )
     fi
     start_memory_monitor "${count}" "${selected}" "${log_path}" "${memory_output_path}"
     set +e

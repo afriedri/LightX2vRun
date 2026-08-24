@@ -1,6 +1,6 @@
 # LightX2VRun — GFX1201 timing entries
 
-The active interface is intentionally limited to six numbered timing tasks.
+The active interface is intentionally limited to seven numbered timing tasks.
 Every task uses the same host sweep implementation, the same model-specific
 container entry, and the same rank-critical timing summarizer.
 
@@ -12,6 +12,7 @@ container entry, and the same rank-critical timing summarizer.
 | 05 | `scripts/run_05_wan22_480p_121f_24fps_scale.sh` | Wan2.2, 480P, 121f, 24 FPS | 2/4/8/16 |
 | 06 | `scripts/run_06_wan22_720p_81f_16fps_scale.sh` | Wan2.2, 720P, 81f, 16 FPS | 2/4/8/16 |
 | 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
+| 08 | `scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh` | MiniMax-H3, 1344x768, 124f, 24 FPS | 2/4/8/16 |
 
 MiniMax-H3 gfx1201 is a production entry. Its default FL2V first and last
 frames are read-only host inputs at
@@ -47,7 +48,7 @@ only static/runtime contracts during a normal inference start;
 Ulysses-to-Sage adapter.
 
 The final native Sage schedule selector lives only in Aiter revision
-`bec0d32c65b85caafc34bacc2607bfa22d4b684e`. LightX2V deliberately passes only
+`189d95fdd964c64b010e43aefeaf13779ccfd41e`. LightX2V deliberately passes only
 `{"backend":"sage_attn_v2_gfx1201"}` so Aiter can route from the actual BSHD:
 
 ```text
@@ -56,11 +57,21 @@ finite allowlist with a key tail    -> p8kv_res8_peel
 other D128 shapes                   -> pad8_kv
 ```
 
-The exact H3 SP2 shape `[1,42196,28,128]` is currently allowlisted. SP4, SP8,
-and Ring16 remain per-shape tuning work; the launcher must not select schedules
-from a model name or infer unmeasured head counts. H3 production launch accepts
-pure Ulysses SP8 while retaining the safe generic Sage fallback until an exact
-SP8 shape is measured and separately tuned.
+The exact H3 Ulysses shapes `[1,42196,28,128]`, `[1,42196,14,128]`, and
+`[1,42196,7,128]` are allowlisted for SP2/SP4/SP8. Ring16 retains all 56 heads;
+its square `[1,2483,56,128]` and `[1,4951,56,128]` calls are allowlisted, while
+the rectangular auxiliary remains on its explicit safe route.
+
+Run the production 2/4/8/16-card timing sweep and write the same CSV/Markdown
+table used by Wan2.2:
+
+```bash
+bash scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh \
+  --image IMAGE
+```
+
+SP2/SP4/SP8 use Ulysses and SP16 uses Ring. The workload is frozen at
+1344x768, 124 frames, 24 FPS, and approximately 5.17 seconds.
 
 Runtime status uses one stable LightX2V format:
 
@@ -203,14 +214,14 @@ bash scripts/run_07_wan22_720p_121f_24fps_scale.sh --counts 2,8
 ```
 
 Numbered tasks intentionally ignore an inherited `IMAGE` environment variable
-so a stale shell export cannot replace the production Fix1 default. Use the
-explicit `--image IMAGE` option when an alternate image is intentional.
+so a stale shell export cannot replace the intended image. Wan entries retain
+their production default; MiniMax-H3 requires an explicit `--image IMAGE`.
 
 The default physical groups use the first N GPUs. Override all groups in the
 task's supported-count order when the allocation is different:
 
 ```bash
-WAN_GPU_GROUPS='14,15;12,13,14,15;8,9,10,11,12,13,14,15;0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15' \
+TIMING_GPU_GROUPS='14,15;12,13,14,15;8,9,10,11,12,13,14,15;0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15' \
   bash scripts/run_07_wan22_720p_121f_24fps_scale.sh
 ```
 
@@ -806,7 +817,7 @@ and kernels.
 The BF16-attention 16-GPU Ring path requires an image built from the LightX2V
 ROCm branch with Aiter Triton `apply_with_lse()` support. The opt-in
 `--infer-sage-fp8` path additionally requires Aiter revision
-`bec0d32c65b85caafc34bacc2607bfa22d4b684e`, whose native gfx1201
+`189d95fdd964c64b010e43aefeaf13779ccfd41e`, whose native gfx1201
 SageAttention2 retains the corrected natural-log LSE/T1 contract and adds the
 finite D128 schedule dispatch plus static key-tail peeling, and LightX2V revision
 `b157de187316fef56c0c2f84c29785e1c995bbb7`, where the ROCm adapter exposes

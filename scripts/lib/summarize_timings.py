@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print and persist rank-critical Wan timing tables from LightX2V logs."""
+"""Print and persist rank-critical timing tables from LightX2V logs."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ METRICS = (
 SCALES = {
     "wan21": (1, 2, 4, 8, 16),
     "wan22": (2, 4, 8, 16),
+    "minimax_h3": (2, 4, 8, 16),
 }
 PROFILE_RE = re.compile(
     r"\[Profile\]\s+(?:Rank (?P<rank>\d+)|(?P<single>Single GPU))\s+-\s+"
@@ -133,7 +134,7 @@ def parse_log(path: Path, *, model: str) -> dict[str, float | None]:
     }
     values["Encoders 合计"] = encoder_total(profiles, values)
     if (
-        model == "wan22"
+        model in ("wan22", "minimax_h3")
         and values["Encoders 合计"] is None
         and values["VAE Encoder"] is not None
         and values["Text Encoder"] is not None
@@ -145,7 +146,7 @@ def parse_log(path: Path, *, model: str) -> dict[str, float | None]:
 
 def format_value(metric: str, value: float | None, *, model: str, csv_mode=False) -> str:
     if value is None:
-        if model == "wan22" and metric == "Image Encoder":
+        if model in ("wan22", "minimax_h3") and metric == "Image Encoder":
             return "N/A"
         return "" if csv_mode else "—"
     return f"{value:.6f}" if csv_mode else f"{value:.3f}s"
@@ -184,15 +185,19 @@ def markdown_table(scales, results, *, model: str) -> str:
             for scale in scales
         ]
         lines.append(f"| {metric} | " + " | ".join(cells) + " |")
-    lines.extend(
-        (
-            "",
+    lines.append("")
+    if model == "minimax_h3":
+        lines.append(
+            "> **MiniMax-H3 口径：**1344x768、124 帧、24 FPS；2/4/8 卡使用 "
+            "Ulysses，16 卡使用 Ring。跨 rank 指标取关键路径上的最慢 rank。"
+        )
+    else:
+        lines.append(
             "> **Total Cost 口径：**LightX2V 内部从 `init_runner(config)` 调用前，"
             "到 `runner.run_pipeline(input_info)` 返回后。Baseline 与 B1 使用完全"
             "相同的起止边界；B1 可能把 eager 初始化工作延迟到 `RUN pipeline` 内，"
-            "因此 RUN 上升而 Total 下降并不表示漏计。",
+            "因此 RUN 上升而 Total 下降并不表示漏计。"
         )
-    )
     return "\n".join(lines) + "\n"
 
 
@@ -209,7 +214,11 @@ def main() -> int:
 
     results = {scale: {} for scale in scales}
     errors = []
-    disabled_metrics = {"Image Encoder"} if args.model == "wan22" else set()
+    disabled_metrics = (
+        {"Image Encoder"}
+        if args.model in ("wan22", "minimax_h3")
+        else set()
+    )
     for scale in args.counts:
         log_path = args.log_dir / f"{scale}gpu.log"
         if not log_path.is_file():
@@ -232,10 +241,18 @@ def main() -> int:
     print(table, end="")
     if args.model == "wan22":
         print("Image Encoder: N/A (Wan2.2 use_image_encoder=false)")
-    print(
-        "Total Cost: LightX2V internal init_runner + run_pipeline; "
-        "identical boundary for Baseline and B1"
-    )
+    elif args.model == "minimax_h3":
+        print("Image Encoder: N/A (MiniMax-H3 keyframes are encoded by the VAE path)")
+    if args.model == "minimax_h3":
+        print(
+            "Total Cost: LightX2V internal init_runner + run_pipeline; "
+            "identical boundary for Ulysses and Ring"
+        )
+    else:
+        print(
+            "Total Cost: LightX2V internal init_runner + run_pipeline; "
+            "identical boundary for Baseline and B1"
+        )
     print(f"CSV: {output_csv}")
     print(f"Table: {output_md}")
     if errors:

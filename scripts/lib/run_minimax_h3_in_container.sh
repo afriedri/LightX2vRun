@@ -80,13 +80,28 @@ fi
 smoke_flag=()
 kernel_smoke_flag=()
 runcollector_schema_flag=()
-target_height=768
-target_width=1344
+target_height="${TARGET_HEIGHT:-768}"
+target_width="${TARGET_WIDTH:-1344}"
+target_video_length="${TARGET_VIDEO_LENGTH:-124}"
+target_fps="${TARGET_FPS:-24}"
 prompt_duration_seconds=5.17
+for target_value in "${target_height}" "${target_width}" "${target_video_length}" "${target_fps}"; do
+    [[ "${target_value}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "ERROR: MiniMax-H3 target dimensions, frames, and FPS must be positive integers" >&2
+        exit 1
+    }
+done
+if [[ "${target_video_length}" != 124 || "${target_fps}" != 24 ]]; then
+    echo "ERROR: MiniMax-H3 production timing is frozen at 124 frames and 24 FPS" >&2
+    exit 1
+fi
 if [[ "${H3_SMOKE:-0}" == 1 ]]; then
     smoke_flag+=(--smoke)
     target_height=480
     target_width=480
+elif [[ "${target_height}" != 768 || "${target_width}" != 1344 ]]; then
+    echo "ERROR: MiniMax-H3 production timing is frozen at 1344x768" >&2
+    exit 1
 fi
 if [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 ]]; then
     kernel_smoke_flag+=(--kernel-smoke)
@@ -134,6 +149,7 @@ prompt="${MINIMAX_H3_PROMPT}"
 save_result_path="${SAVE_RESULT_PATH:-${lightx2v_path}/save_results/minimax_h3_fl2av.mp4}"
 
 echo "MiniMax-H3 FL2V gfx1201"
+echo "Workload: ${target_width}x${target_height}, ${target_video_length} frames @ ${target_fps} FPS (${prompt_duration_seconds}s)"
 echo "GPUs: ${visible_devices} (world_size=${gpu_count})"
 parallel_mode="single GPU"
 if (( gpu_count > 1 )); then

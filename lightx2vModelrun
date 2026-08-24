@@ -47,13 +47,14 @@ Usage:
                                             (H3 launcher only; TP stays disabled)
   ./lightx2vModelrun COMMAND [ARG...]        Run a command in the container
 
-Ordinary timing runs should use the six numbered scripts:
+Ordinary timing runs should use the seven numbered scripts:
   scripts/run_01_wan21_720p_81f_16fps_1gpu.sh
   scripts/run_02_wan21_720p_81f_16fps_scale.sh
   scripts/run_04_wan22_480p_81f_16fps_scale.sh
   scripts/run_05_wan22_480p_121f_24fps_scale.sh
   scripts/run_06_wan22_720p_81f_16fps_scale.sh
   scripts/run_07_wan22_720p_121f_24fps_scale.sh
+  scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh --image IMAGE
 
 Important overrides:
   GPU_DEVICES, IMAGE, MODEL_STORE, OUTPUT_DIR, INPUT_DIR, CACHE_DIR
@@ -192,7 +193,7 @@ case "${1:-}" in
     --infer-lora-fp8 | --infer-bf16 | --runtune-wan21 | --runtune-wan21-vae | \
         --runtune-wan21-ck-conv3d-v1 | --profile-wan21-ckconv3d-v1 | \
         --profile-wan22-ckconv3d-v1)
-        die "this legacy mode was retired; use one of scripts/run_01_*.sh, run_02_*.sh, or run_04_*.sh through run_07_*.sh"
+        die "this legacy mode was retired; use one of scripts/run_01_*.sh, run_02_*.sh, or run_04_*.sh through run_08_*.sh"
         ;;
 esac
 
