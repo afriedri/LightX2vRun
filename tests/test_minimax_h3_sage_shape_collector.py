@@ -42,7 +42,7 @@ def hybrid_sage_log(local_query_sequence: int = 21098) -> str:
             "backend=aiter_fav3_sage_bf16_attn "
             f"rank={rank}/16 causal=false kernel=sage_attention2 "
             "layout=BSHD numerics=int8_qk_fp8_pv return_lse=true "
-            "route=sage_attn_v2_gfx1201_ring_hybrid "
+            "route=sage_attn_v2_gfx1201_blockwise_aux_split "
             f"shape=[1,{local_query_sequence},7,128]"
         )
     return "\n".join(lines) + "\n"

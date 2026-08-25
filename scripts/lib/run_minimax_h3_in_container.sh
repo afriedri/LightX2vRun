@@ -228,7 +228,7 @@ echo "Parallel: ${parallel_mode}"
 echo "H1 PatchEmbed API: torch F.linear (ATen operator: addmm; measured device backend: hipBLASLt)"
 echo "H1/Refiner MHA: aiter_triton_mha"
 if (( gpu_count == 16 )); then
-    echo "Core Attention: aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201_ulysses_ring_2d)"
+    echo "Core Attention: aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201_cp2_u8_2d)"
 else
     echo "Core Attention: aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201)"
 fi

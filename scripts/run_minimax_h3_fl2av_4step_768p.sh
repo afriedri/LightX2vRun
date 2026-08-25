@@ -360,7 +360,7 @@ payload = {
         },
         "h3_core_attention": {
             "name": "aiter_fav3_sage_bf16_attn",
-            "route": "sage_attn_v2_gfx1201_ulysses_ring_2d" if len(gpus) == 16 else "sage_attn_v2_gfx1201",
+            "route": "sage_attn_v2_gfx1201_cp2_u8_2d" if len(gpus) == 16 else "sage_attn_v2_gfx1201",
             "numerics": "int8_qk_fp8_pv",
         },
         "h3_refiner_attention": "aiter_triton_mha",

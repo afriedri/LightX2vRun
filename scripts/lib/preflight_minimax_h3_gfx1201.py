@@ -483,7 +483,7 @@ def smoke_distributed_attention() -> int:
                         "backend": attention_kind,
                         "attention": "aiter_fav3_sage_bf16_attn",
                         "attention_route": (
-                            "sage_attn_v2_gfx1201_ulysses_ring_2d"
+                            "sage_attn_v2_gfx1201_cp2_u8_2d"
                             if attention_kind == "ulysses_ring"
                             else "sage_attn_v2_gfx1201"
                         ),

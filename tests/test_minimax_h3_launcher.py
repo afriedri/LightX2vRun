@@ -289,7 +289,7 @@ def test_h3_dry_run_accepts_sixteen_gpu_cp2_ulysses8_without_tp(tmp_path):
         "ulysses_p_size": 8,
         "vae_decode_parallel": True,
     }
-    assert manifest["backends"]["h3_core_attention"]["route"] == "sage_attn_v2_gfx1201_ulysses_ring_2d"
+    assert manifest["backends"]["h3_core_attention"]["route"] == "sage_attn_v2_gfx1201_cp2_u8_2d"
     assert manifest["memory_policy"]["text_encoder_rank0_only"] is True
 
 

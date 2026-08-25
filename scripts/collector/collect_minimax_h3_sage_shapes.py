@@ -22,7 +22,7 @@ SCHEMA_NAME = "lightx2v.minimax_h3.sage_shape_sweep"
 SCHEMA_VERSION = 2
 EXPECTED_BACKEND = "aiter_fav3_sage_bf16_attn"
 ULYSSES_ROUTE = "sage_attn_v2_gfx1201"
-RING_ROUTE = "sage_attn_v2_gfx1201_ring_hybrid"
+BLOCKWISE_AUX_SPLIT_ROUTE = "sage_attn_v2_gfx1201_blockwise_aux_split"
 EXPECTED_COMPONENTS = ("dit.core.attention", "attention.sage")
 EXPECTED_KERNEL = "sage_attention2"
 EXPECTED_LAYOUT = "BSHD"
@@ -92,7 +92,11 @@ def collect_log(log_path: Path, expected_world_size: int) -> dict:
         )
 
     topology = topology_for(expected_world_size)
-    expected_route = RING_ROUTE if topology == "ulysses_ring_2d" else ULYSSES_ROUTE
+    expected_route = (
+        BLOCKWISE_AUX_SPLIT_ROUTE
+        if topology == "ulysses_ring_2d"
+        else ULYSSES_ROUTE
+    )
     by_rank: dict[int, dict] = {}
     for event in events:
         rank, world_size = parse_rank(event.get("rank"))
