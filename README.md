@@ -268,8 +268,13 @@ Numbered tasks intentionally ignore an inherited `IMAGE` environment variable
 so a stale shell export cannot replace the intended image. Wan entries retain
 their production default; MiniMax-H3 requires an explicit `--image IMAGE`.
 
-The default physical groups use the first N GPUs. Override all groups in the
-task's supported-count order when the allocation is different:
+Default physical groups are task-specific. All numbered scale tasks preserve
+the original Wan timing thermal rotation: `1,2` for SP2,
+`15,14,13,12` for SP4, `0..7` for SP8, then `0..15` for SP16. Wan2.1 task 02
+uses GPU `0` for its single-card arm. This lets the previously active partial
+group cool during the next arm instead of continuously heating GPUs 0 and 1.
+The selected groups are recorded in `run_manifest.json`. Override all groups
+in the task's supported-count order when the allocation is different:
 
 ```bash
 TIMING_GPU_GROUPS='14,15;12,13,14,15;8,9,10,11,12,13,14,15;0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15' \

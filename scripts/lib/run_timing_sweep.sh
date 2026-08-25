@@ -268,6 +268,11 @@ import json
 import pathlib
 
 gpu_counts = [${selected_counts//,/, }]
+supported_counts = [${RUN_SUPPORTED_COUNTS//,/, }]
+gpu_groups = "${gpu_groups_value}".split(";")
+gpu_group_by_count = {
+    str(count): group for count, group in zip(supported_counts, gpu_groups)
+}
 payload = {
     "kind": "lightx2v_gfx1201_timing_sweep",
     "task_id": "${RUN_TASK_ID}",
@@ -279,6 +284,9 @@ payload = {
     "fps": ${RUN_TARGET_FPS},
     "duration_seconds": ${duration_seconds},
     "gpu_counts": gpu_counts,
+    "gpu_groups": {
+        str(count): gpu_group_by_count[str(count)] for count in gpu_counts
+    },
     "parallel_topologies": {
         str(count): ("ulysses_ring_2d" if count == 16 else "ulysses")
         for count in gpu_counts

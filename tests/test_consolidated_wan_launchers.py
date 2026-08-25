@@ -29,6 +29,21 @@ TASKS = {
     "run_08_minimax_h3_768p_124f_24fps_scale.sh": ("minimax_h3", 768, 1344, 124, 24, [2, 4, 8, 16]),
 }
 
+THERMAL_GPU_GROUPS = {
+    "2": "1,2",
+    "4": "15,14,13,12",
+    "8": "0,1,2,3,4,5,6,7",
+    "16": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15",
+}
+
+DEFAULT_GPU_GROUPS = {
+    "run_02_wan21_720p_81f_16fps_scale.sh": {"1": "0", **THERMAL_GPU_GROUPS},
+    "run_04_wan22_480p_81f_16fps_scale.sh": THERMAL_GPU_GROUPS,
+    "run_05_wan22_480p_121f_24fps_scale.sh": THERMAL_GPU_GROUPS,
+    "run_06_wan22_720p_81f_16fps_scale.sh": THERMAL_GPU_GROUPS,
+    "run_07_wan22_720p_121f_24fps_scale.sh": THERMAL_GPU_GROUPS,
+}
+
 
 class ConsolidatedTimingLauncherTest(unittest.TestCase):
     def test_numbered_entries_have_exact_workloads(self):
@@ -73,6 +88,15 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
                     self.assertEqual(manifest["frames"], frames)
                     self.assertEqual(manifest["fps"], fps)
                     self.assertEqual(manifest["gpu_counts"], [counts[0]])
+                    expected_group = "0"
+                    if name in DEFAULT_GPU_GROUPS:
+                        expected_group = DEFAULT_GPU_GROUPS[name][str(counts[0])]
+                    elif name == "run_08_minimax_h3_768p_124f_24fps_scale.sh":
+                        expected_group = THERMAL_GPU_GROUPS[str(counts[0])]
+                    self.assertEqual(
+                        manifest["gpu_groups"],
+                        {str(counts[0]): expected_group},
+                    )
                     self.assertIn(
                         f"scripts/lib/run_{model}_in_container.sh",
                         completed.stdout,
@@ -91,6 +115,39 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
                             completed.stdout,
                         )
                         self.assertIn("--env TARGET_VIDEO_LENGTH=124", completed.stdout)
+
+    def test_wan_default_sweeps_preserve_thermal_gpu_rotation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, expected_groups in DEFAULT_GPU_GROUPS.items():
+                with self.subTest(entry=name):
+                    result_dir = root / name.removesuffix(".sh")
+                    completed = subprocess.run(
+                        ["bash", str(SCRIPTS / name)],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        env={
+                            **os.environ,
+                            "DRY_RUN": "1",
+                            "WAN_RESULT_DIR": str(result_dir),
+                            "RUN_REPO_DIR": str(REPO_ROOT),
+                        },
+                    )
+                    self.assertEqual(
+                        completed.returncode,
+                        0,
+                        completed.stdout + completed.stderr,
+                    )
+                    manifest = json.loads(
+                        (result_dir / "run_manifest.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(manifest["gpu_groups"], expected_groups)
+                    for count, group in expected_groups.items():
+                        self.assertIn(
+                            f"{manifest['model']}: {count} GPUs ({group})",
+                            completed.stdout,
+                        )
 
     def test_minimax_h3_timing_requires_an_explicit_image(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -141,11 +198,25 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
             )
             self.assertEqual(manifest["gpu_counts"], [2, 4, 8, 16])
             self.assertEqual(
+                manifest["gpu_groups"],
+                {
+                    "2": "1,2",
+                    "4": "15,14,13,12",
+                    "8": "0,1,2,3,4,5,6,7",
+                    "16": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15",
+                },
+            )
+            self.assertEqual(
                 manifest["parallel_topologies"],
                 {"2": "ulysses", "4": "ulysses", "8": "ulysses", "16": "ulysses_ring_2d"},
             )
             for count in (2, 4, 8, 16):
                 self.assertTrue((result_dir / f"{count}gpu.log").is_file())
+            for count, group in manifest["gpu_groups"].items():
+                self.assertIn(
+                    f"minimax_h3: {count} GPUs ({group})",
+                    completed.stdout,
+                )
 
     def wan22_config(self, count: int, schedule: str = "auto") -> tuple[dict, str]:
         devices = ",".join(str(index) for index in range(count))
