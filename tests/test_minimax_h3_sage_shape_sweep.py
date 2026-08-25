@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ENTRY = REPO_ROOT / "scripts/run_minimax_h3_sage_shape_sweep.sh"
+ENTRY = REPO_ROOT / "scripts/collector/run_minimax_h3_sage_shape_sweep.sh"
 
 
 def run_dry(tmp_path: Path, *extra: str) -> tuple[subprocess.CompletedProcess[str], Path]:

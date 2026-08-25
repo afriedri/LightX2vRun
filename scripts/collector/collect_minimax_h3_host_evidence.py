@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture read-only host evidence for a MiniMax-H3 SuperCollect run."""
+"""Capture read-only host evidence for MiniMax-H3 collector runs."""
 
 from __future__ import annotations
 
@@ -10,10 +10,15 @@ import platform
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+LIB_DIR = Path(__file__).resolve().parents[1] / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
 
 from monitor_run_memory import (
     parse_gpu_indices,
@@ -29,6 +34,8 @@ from monitor_run_memory import (
 
 SCHEMA_NAME = "lightx2v.minimax_h3.sp8_supercollect.host"
 SCHEMA_VERSION = 1
+MEGA_SCHEMA_NAME = "lightx2v.minimax_h3.megadiscovery.host"
+MEGA_SCHEMA_VERSION = 1
 
 
 def read_text(path: Path) -> str | None:
@@ -144,13 +151,74 @@ def snapshot_numa_nodes() -> dict[str, Any]:
     return result
 
 
+def parse_properties(path: Path) -> dict[str, int | str]:
+    result: dict[str, int | str] = {}
+    text = read_text(path)
+    if not text:
+        return result
+    for line in text.splitlines():
+        key, separator, value = line.strip().partition(" ")
+        if not separator:
+            continue
+        value = value.strip()
+        try:
+            result[key] = int(value, 0)
+        except ValueError:
+            result[key] = value
+    return result
+
+
+def snapshot_kfd_topology() -> dict[str, Any]:
+    root = Path("/sys/class/kfd/kfd/topology/nodes")
+    nodes = []
+    for node in sorted(root.glob("[0-9]*"), key=lambda item: int(item.name)):
+        io_links = []
+        for link in sorted((node / "io_links").glob("[0-9]*"), key=lambda item: int(item.name)):
+            io_links.append(
+                {
+                    "index": int(link.name),
+                    "properties": parse_properties(link / "properties"),
+                }
+            )
+        memory_banks = []
+        for bank in sorted((node / "mem_banks").glob("[0-9]*"), key=lambda item: int(item.name)):
+            memory_banks.append(
+                {
+                    "index": int(bank.name),
+                    "properties": parse_properties(bank / "properties"),
+                }
+            )
+        nodes.append(
+            {
+                "node_id": int(node.name),
+                "gpu_id": read_optional_int(node / "gpu_id"),
+                "name": read_optional_text(node / "name"),
+                "properties": parse_properties(node / "properties"),
+                "io_links": io_links,
+                "memory_banks": memory_banks,
+            }
+        )
+    return {"available": root.is_dir(), "nodes": nodes}
+
+
+def symlink_target(path: Path) -> str | None:
+    try:
+        return str(path.resolve(strict=True))
+    except (FileNotFoundError, PermissionError, OSError):
+        return None
+
+
 def enrich_gpu(gpu: dict[str, Any]) -> dict[str, Any]:
     item = dict(gpu)
     pci_address = item.get("pci_address")
     if not pci_address:
         return item
     device = Path("/sys/bus/pci/devices") / str(pci_address)
+    iommu_group = symlink_target(device / "iommu_group")
     item["pci"] = {
+        "sysfs_path": symlink_target(device),
+        "driver": symlink_target(device / "driver"),
+        "iommu_group": int(Path(iommu_group).name) if iommu_group and Path(iommu_group).name.isdigit() else None,
         "numa_node": read_optional_int(device / "numa_node"),
         "local_cpulist": read_optional_text(device / "local_cpulist"),
         "current_link_speed": read_optional_text(device / "current_link_speed"),
@@ -193,31 +261,52 @@ def build_snapshot(args: argparse.Namespace) -> dict[str, Any]:
     selected = set(args.gpu_indices)
     all_gpus = sample_gpus()
     selected_gpus = [enrich_gpu(gpu) for gpu in all_gpus if gpu["rocm_index"] in selected]
+    selected_by_index = {gpu["rocm_index"]: gpu for gpu in selected_gpus}
+    rank_mapping = []
+    for local_rank, rocm_index in enumerate(args.gpu_indices):
+        gpu = selected_by_index.get(rocm_index) or {}
+        pci = gpu.get("pci") or {}
+        sysfs_path = pci.get("sysfs_path")
+        rank_mapping.append(
+            {
+                "local_rank": local_rank,
+                "rocm_index": rocm_index,
+                "pci_address": gpu.get("pci_address"),
+                "pci_upstream": Path(sysfs_path).parent.name if sysfs_path else None,
+                "numa_node": pci.get("numa_node", gpu.get("numa_node")),
+                "iommu_group": pci.get("iommu_group"),
+            }
+        )
     observed = {gpu["rocm_index"] for gpu in selected_gpus}
+    mega = args.profile == "megadiscovery"
+    workload_contract = {
+        "model": "minimax_h3",
+        "parallel": "ring_sp16" if len(args.gpu_indices) == 16 else "ulysses_sp8",
+        "width": 1344,
+        "height": 768,
+        "frames": 124,
+        "fps": 24,
+        "dit_dtype": "BF16",
+        "dit_quant_scheme": "Default",
+        "lazy_load": True,
+        "cpu_block_buffers": 2,
+        "gpu_block_buffers": 2,
+    }
     return {
-        "schema_name": SCHEMA_NAME,
-        "schema_version": SCHEMA_VERSION,
+        "schema_name": MEGA_SCHEMA_NAME if mega else SCHEMA_NAME,
+        "schema_version": MEGA_SCHEMA_VERSION if mega else SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "profile": args.profile,
         "phase": args.phase,
         "read_only": True,
-        "workload_contract": {
-            "model": "minimax_h3",
-            "parallel": "ulysses_sp8",
-            "width": 1344,
-            "height": 768,
-            "frames": 124,
-            "fps": 24,
-            "dit_dtype": "BF16",
-            "dit_quant_scheme": "Default",
-            "lazy_load": True,
-            "cpu_block_buffers": 2,
-            "gpu_block_buffers": 2,
-        },
+        "workload_contract": workload_contract,
         "host": {
             "hostname": socket.gethostname(),
             "kernel": platform.release(),
             "platform": platform.platform(),
             "boot_id": read_text(Path("/proc/sys/kernel/random/boot_id")),
+            "kernel_cmdline": read_text(Path("/proc/cmdline")),
+            "numa_balancing": read_optional_int(Path("/proc/sys/kernel/numa_balancing")),
             "process_affinity": sorted(os.sched_getaffinity(0)),
             "memory": sample_host_memory(),
             "vmstat": sample_vmstat(),
@@ -225,11 +314,19 @@ def build_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             "diskstats": sample_diskstats(),
             "numa_nodes": snapshot_numa_nodes(),
             "block_devices": snapshot_block_devices(),
+            "kfd_topology": snapshot_kfd_topology(),
+            "topology_probes": {
+                "lspci_tree": run_command(["lspci", "-tv"]),
+                "rocm_smi": run_command(["rocm-smi", "--showtopo"]),
+                "amd_smi": run_command(["amd-smi", "topology"]),
+                "numactl": run_command(["numactl", "--hardware"]),
+            },
         },
         "gpus": {
             "requested_rocm_indices": list(args.gpu_indices),
             "observed_rocm_indices": sorted(observed),
             "missing_rocm_indices": sorted(selected - observed),
+            "local_rank_mapping": rank_mapping,
             "devices": selected_gpus,
         },
         "paths": snapshot_paths(args.path),
@@ -242,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--phase", choices=("before", "after"), required=True)
+    parser.add_argument("--profile", choices=("supercollect", "megadiscovery"), default="supercollect")
     parser.add_argument("--gpu-indices", type=parse_gpu_indices, required=True)
     parser.add_argument("--image", required=True)
     parser.add_argument("--run-root", type=Path, required=True)
@@ -251,10 +349,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    if len(args.gpu_indices) != 8:
+    if args.profile == "supercollect" and len(args.gpu_indices) != 8:
         raise SystemExit("SP8 SuperCollect requires exactly eight GPU indices")
+    if args.profile == "megadiscovery" and len(args.gpu_indices) not in (8, 16):
+        raise SystemExit("MegaDiscovery requires exactly eight or sixteen GPU indices")
     write_atomic(args.output, build_snapshot(args))
-    print(f"MiniMax-H3 SP8 SuperCollect host snapshot: {args.output}")
+    label = "MegaDiscovery" if args.profile == "megadiscovery" else "SP8 SuperCollect"
+    print(f"MiniMax-H3 {label} host snapshot: {args.output}")
     return 0
 
 

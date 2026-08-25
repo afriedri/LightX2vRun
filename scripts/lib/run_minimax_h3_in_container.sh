@@ -140,6 +140,30 @@ if [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 || "${CONFIG_ONLY:-0}" == 1 ]]; then
     exit 0
 fi
 
+case "${H3_MEGADISCOVERY:-0}" in
+    0 | 1) ;;
+    *) echo "ERROR: H3_MEGADISCOVERY must be 0 or 1" >&2; exit 1 ;;
+esac
+if [[ "${H3_MEGADISCOVERY:-0}" == 1 ]]; then
+    case "${gpu_count}" in
+        8 | 16) ;;
+        *) echo "ERROR: MegaDiscovery requires exactly 8 or 16 GPUs" >&2; exit 1 ;;
+    esac
+    [[ -n "${evidence_dir}" ]] || {
+        echo "ERROR: MegaDiscovery requires H3_EVIDENCE_DIR" >&2
+        exit 1
+    }
+    collective_benchmark="${run_root}/scripts/collector/benchmark_minimax_h3_collectives.py"
+    [[ -f "${collective_benchmark}" ]] || {
+        echo "ERROR: MegaDiscovery collective benchmark not found: ${collective_benchmark}" >&2
+        exit 1
+    }
+    echo "MegaDiscovery: measuring exact-shape collective transport in an isolated torchrun"
+    torchrun --standalone --nproc_per_node="${gpu_count}" \
+        "${collective_benchmark}" \
+        --output "${evidence_dir}/megadiscovery_collectives.json"
+fi
+
 resolve_minimax_h3_prompt \
     "${run_root}" \
     "${H3_PROMPT_PRESET:-bird-stable}" \

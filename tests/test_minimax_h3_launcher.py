@@ -8,7 +8,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY = REPO_ROOT / "scripts/run_minimax_h3_fl2av_4step_768p.sh"
-SUPERCOLLECT_ENTRY = REPO_ROOT / "scripts/run_minimax_h3_sp8_supercollect.sh"
+SUPERCOLLECT_ENTRY = REPO_ROOT / "scripts/collector/run_minimax_h3_sp8_supercollect.sh"
+MEGADISCOVERY_ENTRY = REPO_ROOT / "scripts/collector/run_minimax_h3_megadiscovery.sh"
 DEFAULT_MODEL_DIR = "/disk/ssd1/difumodels/MiniMax-h3"
 DEFAULT_TURBO_DIR = "/disk/ssd/difumodels-Dis/Minimax-h3-Turbo"
 DEFAULT_FIRST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png"
@@ -381,6 +382,94 @@ def test_sp8_supercollect_rejects_non_sp8_or_smoke(tmp_path):
     smoke = subprocess.run(common + ["--smoke"], capture_output=True, text=True, check=False)
     assert four.returncode == 2
     assert "exactly eight" in four.stderr
+    assert smoke.returncode == 2
+    assert "full production workload" in smoke.stderr
+
+
+def test_ring16_megadiscovery_is_observer_only_and_freezes_production_contract(tmp_path):
+    result_dir = tmp_path / "megadiscovery"
+    gpu_ids = ",".join(str(index) for index in range(16))
+    completed = subprocess.run(
+        [
+            "bash",
+            str(MEGADISCOVERY_ENTRY),
+            "--image",
+            "example.invalid/minimax-h3:production",
+            "--model-dir",
+            str(tmp_path / "MiniMax-H3"),
+            "--turbo-dir",
+            str(tmp_path / "Minimax-h3-Turbo"),
+            "--first-frame",
+            str(tmp_path / "first.png"),
+            "--last-frame",
+            str(tmp_path / "last.png"),
+            "--result-dir",
+            str(result_dir),
+            "--gpus",
+            gpu_ids,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "DRY_RUN": "1",
+            "RUN_REPO_DIR": str(REPO_ROOT),
+            "MODEL_RUN": str(REPO_ROOT / "lightx2vModelrun"),
+            "H3_MODEL_DIR": "",
+            "H3_TURBO_DIR": "",
+            "GPU_DEVICES": "",
+            "H3_PROMPT_FILE": "",
+            "H3_PROMPT_PRESET": "",
+            "PROMPT": "",
+            "NCCL_DEBUG": "",
+            "NCCL_DEBUG_SUBSYS": "",
+            "NCCL_DEBUG_FILE": "",
+        },
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "MegaDiscovery: enabled for 16 GPUs (observer-only; production contract unchanged)" in completed.stdout
+    assert "--env H3_MEGADISCOVERY=1" in completed.stdout
+    assert "--env LIGHTX2V_H3_RUN_COLLECTOR=1" in completed.stdout
+    assert "--env NCCL_DEBUG=INFO" in completed.stdout
+    assert "NCCL_DEBUG_FILE=/workspace/LightX2V/save_results/rccl.%h.%p.log" in completed.stdout
+    manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["gpus"] == list(range(16))
+    assert manifest["parallel"]["seq_p_attn_type"] == "ring"
+    assert manifest["memory_policy"]["cpu_block_buffers"] == 2
+    assert manifest["memory_policy"]["gpu_block_buffers"] == 2
+    assert manifest["runcollector"]["enabled"] is True
+    assert manifest["megadiscovery"] == {
+        "collective_benchmark": "megadiscovery_collectives.json",
+        "enabled": True,
+        "host_snapshots": ["megadiscovery_host_before.json", "megadiscovery_host_after.json"],
+        "memory_monitor_interval_seconds": 0.5,
+        "observer_only": True,
+        "production_collective_contract": {
+            "a2a_backend": "torch",
+            "communication_quantization": None,
+            "prepost_backend": "torch",
+            "tensor_fusion": False,
+            "topology": "ring_sp16",
+        },
+        "production_contract_changed": False,
+        "profile": "ring16_full_stack_v1",
+        "rccl_debug_pattern": "rccl.*.log",
+        "rccl_environment": {
+            "NCCL_DEBUG": "INFO",
+            "NCCL_DEBUG_FILE": "/workspace/LightX2V/save_results/rccl.%h.%p.log",
+            "NCCL_DEBUG_SUBSYS": "INIT,ENV,GRAPH,TUNING,P2P,SHM,NET,COLL",
+        },
+        "reports": ["megadiscovery.json", "megadiscovery.md"],
+    }
+
+
+def test_megadiscovery_rejects_non_sp8_ring16_or_smoke(tmp_path):
+    common = ["bash", str(MEGADISCOVERY_ENTRY), "--image", "image", "--result-dir", str(tmp_path / "result")]
+    four = subprocess.run(common + ["--gpus", "0,1,2,3"], capture_output=True, text=True, check=False)
+    smoke = subprocess.run(common + ["--smoke"], capture_output=True, text=True, check=False)
+    assert four.returncode == 2
+    assert "exactly eight or sixteen" in four.stderr
     assert smoke.returncode == 2
     assert "full production workload" in smoke.stderr
 

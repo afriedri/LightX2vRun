@@ -47,6 +47,7 @@ Environment:
   LIGHTX2V_H3_RUN_COLLECTOR
                          Prefer --collect; direct environment use accepts 0/1
   H3_SUPERCOLLECT        1 enables the read-only SP8 SuperCollect evidence set
+  H3_MEGADISCOVERY       1 enables SP8/Ring16 full-stack discovery evidence
 EOF
 }
 
@@ -64,6 +65,7 @@ smoke=0
 preflight_only=0
 collect="${LIGHTX2V_H3_RUN_COLLECTOR:-0}"
 super_collect="${H3_SUPERCOLLECT:-0}"
+mega_discovery="${H3_MEGADISCOVERY:-0}"
 
 while (( $# > 0 )); do
     case "$1" in
@@ -168,6 +170,14 @@ case "${super_collect}" in
     0 | 1) ;;
     *) echo "ERROR: H3_SUPERCOLLECT must be 0 or 1" >&2; exit 2 ;;
 esac
+case "${mega_discovery}" in
+    0 | 1) ;;
+    *) echo "ERROR: H3_MEGADISCOVERY must be 0 or 1" >&2; exit 2 ;;
+esac
+if [[ "${super_collect}" == 1 && "${mega_discovery}" == 1 ]]; then
+    echo "ERROR: H3_SUPERCOLLECT and H3_MEGADISCOVERY are mutually exclusive" >&2
+    exit 2
+fi
 if [[ "${super_collect}" == 1 ]]; then
     [[ "${gpu_count}" == 8 ]] || { echo "ERROR: MiniMax-H3 SuperCollect is fixed at SP8" >&2; exit 2; }
     [[ "${smoke}" == 0 && "${preflight_only}" == 0 ]] || {
@@ -176,8 +186,19 @@ if [[ "${super_collect}" == 1 ]]; then
     }
     collect=1
 fi
+if [[ "${mega_discovery}" == 1 ]]; then
+    [[ "${gpu_count}" == 8 || "${gpu_count}" == 16 ]] || {
+        echo "ERROR: MiniMax-H3 MegaDiscovery requires SP8 or Ring16" >&2
+        exit 2
+    }
+    [[ "${smoke}" == 0 && "${preflight_only}" == 0 ]] || {
+        echo "ERROR: MiniMax-H3 MegaDiscovery requires the full 1344x768 production run" >&2
+        exit 2
+    }
+    collect=1
+fi
 memory_monitor_enabled="${MEMORY_MONITOR:-1}"
-if [[ "${super_collect}" == 1 ]]; then
+if [[ "${super_collect}" == 1 || "${mega_discovery}" == 1 ]]; then
     memory_monitor_enabled=1
 fi
 case "${memory_monitor_enabled}" in
@@ -192,7 +213,9 @@ prompt_duration_seconds=5.17
 resolve_minimax_h3_prompt "${run_root}" "${prompt_preset}" "${prompt_file}" "${prompt_duration_seconds}" || exit $?
 prompt="${MINIMAX_H3_PROMPT}"
 prompt_source="${MINIMAX_H3_PROMPT_SOURCE}"
-if [[ "${super_collect}" == 1 ]]; then
+if [[ "${mega_discovery}" == 1 ]]; then
+    default_run_tag="minimax_h3_${gpu_count}gpu_megadiscovery_$(date +%Y%m%d_%H%M%S)"
+elif [[ "${super_collect}" == 1 ]]; then
     default_run_tag="minimax_h3_sp8_supercollect_$(date +%Y%m%d_%H%M%S)"
 else
     default_run_tag="minimax_h3_fl2av_4step_768p_$(date +%Y%m%d_%H%M%S)"
@@ -215,7 +238,12 @@ memory_path="${result_dir}/memory.jsonl"
 video_path="${result_dir}/minimax_h3_fl2av.mp4"
 summary_path="${result_dir}/summary.json"
 container_evidence_dir=/workspace/LightX2V/save_results
-if [[ "${super_collect}" == 1 ]]; then
+if [[ "${mega_discovery}" == 1 ]]; then
+    memory_monitor_interval="${MEMORY_MONITOR_INTERVAL:-0.5}"
+    export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
+    export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-INIT,ENV,GRAPH,TUNING,P2P,SHM,NET,COLL}"
+    export NCCL_DEBUG_FILE="${NCCL_DEBUG_FILE:-${container_evidence_dir}/rccl.%h.%p.log}"
+elif [[ "${super_collect}" == 1 ]]; then
     memory_monitor_interval="${MEMORY_MONITOR_INTERVAL:-1.0}"
 else
     memory_monitor_interval="${MEMORY_MONITOR_INTERVAL:-2.0}"
@@ -225,9 +253,10 @@ python3 - "${result_dir}/run_manifest.json" "${image}" "${source_mode}" \
     "${model_dir}" "${turbo_dir}" "${first_frame}" "${last_frame}" \
     "${frame_source}" "${gpu_devices}" "${smoke}" "${preflight_only}" \
     "${prompt}" "${prompt_source}" "${prompt_preset}" "${seed}" "${collect}" \
-    "${super_collect}" "${memory_monitor_interval}" <<'PY'
+    "${super_collect}" "${mega_discovery}" "${memory_monitor_interval}" <<'PY'
 import hashlib
 import json
+import os
 import pathlib
 import sys
 
@@ -249,6 +278,7 @@ import sys
     seed,
     collect,
     super_collect,
+    mega_discovery,
     memory_monitor_interval,
 ) = sys.argv[1:]
 
@@ -343,6 +373,42 @@ payload = {
         "runtime_evidence": "memory.jsonl" if super_collect == "1" else None,
         "production_contract_changed": False,
     },
+    "megadiscovery": {
+        "enabled": mega_discovery == "1",
+        "profile": (
+            "ring16_full_stack_v1" if mega_discovery == "1" and len(gpus) == 16
+            else "ulysses_sp8_full_stack_v1" if mega_discovery == "1"
+            else None
+        ),
+        "observer_only": True,
+        "production_contract_changed": False,
+        "production_collective_contract": (
+            {
+                "topology": "ring_sp16" if len(gpus) == 16 else "ulysses_sp8",
+                "tensor_fusion": False,
+                "communication_quantization": None,
+                "prepost_backend": "torch",
+                "a2a_backend": "torch",
+            }
+            if mega_discovery == "1" else None
+        ),
+        "rccl_environment": (
+            {
+                "NCCL_DEBUG": os.environ.get("NCCL_DEBUG"),
+                "NCCL_DEBUG_SUBSYS": os.environ.get("NCCL_DEBUG_SUBSYS"),
+                "NCCL_DEBUG_FILE": os.environ.get("NCCL_DEBUG_FILE"),
+            }
+            if mega_discovery == "1" else None
+        ),
+        "collective_benchmark": "megadiscovery_collectives.json" if mega_discovery == "1" else None,
+        "host_snapshots": (
+            ["megadiscovery_host_before.json", "megadiscovery_host_after.json"]
+            if mega_discovery == "1" else []
+        ),
+        "rccl_debug_pattern": "rccl.*.log" if mega_discovery == "1" else None,
+        "reports": ["megadiscovery.json", "megadiscovery.md"] if mega_discovery == "1" else [],
+        "memory_monitor_interval_seconds": float(memory_monitor_interval),
+    },
     "seed": int(seed),
     "prompt": prompt,
     "prompt_source": prompt_source,
@@ -371,6 +437,7 @@ export H3_SMOKE="${smoke}"
 export H3_PREFLIGHT_ONLY="${preflight_only}"
 export LIGHTX2V_H3_RUN_COLLECTOR="${collect}"
 export LIGHTX2V_H3_RUN_COLLECTOR_OUTPUT="${container_evidence_dir}/h3_runcollector.rank{rank}.json"
+export H3_MEGADISCOVERY="${mega_discovery}"
 export PROMPT="${prompt}"
 export SEED="${seed}"
 export H3_EVIDENCE_DIR="${container_evidence_dir}"
@@ -379,7 +446,7 @@ export OUTPUT_DIR="${result_dir}"
 export CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-minimax-h3}"
 
 monitor_pid=
-supercollect_after_written=0
+collector_after_written=0
 stop_monitor() {
     if [[ -n "${monitor_pid:-}" ]]; then
         if kill -0 "${monitor_pid}" 2>/dev/null; then
@@ -405,11 +472,18 @@ wait_monitor() {
     fi
 }
 
-collect_supercollect_host_snapshot() {
+collect_system_host_snapshot() {
     local phase="$1"
-    PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/lib/collect_minimax_h3_host_evidence.py" \
-        --output "${result_dir}/supercollect_host_${phase}.json" \
+    local profile=supercollect
+    local prefix=supercollect_host
+    if [[ "${mega_discovery}" == 1 ]]; then
+        profile=megadiscovery
+        prefix=megadiscovery_host
+    fi
+    PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/collector/collect_minimax_h3_host_evidence.py" \
+        --output "${result_dir}/${prefix}_${phase}.json" \
         --phase "${phase}" \
+        --profile "${profile}" \
         --gpu-indices "${gpu_devices}" \
         --image "${image}" \
         --run-root "${run_root}" \
@@ -425,14 +499,14 @@ cleanup() {
     local snapshot_status=0
     trap - EXIT
     stop_monitor
-    if [[ "${super_collect}" == 1 && "${DRY_RUN:-0}" != 1 && "${supercollect_after_written}" == 0 ]]; then
+    if [[ ( "${super_collect}" == 1 || "${mega_discovery}" == 1 ) && "${DRY_RUN:-0}" != 1 && "${collector_after_written}" == 0 ]]; then
         set +e
-        collect_supercollect_host_snapshot after
+        collect_system_host_snapshot after
         snapshot_status=$?
         set -e
-        supercollect_after_written=1
+        collector_after_written=1
         if (( snapshot_status != 0 )); then
-            echo "ERROR: SuperCollect after snapshot failed with status ${snapshot_status}" >&2
+            echo "ERROR: collector after snapshot failed with status ${snapshot_status}" >&2
             if (( status == 0 )); then
                 status=${snapshot_status}
             fi
@@ -442,8 +516,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ "${super_collect}" == 1 && "${DRY_RUN:-0}" != 1 ]]; then
-    collect_supercollect_host_snapshot before
+if [[ ( "${super_collect}" == 1 || "${mega_discovery}" == 1 ) && "${DRY_RUN:-0}" != 1 ]]; then
+    collect_system_host_snapshot before
 fi
 
 if [[ "${memory_monitor_enabled}" == 1 && "${DRY_RUN:-0}" != 1 ]]; then
@@ -468,6 +542,10 @@ echo "Prompt: ${prompt_source} (${prompt_duration_seconds}s alignment)"
 if [[ "${super_collect}" == 1 ]]; then
     echo "SP8 SuperCollect: enabled (observer-only; production contract unchanged)"
 fi
+if [[ "${mega_discovery}" == 1 ]]; then
+    echo "MegaDiscovery: enabled for ${gpu_count} GPUs (observer-only; production contract unchanged)"
+    echo "MegaDiscovery collective probe: ${result_dir}/megadiscovery_collectives.json"
+fi
 if [[ "${collect}" == 1 ]]; then
     echo "H3 T1 collector: ${result_dir}/h3_runcollector.rankNNN.json (schema-2, profiling only)"
 fi
@@ -487,6 +565,11 @@ if (( pipeline_status[1] != 0 )); then
 fi
 wait_monitor
 
+if [[ ( "${super_collect}" == 1 || "${mega_discovery}" == 1 ) && "${DRY_RUN:-0}" != 1 ]]; then
+    collect_system_host_snapshot after
+    collector_after_written=1
+fi
+
 if [[ "${DRY_RUN:-0}" == 1 ]]; then
     echo "Dry run complete: ${result_dir}"
     exit 0
@@ -503,9 +586,14 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/lib/summarize_minimax_
     --output-json "${summary_path}"
 
 if [[ "${collect}" == 1 ]]; then
-    PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/lib/summarize_minimax_h3_t1.py" \
+    PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/collector/summarize_minimax_h3_t1.py" \
         --result-dir "${result_dir}" \
         --expected-ranks "${gpu_count}"
+fi
+
+if [[ "${mega_discovery}" == 1 ]]; then
+    PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/collector/analyze_minimax_h3_megadiscovery.py" \
+        --result-dir "${result_dir}"
 fi
 
 echo "MiniMax-H3 gfx1201 complete: ${result_dir}"
@@ -520,4 +608,9 @@ if [[ "${collect}" == 1 ]]; then
 fi
 if [[ "${super_collect}" == 1 ]]; then
     echo "SuperCollect: ${result_dir}/supercollect_host_{before,after}.json"
+fi
+if [[ "${mega_discovery}" == 1 ]]; then
+    echo "MegaDiscovery: ${result_dir}/megadiscovery.{json,md}"
+    echo "MegaDiscovery host: ${result_dir}/megadiscovery_host_{before,after}.json"
+    echo "MegaDiscovery RCCL: ${result_dir}/rccl.*.log"
 fi

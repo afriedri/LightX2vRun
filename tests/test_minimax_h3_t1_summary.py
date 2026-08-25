@@ -8,7 +8,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "scripts/lib/summarize_minimax_h3_t1.py"
+SCRIPT = REPO_ROOT / "scripts/collector/summarize_minimax_h3_t1.py"
 SPEC = importlib.util.spec_from_file_location("summarize_minimax_h3_t1", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

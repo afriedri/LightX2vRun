@@ -129,7 +129,7 @@ kernel contracts, and writes `sage_shapes.json`:
 ```bash
 cd /path/to/LightX2VRun
 
-bash scripts/run_minimax_h3_sage_shape_sweep.sh \
+bash scripts/collector/run_minimax_h3_sage_shape_sweep.sh \
   --image IMAGE
 ```
 
@@ -159,7 +159,7 @@ keeps BF16 DiT, dynamic LoRA, Ulysses SP8, lazy B1's two CPU/two GPU block
 buffers, default ROCm BLAS, and the tuned kernels unchanged:
 
 ```bash
-bash scripts/run_minimax_h3_sp8_supercollect.sh \
+bash scripts/collector/run_minimax_h3_sp8_supercollect.sh \
   --image IMAGE \
   --gpus 0,1,2,3,4,5,6,7
 ```
@@ -172,6 +172,32 @@ device activity. `host_prefetch_wait_wall_ms` measures blocking on the existing
 safetensors/page-cache-to-pinned-CPU fill and remains separate from additive GPU
 metrics. SuperCollect is diagnostic and its latency is not a production timing
 baseline.
+
+For one observer-only full-stack communication investigation, run
+MegaDiscovery. It defaults to Ring16 and also accepts exactly eight GPUs for an
+SP8/Ulysses capture:
+
+```bash
+bash scripts/collector/run_minimax_h3_megadiscovery.sh \
+  --image IMAGE \
+  --gpus 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+```
+
+MegaDiscovery first runs a short isolated communication process with the exact
+BF16 production payloads, then starts the unchanged production run. Ring16
+evidence covers the current 15-hop separate K/V rotation, a synthetic fused-KV
+comparison, all 16 current-order neighbor edges, and the replicated auxiliary
+broadcast. SP8 covers one A2A, the current four-A2A-plus-gather block contract,
+and a synthetic QKV-fused comparison. Synthetic probes are discovery evidence
+only; they do not enable fusion or modify production configuration.
+
+The result directory adds `megadiscovery_collectives.json`, per-process RCCL
+logs, KFD/PCIe/NUMA before/after snapshots, and `megadiscovery.{json,md}`. The
+unified report correlates transport measurements with the schema-2 sequence
+parallel envelope, exposed H2D, rank spread, current local-rank-to-physical-GPU
+mapping, slow Ring edges, host counters, and memory headroom. Collector latency
+and isolated Ring transport ceilings remain non-additive diagnostics, not a new
+production timing baseline.
 
 ## Package and upload any result directory
 

@@ -11,7 +11,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-COLLECTOR_PATH = REPO_ROOT / "scripts/lib/collect_minimax_h3_sage_shapes.py"
+COLLECTOR_PATH = REPO_ROOT / "scripts/collector/collect_minimax_h3_sage_shapes.py"
 SPEC = importlib.util.spec_from_file_location("collect_minimax_h3_sage_shapes", COLLECTOR_PATH)
 assert SPEC is not None and SPEC.loader is not None
 COLLECTOR = importlib.util.module_from_spec(SPEC)
