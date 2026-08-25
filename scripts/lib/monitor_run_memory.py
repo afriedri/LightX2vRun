@@ -187,18 +187,31 @@ def find_ranks():
     for name in os.listdir("/proc"):
         if not name.isdigit():
             continue
+        pid = int(name)
+        if pid == os.getpid():
+            continue
         raw_cmd = read_bytes("/proc/{}/cmdline".format(name))
         if not raw_cmd:
             continue
-        cmdline = raw_cmd.replace(b"\0", b" ").decode(errors="replace")
-        if "lightx2v.infer" not in cmdline:
+        argv = [item.decode(errors="replace") for item in raw_cmd.split(b"\0") if item]
+        is_inference = "lightx2v.infer" in argv
+        is_collective_probe = any(
+            item.rsplit("/", 1)[-1] == "benchmark_minimax_h3_collectives.py"
+            for item in argv
+        )
+        if not is_inference and not is_collective_probe:
             continue
-        pid = int(name)
         env = parse_environ(pid)
         local_rank = env.get("LOCAL_RANK")
         rank = env.get("RANK")
         inferred_single_process = False
         if local_rank is None and rank is None:
+            is_distributed_launcher = any(
+                item.rsplit("/", 1)[-1] == "torchrun" or item == "torch.distributed.run"
+                for item in argv
+            )
+            if is_collective_probe or is_distributed_launcher:
+                continue
             # Single-GPU launchers use ``python -m lightx2v.infer`` directly,
             # without torchrun's rank environment. It is still rank 0 for
             # process-memory accounting.
@@ -210,7 +223,9 @@ def find_ranks():
             "rank": int(rank) if rank is not None and rank.lstrip("-").isdigit() else rank,
             "local_rank": int(local_rank) if local_rank is not None and local_rank.lstrip("-").isdigit() else local_rank,
             "inferred_single_process": inferred_single_process,
-            "cmdline": cmdline,
+            "workload": "collective_probe" if is_collective_probe else "inference",
+            "cmdline_argv": argv,
+            "cmdline": " ".join(argv),
             "runtime_environment": {
                 key: env[key] for key in sorted(RUNTIME_ENV_KEYS) if key in env
             },
@@ -726,7 +741,11 @@ class Summary:
 
     @staticmethod
     def _rank_key(rank: dict[str, Any]) -> str:
-        return str(rank.get("rank", rank.get("local_rank", rank.get("container_pid"))))
+        rank_id = rank.get("rank", rank.get("local_rank", rank.get("container_pid")))
+        workload = rank.get("workload")
+        if workload and workload != "inference":
+            return f"{workload}:{rank_id}"
+        return str(rank_id)
 
     def _observe_rank_lifecycle(self, sample: dict[str, Any]) -> None:
         container = sample.get("container", {})
@@ -745,6 +764,7 @@ class Summary:
                     "local_rank": rank.get("local_rank"),
                     "container_pid": rank.get("container_pid"),
                     "host_pid": rank.get("host_pid"),
+                    "workload": rank.get("workload", "inference"),
                     "first_seen_utc": timestamp,
                     "first_seen_monotonic_seconds": monotonic_seconds,
                 },
@@ -975,6 +995,11 @@ def main() -> int:
                     set(args.gpu_indices) if args.gpu_indices is not None else None
                 ),
             }
+            if any(
+                rank.get("workload") == "collective_probe"
+                for rank in sample["container"].get("ranks", [])
+            ):
+                sample["phase"] = "collective_probe"
             add_host_pids(args.container, sample["container"])
             add_rank_totals(sample)
             summary.add(sample)

@@ -55,8 +55,35 @@ def parse_rccl_logs(paths: list[Path]) -> dict[str, Any]:
     }
     counts = {name: 0 for name in patterns}
     excerpts = []
+    connection_transports: dict[str, int] = {}
+    channel_orders: set[tuple[int, ...]] = set()
+    initialized_ranks: set[int] = set()
+    max_p2p_op_count_by_rank: dict[str, int] = {}
+    numa_balancing_warning_count = 0
     for path in paths:
+        file_rank: int | None = None
+        file_max_op_count: int | None = None
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            init_match = re.search(r"\brank ([0-9]+) nranks [0-9]+ .* Init COMPLETE", line)
+            if init_match:
+                file_rank = int(init_match.group(1))
+                initialized_ranks.add(file_rank)
+            op_count_match = re.search(r"\b(?:Send|Recv): opCount ([0-9]+)\b", line)
+            if op_count_match:
+                op_count = int(op_count_match.group(1))
+                file_max_op_count = max(file_max_op_count or 0, op_count)
+            connection_match = re.search(r"\bvia ([^ ]+) comm\b", line)
+            if connection_match:
+                transport = connection_match.group(1)
+                connection_transports[transport] = connection_transports.get(transport, 0) + 1
+            channel_match = re.search(
+                r"\bChannel [0-9]+/[0-9]+\s*:\s*((?:[0-9]+\s+)+[0-9]+)\s*$",
+                line,
+            )
+            if channel_match:
+                channel_orders.add(tuple(int(item) for item in channel_match.group(1).split()))
+            if "NUMA auto balancing enabled" in line:
+                numa_balancing_warning_count += 1
             matched = False
             for name, pattern in patterns.items():
                 if pattern.search(line):
@@ -64,13 +91,29 @@ def parse_rccl_logs(paths: list[Path]) -> dict[str, Any]:
                     matched = True
             if matched and len(excerpts) < 80:
                 excerpts.append({"file": path.name, "line": line[:1000]})
+        if file_rank is not None and file_max_op_count is not None:
+            max_p2p_op_count_by_rank[str(file_rank)] = file_max_op_count
     return {
         "files": [path.name for path in paths],
         "file_count": len(paths),
         "keyword_counts": counts,
         "excerpts": excerpts,
+        "initialized_ranks": sorted(initialized_ranks),
+        "init_complete_count": len(initialized_ranks),
+        "connection_transports": dict(sorted(connection_transports.items())),
+        "net_fallback_connection_count": sum(
+            count
+            for transport, count in connection_transports.items()
+            if transport.upper().startswith("NET")
+        ),
+        "channel_orders": [list(order) for order in sorted(channel_orders)],
+        "max_p2p_op_count_by_rank": max_p2p_op_count_by_rank,
+        "numa_balancing_warning_count": numa_balancing_warning_count,
         "transport_evidence_present": bool(
-            counts["p2p_or_ipc"] or counts["shared_memory"] or counts["network_transport"]
+            connection_transports
+            or counts["p2p_or_ipc"]
+            or counts["shared_memory"]
+            or counts["network_transport"]
         ),
     }
 
@@ -87,12 +130,42 @@ def pci_groups(host: dict[str, Any]) -> dict[str, list[int]]:
     return {key: sorted(value) for key, value in sorted(groups.items())}
 
 
+def pcie_root_complex(sysfs_path: str | None) -> str | None:
+    if not sysfs_path:
+        return None
+    for component in Path(sysfs_path).parts:
+        if re.fullmatch(r"pci[0-9a-fA-F]{4}:[0-9a-fA-F]{2}", component):
+            return component
+    return None
+
+
+def pcie_root_complex_groups(host: dict[str, Any]) -> dict[str, list[int]]:
+    groups: dict[str, list[int]] = {}
+    for gpu in (host.get("gpus") or {}).get("devices", []):
+        root_complex = pcie_root_complex((gpu.get("pci") or {}).get("sysfs_path"))
+        if root_complex is None:
+            continue
+        groups.setdefault(root_complex, []).append(int(gpu["rocm_index"]))
+    return {key: sorted(value) for key, value in sorted(groups.items())}
+
+
 def ring_edge_discovery(
     benches: dict[str, dict[str, Any]], host: dict[str, Any]
 ) -> dict[str, Any]:
     pattern = re.compile(r"ring16_edge_([0-9]{2})_to_([0-9]{2})")
+    devices = {
+        int(item["rocm_index"]): item
+        for item in (host.get("gpus") or {}).get("devices", [])
+    }
     mapping = {
-        int(item["local_rank"]): item
+        int(item["local_rank"]): {
+            **item,
+            "pcie_root_complex": pcie_root_complex(
+                ((devices.get(int(item["rocm_index"])) or {}).get("pci") or {}).get(
+                    "sysfs_path"
+                )
+            ),
+        }
         for item in (host.get("gpus") or {}).get("local_rank_mapping", [])
     }
     edges = []
@@ -113,6 +186,15 @@ def ring_edge_discovery(
                 "destination_rocm_index": destination_gpu.get("rocm_index"),
                 "source_pci_address": source_gpu.get("pci_address"),
                 "destination_pci_address": destination_gpu.get("pci_address"),
+                "source_pcie_root_complex": source_gpu.get("pcie_root_complex"),
+                "destination_pcie_root_complex": destination_gpu.get("pcie_root_complex"),
+                "same_pcie_root_complex": (
+                    source_gpu.get("pcie_root_complex")
+                    == destination_gpu.get("pcie_root_complex")
+                    if source_gpu.get("pcie_root_complex") is not None
+                    and destination_gpu.get("pcie_root_complex") is not None
+                    else None
+                ),
                 "same_pci_upstream": (
                     source_gpu.get("pci_upstream") == destination_gpu.get("pci_upstream")
                     if source_gpu.get("pci_upstream") is not None
@@ -185,6 +267,8 @@ def build_report(result_dir: Path) -> dict[str, Any]:
     rank_spread = max(rank_values) - min(rank_values) if rank_values else 0.0
 
     benches = benchmark_by_name(collective)
+    collective_status = str(collective.get("status") or "complete")
+    collective_active_benchmark = collective.get("active_benchmark")
     fusion = None
     projected = {}
     edge_discovery: dict[str, Any] | None = None
@@ -254,6 +338,7 @@ def build_report(result_dir: Path) -> dict[str, Any]:
     model_mount = ((host_before.get("paths") or {}).get("model") or {}).get("mount")
     rccl = parse_rccl_logs(sorted(result_dir.glob("rccl.*.log")))
     groups = pci_groups(host_before)
+    root_complex_groups = pcie_root_complex_groups(host_before)
     memory_host_deltas = ((memory or {}).get("host_counter_window") or {}).get("deltas") or {}
     rank_lifecycle = (memory or {}).get("rank_lifecycle") or {}
 
@@ -273,7 +358,13 @@ def build_report(result_dir: Path) -> dict[str, Any]:
                 "evidence": "isolated production-shape microbenchmark",
                 "measured_synthetic_speedup": fusion_speedup,
                 "production_change_applied": False,
-                "decision": "candidate" if fusion_speedup and fusion_speedup > 1.03 else "not_supported_by_microbenchmark",
+                "decision": (
+                    "probe_unavailable"
+                    if fusion_speedup is None
+                    else "candidate"
+                    if fusion_speedup > 1.03
+                    else "not_supported_by_microbenchmark"
+                ),
             }
         )
         opportunities.append(
@@ -282,6 +373,7 @@ def build_report(result_dir: Path) -> dict[str, Any]:
                 "name": "ring_rank_order_from_pcie_topology",
                 "evidence": {
                     "pci_upstream_groups": groups,
+                    "pcie_root_complex_groups": root_complex_groups,
                     "rccl_transport_evidence_present": rccl["transport_evidence_present"],
                     "edge_discovery": edge_discovery,
                 },
@@ -302,7 +394,23 @@ def build_report(result_dir: Path) -> dict[str, Any]:
                 "name": "replicated_aux_broadcast",
                 "evidence": projected.get("aux_broadcast_isolated_ms_for_200_blocks"),
                 "production_change_applied": False,
-                "decision": "measure_against_ring_envelope_before_code_change",
+                "decision": (
+                    "probe_unavailable"
+                    if broadcast_ms is None
+                    else "measure_against_ring_envelope_before_code_change"
+                ),
+            }
+        )
+
+    input_failures = []
+    if collective_status != "complete":
+        input_failures.append(
+            {
+                "artifact": "megadiscovery_collectives.json",
+                "status": collective_status,
+                "error": collective.get("error"),
+                "active_benchmark": collective_active_benchmark,
+                "completed_benchmark_count": len(benches),
             }
         )
 
@@ -310,7 +418,8 @@ def build_report(result_dir: Path) -> dict[str, Any]:
         "schema_name": SCHEMA_NAME,
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "status": "complete",
+        "status": "partial" if input_failures else "complete",
+        "input_failures": input_failures,
         "profile": topology,
         "world_size": world_size,
         "observer_only": True,
@@ -331,12 +440,16 @@ def build_report(result_dir: Path) -> dict[str, Any]:
         },
         "traffic_contract": collective.get("traffic_contract"),
         "collective_benchmarks": collective.get("benchmarks"),
+        "collective_probe_status": collective_status,
+        "collective_probe_active_benchmark": collective_active_benchmark,
+        "collective_probe_completed_benchmark_count": len(benches),
         "fusion_discovery": fusion,
         "ring_edge_discovery": edge_discovery,
         "isolated_projection": projected,
         "system": {
             "numa_balancing": (host_before.get("host") or {}).get("numa_balancing"),
             "pci_upstream_groups": groups,
+            "pcie_root_complex_groups": root_complex_groups,
             "kfd_topology": (host_before.get("host") or {}).get("kfd_topology"),
             "rccl": rccl,
             "vmstat_delta": vmstat_delta,
@@ -370,6 +483,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         f"- Profile: `{report['profile']}`",
         f"- World size: `{report['world_size']}`",
+        f"- Report status: `{report['status']}`",
         f"- Production configuration changed: `{str(report['production_configuration_changed']).lower()}`",
         "",
         "## Diagnosis",
@@ -382,6 +496,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Traffic",
         "",
     ]
+    if report.get("input_failures"):
+        failure = report["input_failures"][0]
+        active = failure.get("active_benchmark") or "unknown"
+        lines[6:6] = [
+            f"- Collective probe: `{failure.get('status')}` ({failure.get('error')})",
+            f"- Probe stopped in: `{active}`; completed checkpoints: `{failure.get('completed_benchmark_count', 0)}`",
+            "- Production and schema-2 evidence remain available; completed transport checkpoints are retained.",
+        ]
     if report["world_size"] == 16:
         lines.extend(
             [
@@ -407,8 +529,12 @@ def render_markdown(report: dict[str, Any]) -> str:
             "## System Evidence",
             "",
             f"- RCCL log files: `{rccl.get('file_count', 0)}`",
+            f"- RCCL ranks with Init COMPLETE: `{rccl.get('init_complete_count', 0)}`",
+            f"- RCCL active connection transports: `{rccl.get('connection_transports') or {}}`",
+            f"- RCCL NET fallback connections: `{rccl.get('net_fallback_connection_count', 0)}`",
             f"- RCCL warning/error matches: `{((rccl.get('keyword_counts') or {}).get('warning', 0))}`",
-            f"- PCIe upstream groups: `{len(system.get('pci_upstream_groups') or {})}`",
+            f"- RCCL NUMA-balancing warnings: `{rccl.get('numa_balancing_warning_count', 0)}`",
+            f"- PCIe root-complex groups: `{len(system.get('pcie_root_complex_groups') or {})}`",
             f"- NUMA balancing: `{system.get('numa_balancing')}`",
             f"- H3 host/cgroup use: `{(system.get('h3_cgroup_bytes') or 0) / 2**30:.2f} GiB`",
             f"- H3 peak VRAM per card: `{(system.get('h3_max_gpu_used_bytes') or 0) / 2**30:.2f} GiB`",

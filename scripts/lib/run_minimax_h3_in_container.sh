@@ -144,6 +144,8 @@ case "${H3_MEGADISCOVERY:-0}" in
     0 | 1) ;;
     *) echo "ERROR: H3_MEGADISCOVERY must be 0 or 1" >&2; exit 1 ;;
 esac
+collective_benchmark=
+megadiscovery_timeout_seconds="${H3_MEGADISCOVERY_TIMEOUT_SECONDS:-300}"
 if [[ "${H3_MEGADISCOVERY:-0}" == 1 ]]; then
     case "${gpu_count}" in
         8 | 16) ;;
@@ -158,11 +160,50 @@ if [[ "${H3_MEGADISCOVERY:-0}" == 1 ]]; then
         echo "ERROR: MegaDiscovery collective benchmark not found: ${collective_benchmark}" >&2
         exit 1
     }
-    echo "MegaDiscovery: measuring exact-shape collective transport in an isolated torchrun"
-    torchrun --standalone --nproc_per_node="${gpu_count}" \
-        "${collective_benchmark}" \
-        --output "${evidence_dir}/megadiscovery_collectives.json"
+    command -v timeout >/dev/null 2>&1 || {
+        echo "ERROR: MegaDiscovery requires the coreutils timeout command" >&2
+        exit 1
+    }
+    [[ "${megadiscovery_timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "ERROR: H3_MEGADISCOVERY_TIMEOUT_SECONDS must be a positive integer" >&2
+        exit 1
+    }
 fi
+
+run_megadiscovery_collectives() {
+    local benchmark_status=0
+    local tee_status=0
+    local output="${evidence_dir}/megadiscovery_collectives.json"
+    local log="${evidence_dir}/megadiscovery_collectives.log"
+    echo "MegaDiscovery: production inference is complete; starting isolated exact-shape communication probes"
+    echo "MegaDiscovery: expected probe time is 1-3 minutes; hard timeout is ${megadiscovery_timeout_seconds}s"
+    echo "MegaDiscovery: live probe log: ${log}"
+    set +e
+    timeout --signal=TERM --kill-after=30s "${megadiscovery_timeout_seconds}s" \
+        torchrun --standalone --nproc_per_node="${gpu_count}" \
+        "${collective_benchmark}" \
+        --output "${output}" 2>&1 | tee "${log}"
+    local pipeline_status=("${PIPESTATUS[@]}")
+    set -e
+    benchmark_status="${pipeline_status[0]}"
+    tee_status="${pipeline_status[1]}"
+    if (( tee_status != 0 )); then
+        echo "WARNING: MegaDiscovery could not completely write ${log} (status=${tee_status})" >&2
+    fi
+    if (( benchmark_status == 0 )); then
+        echo "MegaDiscovery: communication probes complete"
+        return 0
+    fi
+    if (( benchmark_status == 124 || benchmark_status == 137 )); then
+        echo "WARNING: MegaDiscovery communication probes hit the ${megadiscovery_timeout_seconds}s timeout; production evidence is preserved" >&2
+    else
+        echo "WARNING: MegaDiscovery communication probes failed with status ${benchmark_status}; production evidence is preserved" >&2
+    fi
+    python3 "${collective_benchmark}" \
+        --output "${output}" \
+        --world-size "${gpu_count}" \
+        --record-failure "torchrun status ${benchmark_status}; see megadiscovery_collectives.log"
+}
 
 resolve_minimax_h3_prompt \
     "${run_root}" \
@@ -242,4 +283,8 @@ expected = (int(sys.argv[2]), int(sys.argv[3]))
 if actual != expected:
     raise SystemExit(f"MiniMax-H3 output size is {actual[0]}x{actual[1]}, expected {expected[0]}x{expected[1]}")
 PY
+fi
+
+if [[ "${H3_MEGADISCOVERY:-0}" == 1 ]]; then
+    run_megadiscovery_collectives
 fi

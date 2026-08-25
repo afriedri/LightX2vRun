@@ -48,6 +48,8 @@ Environment:
                          Prefer --collect; direct environment use accepts 0/1
   H3_SUPERCOLLECT        1 enables the read-only SP8 SuperCollect evidence set
   H3_MEGADISCOVERY       1 enables SP8/Ring16 full-stack discovery evidence
+  H3_MEGADISCOVERY_TIMEOUT_SECONDS
+                         Isolated probe timeout after inference (default: 300)
 EOF
 }
 
@@ -241,7 +243,7 @@ container_evidence_dir=/workspace/LightX2V/save_results
 if [[ "${mega_discovery}" == 1 ]]; then
     memory_monitor_interval="${MEMORY_MONITOR_INTERVAL:-0.5}"
     export NCCL_DEBUG="${NCCL_DEBUG:-INFO}"
-    export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-INIT,ENV,GRAPH,TUNING,P2P,SHM,NET,COLL}"
+    export NCCL_DEBUG_SUBSYS="${NCCL_DEBUG_SUBSYS:-INIT,ENV,GRAPH,TUNING,P2P,SHM,NET}"
     export NCCL_DEBUG_FILE="${NCCL_DEBUG_FILE:-${container_evidence_dir}/rccl.%h.%p.log}"
 elif [[ "${super_collect}" == 1 ]]; then
     memory_monitor_interval="${MEMORY_MONITOR_INTERVAL:-1.0}"
@@ -382,6 +384,11 @@ payload = {
         ),
         "observer_only": True,
         "production_contract_changed": False,
+        "probe_order": "after_production_inference",
+        "probe_timeout_seconds": (
+            int(os.environ.get("H3_MEGADISCOVERY_TIMEOUT_SECONDS", "300"))
+            if mega_discovery == "1" else None
+        ),
         "production_collective_contract": (
             {
                 "topology": "ring_sp16" if len(gpus) == 16 else "ulysses_sp8",
@@ -544,7 +551,8 @@ if [[ "${super_collect}" == 1 ]]; then
 fi
 if [[ "${mega_discovery}" == 1 ]]; then
     echo "MegaDiscovery: enabled for ${gpu_count} GPUs (observer-only; production contract unchanged)"
-    echo "MegaDiscovery collective probe: ${result_dir}/megadiscovery_collectives.json"
+    echo "MegaDiscovery order: production inference first, then 1-3 minute communication probes"
+    echo "MegaDiscovery probe log: ${result_dir}/megadiscovery_collectives.log"
 fi
 if [[ "${collect}" == 1 ]]; then
     echo "H3 T1 collector: ${result_dir}/h3_runcollector.rankNNN.json (schema-2, profiling only)"

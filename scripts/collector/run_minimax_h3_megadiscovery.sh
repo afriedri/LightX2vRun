@@ -24,6 +24,8 @@ communication contract.
 
 MegaDiscovery does not change BF16, dynamic LoRA, lazy B1, two CPU buffers,
 two GPU buffers, TunableOp, Sage kernels, Ulysses SP8, or Ring16.
+Production inference runs first. Isolated communication probes normally take
+1-3 minutes and have a default hard timeout of 300 seconds.
 EOF
 }
 
@@ -79,6 +81,7 @@ if (( gpu_count == 8 )); then
 fi
 
 export H3_MEGADISCOVERY=1
+export H3_MEGADISCOVERY_TIMEOUT_SECONDS="${H3_MEGADISCOVERY_TIMEOUT_SECONDS:-300}"
 export MEMORY_MONITOR=1
 export MEMORY_MONITOR_INTERVAL="${MEMORY_MONITOR_INTERVAL:-0.5}"
 export MEMORY_MONITOR_PRINT_INTERVAL="${MEMORY_MONITOR_PRINT_INTERVAL:-15.0}"

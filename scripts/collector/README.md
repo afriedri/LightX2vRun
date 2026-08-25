@@ -20,7 +20,10 @@ bash scripts/collector/run_minimax_h3_megadiscovery.sh \
   --gpus 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 ```
 
-The isolated probes run before inference in a separate process. Their synthetic
+The isolated probes run after inference in a separate process. Their synthetic
 fusion variants and timing overhead never alter the production model process.
+Ring16 prints each active measurement, checkpoints every completed result, and
+runs edge/aux probes before the bounded full-ring comparisons. A timeout keeps
+those checkpoints and marks the unified report partial.
 The historical root-level SuperCollect and Sage sweep shell entry points remain
 compatibility wrappers.

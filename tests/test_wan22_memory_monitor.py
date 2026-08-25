@@ -111,6 +111,26 @@ def test_single_process_infer_is_accounted_as_rank_zero():
     assert 'local_rank = "0"' in MONITOR.CONTAINER_PROBE
     assert 'rank = "0"' in MONITOR.CONTAINER_PROBE
     assert '"inferred_single_process": inferred_single_process' in MONITOR.CONTAINER_PROBE
+    assert "pid == os.getpid()" in MONITOR.CONTAINER_PROBE
+    assert '"benchmark_minimax_h3_collectives.py"' in MONITOR.CONTAINER_PROBE
+    assert '"workload": "collective_probe" if is_collective_probe else "inference"' in MONITOR.CONTAINER_PROBE
+
+
+def test_collective_probe_lifecycle_is_separate_from_inference_rank():
+    summary = MONITOR.Summary()
+    inference = _sample("2026-08-25T00:00:00.000+00:00", 10.0, [0])
+    inference["container"]["ranks"][0]["workload"] = "inference"
+    collective = _sample("2026-08-25T00:00:01.000+00:00", 11.0, [0])
+    collective["container"]["ranks"][0]["workload"] = "collective_probe"
+    collective["container"]["ranks"][0]["container_pid"] = 200
+
+    summary.add(inference)
+    summary.add(collective)
+
+    lifecycle = summary.as_dict()["rank_lifecycle"]
+    assert lifecycle["0"]["workload"] == "inference"
+    assert lifecycle["collective_probe:0"]["workload"] == "collective_probe"
+    assert lifecycle["0"]["exit_observation"] == "rank_missing_from_probe"
 
 
 def test_minimax_h3_phase_tracker_accepts_legacy_stage_logs(tmp_path):

@@ -430,6 +430,7 @@ def test_ring16_megadiscovery_is_observer_only_and_freezes_production_contract(t
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "MegaDiscovery: enabled for 16 GPUs (observer-only; production contract unchanged)" in completed.stdout
     assert "--env H3_MEGADISCOVERY=1" in completed.stdout
+    assert "--env H3_MEGADISCOVERY_TIMEOUT_SECONDS=300" in completed.stdout
     assert "--env LIGHTX2V_H3_RUN_COLLECTOR=1" in completed.stdout
     assert "--env NCCL_DEBUG=INFO" in completed.stdout
     assert "NCCL_DEBUG_FILE=/workspace/LightX2V/save_results/rccl.%h.%p.log" in completed.stdout
@@ -445,6 +446,8 @@ def test_ring16_megadiscovery_is_observer_only_and_freezes_production_contract(t
         "host_snapshots": ["megadiscovery_host_before.json", "megadiscovery_host_after.json"],
         "memory_monitor_interval_seconds": 0.5,
         "observer_only": True,
+        "probe_order": "after_production_inference",
+        "probe_timeout_seconds": 300,
         "production_collective_contract": {
             "a2a_backend": "torch",
             "communication_quantization": None,
@@ -458,7 +461,7 @@ def test_ring16_megadiscovery_is_observer_only_and_freezes_production_contract(t
         "rccl_environment": {
             "NCCL_DEBUG": "INFO",
             "NCCL_DEBUG_FILE": "/workspace/LightX2V/save_results/rccl.%h.%p.log",
-            "NCCL_DEBUG_SUBSYS": "INIT,ENV,GRAPH,TUNING,P2P,SHM,NET,COLL",
+            "NCCL_DEBUG_SUBSYS": "INIT,ENV,GRAPH,TUNING,P2P,SHM,NET",
         },
         "reports": ["megadiscovery.json", "megadiscovery.md"],
     }

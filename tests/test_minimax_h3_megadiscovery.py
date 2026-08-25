@@ -55,6 +55,33 @@ def test_exact_shape_traffic_contracts_match_production_calls():
     assert ring16["logical_send_bytes_per_run_per_rank"] == 213_577_728_000
 
 
+def test_failure_record_preserves_completed_checkpoints(tmp_path):
+    output = tmp_path / "megadiscovery_collectives.json"
+    completed = benchmark("ring16_edge_00_to_01", 10.0)
+    write_json(
+        output,
+        {
+            "schema_name": COLLECTIVES.SCHEMA_NAME,
+            "schema_version": COLLECTIVES.SCHEMA_VERSION,
+            "probe_started_at": "2026-08-25T02:11:04+00:00",
+            "status": "running",
+            "active_benchmark": "ring16_full_rotation_fused_kv",
+            "environment": {"world_size": 16, "torch_version": "test"},
+            "traffic_contract": COLLECTIVES.build_traffic_contract(16),
+            "benchmarks": [completed],
+        },
+    )
+
+    COLLECTIVES.write_failure(output, 16, "torchrun status 124")
+
+    failed = json.loads(output.read_text(encoding="utf-8"))
+    assert failed["status"] == "failed"
+    assert failed["active_benchmark"] == "ring16_full_rotation_fused_kv"
+    assert failed["completed_benchmark_count"] == 1
+    assert failed["benchmarks"] == [completed]
+    assert failed["environment"]["torch_version"] == "test"
+
+
 def test_analyzer_builds_ring16_diagnosis_and_finds_slow_neighbor(tmp_path):
     write_json(tmp_path / "run_manifest.json", {"gpu_count": 16})
     write_json(
@@ -99,7 +126,8 @@ def test_analyzer_builds_ring16_diagnosis_and_finds_slow_neighbor(tmp_path):
     for rank in range(16):
         upstream = "0000:00:01.0" if rank < 8 else "0000:80:01.0"
         pci_address = f"0000:{rank + 1:02x}:00.0"
-        sysfs_path = f"/sys/devices/pci0000:00/{upstream}/{pci_address}"
+        root_bus = "00" if rank < 8 else "80"
+        sysfs_path = f"/sys/devices/pci0000:{root_bus}/{upstream}/{pci_address}"
         devices.append(
             {
                 "rocm_index": rank,
@@ -146,7 +174,11 @@ def test_analyzer_builds_ring16_diagnosis_and_finds_slow_neighbor(tmp_path):
     )
     write_json(tmp_path / "summary.json", {"total_cost_seconds": 196.0})
     (tmp_path / "rccl.node.123.log").write_text(
-        "node:123:123 [0] NCCL INFO P2P Channel 00/0 : 0[0] -> 1[1] via IPC\n",
+        "node:123:123 [0] NCCL INFO ncclCommInitRankConfig_impl rank 0 nranks 16 "
+        "cudaDev 0 - Init COMPLETE\n"
+        "node:123:123 [0] NCCL INFO Channel 00/02 : 0 1 2 3 4 5 6 7 12 13 14 15 8 9 10 11\n"
+        "node:123:123 [0] NCCL INFO P2P Channel 00/0 : 0[0] -> 1[1] via P2P/IPC comm 0x1\n"
+        "node:123:123 [0] NCCL INFO Send: opCount 7 count 17798144\n",
         encoding="utf-8",
     )
 
@@ -163,10 +195,54 @@ def test_analyzer_builds_ring16_diagnosis_and_finds_slow_neighbor(tmp_path):
     edges = report["ring_edge_discovery"]
     assert edges["measured_edge_count"] == 16
     assert edges["slowest_edge"]["source_local_rank"] == 7
+    assert edges["slowest_edge"]["same_pcie_root_complex"] is False
     assert edges["slowest_over_median"] == pytest.approx(2.0)
     assert report["opportunities"][1]["decision"] == "candidate"
+    assert report["system"]["pcie_root_complex_groups"] == {
+        "pci0000:00": list(range(8)),
+        "pci0000:80": list(range(8, 16)),
+    }
     assert report["system"]["vmstat_delta"]["pgmajfault"] == 3
     assert report["system"]["rccl"]["transport_evidence_present"] is True
+    assert report["system"]["rccl"]["init_complete_count"] == 1
+    assert report["system"]["rccl"]["connection_transports"] == {"P2P/IPC": 1}
+    assert report["system"]["rccl"]["net_fallback_connection_count"] == 0
+    assert report["system"]["rccl"]["channel_orders"] == [
+        [0, 1, 2, 3, 4, 5, 6, 7, 12, 13, 14, 15, 8, 9, 10, 11]
+    ]
+    assert report["system"]["rccl"]["max_p2p_op_count_by_rank"] == {"0": 7}
     markdown = (tmp_path / "megadiscovery.md").read_text(encoding="utf-8")
     assert "Current-order neighbor edges measured: `16`" in markdown
     assert "Production configuration changed: `false`" in markdown
+
+    failure = subprocess.run(
+        [
+            "python3",
+            str(COLLECTIVE_SCRIPT),
+            "--output",
+            str(tmp_path / "megadiscovery_collectives.json"),
+            "--world-size",
+            "16",
+            "--record-failure",
+            "torchrun status 124; see megadiscovery_collectives.log",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert failure.returncode == 0, failure.stdout + failure.stderr
+    partial_run = subprocess.run(
+        ["python3", str(ANALYZER_SCRIPT), "--result-dir", str(tmp_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert partial_run.returncode == 0, partial_run.stdout + partial_run.stderr
+    partial = json.loads((tmp_path / "megadiscovery.json").read_text(encoding="utf-8"))
+    assert partial["status"] == "partial"
+    assert partial["collective_probe_status"] == "failed"
+    assert len(partial["collective_benchmarks"]) == len(benches)
+    assert partial["opportunities"][0]["decision"] == "candidate"
+    partial_markdown = (tmp_path / "megadiscovery.md").read_text(encoding="utf-8")
+    assert "Report status: `partial`" in partial_markdown
+    assert "Production and schema-2 evidence remain available" in partial_markdown

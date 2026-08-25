@@ -183,16 +183,22 @@ bash scripts/collector/run_minimax_h3_megadiscovery.sh \
   --gpus 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 ```
 
-MegaDiscovery first runs a short isolated communication process with the exact
-BF16 production payloads, then starts the unchanged production run. Ring16
+MegaDiscovery first runs the unchanged production workload, then starts a short
+isolated communication process with the exact BF16 production payloads. Ring16
 evidence covers the current 15-hop separate K/V rotation, a synthetic fused-KV
 comparison, all 16 current-order neighbor edges, and the replicated auxiliary
 broadcast. SP8 covers one A2A, the current four-A2A-plus-gather block contract,
 and a synthetic QKV-fused comparison. Synthetic probes are discovery evidence
 only; they do not enable fusion or modify production configuration.
 
-The result directory adds `megadiscovery_collectives.json`, per-process RCCL
-logs, KFD/PCIe/NUMA before/after snapshots, and `megadiscovery.{json,md}`. The
+The probes normally take one to three minutes and have a default 300-second hard
+timeout. Ring16 measures neighbor edges and aux traffic before the full-ring
+comparisons, and atomically checkpoints every completed measurement. A probe
+timeout therefore preserves both the completed production run and any finished
+transport evidence, then emits a partial diagnosis instead of blocking
+indefinitely. The result directory adds
+`megadiscovery_collectives.json`, `megadiscovery_collectives.log`, per-process
+RCCL logs, KFD/PCIe/NUMA before/after snapshots, and `megadiscovery.{json,md}`. The
 unified report correlates transport measurements with the schema-2 sequence
 parallel envelope, exposed H2D, rank spread, current local-rank-to-physical-GPU
 mapping, slow Ring edges, host counters, and memory headroom. Collector latency
