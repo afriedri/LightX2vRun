@@ -342,12 +342,25 @@ def build_report(result_dir: Path) -> dict[str, Any]:
     memory_host_deltas = ((memory or {}).get("host_counter_window") or {}).get("deltas") or {}
     rank_lifecycle = (memory or {}).get("rank_lifecycle") or {}
 
-    communication_dominant = bool(
+    sequence_parallel_envelope_dominant = bool(
         sp_share is not None
         and exposed_share is not None
         and sp_share >= 0.25
         and exposed_share <= 0.03
     )
+    ring_dense_attention_timing_available = not (
+        world_size == 16 and dense_attention_ms <= 0.0
+    )
+    if ring_dense_attention_timing_available:
+        communication_dominant: bool | None = sequence_parallel_envelope_dominant
+        communication_attribution_status = (
+            "supported_by_collector_decomposition"
+            if communication_dominant
+            else "not_supported_by_collector_decomposition"
+        )
+    else:
+        communication_dominant = None
+        communication_attribution_status = "unresolved_ring_attention_nested_in_envelope"
     opportunities = []
     if world_size == 16:
         fusion_speedup = (fusion or {}).get("synthetic_speedup")
@@ -428,10 +441,13 @@ def build_report(result_dir: Path) -> dict[str, Any]:
         "production_summary": production,
         "diagnosis": {
             "communication_dominant_under_current_lazy_policy": communication_dominant,
+            "communication_attribution_status": communication_attribution_status,
             "h3_collector_gpu_ms": h3_ms,
             "sequence_parallel_envelope_gpu_ms": sp_ms,
             "sequence_parallel_envelope_share": sp_share,
+            "sequence_parallel_envelope_dominant_under_current_lazy_policy": sequence_parallel_envelope_dominant,
             "dense_attention_gpu_ms": dense_attention_ms,
+            "ring_dense_attention_timing_available": ring_dense_attention_timing_available,
             "exposed_h2d_gpu_ms": exposed_h2d_ms,
             "exposed_h2d_share": exposed_share,
             "rank_h3_total_ms": rank_totals,
@@ -465,6 +481,7 @@ def build_report(result_dir: Path) -> dict[str, Any]:
         "guardrails": [
             "Collector latency is not the production latency baseline.",
             "The sequence-parallel envelope includes layout, communication, online merge, and synchronization; it is not pure wire time.",
+            "A zero Ring dense-attention timer means attention remains nested in the sequence-parallel envelope, so pure communication attribution is unknown.",
             "Ring communication overlaps attention, so isolated transport projections are non-additive.",
             "MegaDiscovery does not change BF16, lazy loading, CPU/GPU buffer counts, LoRA, TunableOp, attention kernels, or SP topology.",
         ],
@@ -478,6 +495,10 @@ def render_markdown(report: dict[str, Any]) -> str:
     edge_discovery = report.get("ring_edge_discovery") or {}
     system = report.get("system") or {}
     rccl = system.get("rccl") or {}
+    communication_dominant = diagnosis["communication_dominant_under_current_lazy_policy"]
+    communication_dominant_text = (
+        "unknown" if communication_dominant is None else str(communication_dominant).lower()
+    )
     lines = [
         "# MiniMax-H3 MegaDiscovery",
         "",
@@ -488,7 +509,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Diagnosis",
         "",
-        f"- Communication dominant under the current lazy policy: `{str(diagnosis['communication_dominant_under_current_lazy_policy']).lower()}`",
+        f"- Communication dominant under the current lazy policy: `{communication_dominant_text}`",
+        f"- Communication attribution: `{diagnosis['communication_attribution_status']}`",
+        f"- Sequence-parallel envelope dominant: `{str(diagnosis['sequence_parallel_envelope_dominant_under_current_lazy_policy']).lower()}`",
+        f"- Ring dense-attention timing available: `{str(diagnosis['ring_dense_attention_timing_available']).lower()}`",
         f"- Sequence-parallel envelope: `{diagnosis['sequence_parallel_envelope_gpu_ms'] / 1000.0:.3f}s` ({(diagnosis['sequence_parallel_envelope_share'] or 0.0) * 100.0:.2f}%)",
         f"- Exposed H2D: `{diagnosis['exposed_h2d_gpu_ms'] / 1000.0:.3f}s` ({(diagnosis['exposed_h2d_share'] or 0.0) * 100.0:.2f}%)",
         f"- Cross-rank H3 spread: `{diagnosis['rank_spread_ms'] / 1000.0:.3f}s`",

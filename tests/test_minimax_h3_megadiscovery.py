@@ -55,6 +55,25 @@ def test_exact_shape_traffic_contracts_match_production_calls():
     assert ring16["logical_send_bytes_per_run_per_rank"] == 213_577_728_000
 
 
+def test_ring_edges_are_split_into_two_disjoint_all_rank_matchings():
+    matchings = COLLECTIVES.build_ring_edge_matchings(16)
+    assert len(matchings) == 2
+    assert all(len(matching) == 8 for matching in matchings)
+
+    for matching in matchings:
+        participating_ranks = [rank for edge in matching for rank in edge]
+        assert sorted(participating_ranks) == list(range(16))
+
+    assert {edge for matching in matchings for edge in matching} == {
+        (source, (source + 1) % 16) for source in range(16)
+    }
+
+
+def test_ring_edge_matching_requires_an_even_world_size():
+    with pytest.raises(ValueError, match="even world size"):
+        COLLECTIVES.build_ring_edge_matchings(15)
+
+
 def test_failure_record_preserves_completed_checkpoints(tmp_path):
     output = tmp_path / "megadiscovery_collectives.json"
     completed = benchmark("ring16_edge_00_to_01", 10.0)
@@ -246,3 +265,61 @@ def test_analyzer_builds_ring16_diagnosis_and_finds_slow_neighbor(tmp_path):
     partial_markdown = (tmp_path / "megadiscovery.md").read_text(encoding="utf-8")
     assert "Report status: `partial`" in partial_markdown
     assert "Production and schema-2 evidence remain available" in partial_markdown
+
+
+def test_ring16_missing_dense_attention_keeps_communication_attribution_unknown(
+    tmp_path,
+):
+    write_json(tmp_path / "run_manifest.json", {"gpu_count": 16})
+    write_json(
+        tmp_path / "h3_t1_summary.json",
+        {
+            "world_size": 16,
+            "critical_path_totals_ms": {
+                "h3_step_gpu_ms": 120_000.0,
+                "sp_layout_and_communication_gpu_ms": 100_000.0,
+                "exposed_h2d_gpu_ms": 0.0,
+                "dense_attention_gpu_ms": 0.0,
+            },
+            "per_rank_totals_ms": {
+                str(rank): {"h3_step_gpu_ms": 120_000.0 + rank}
+                for rank in range(16)
+            },
+        },
+    )
+    write_json(
+        tmp_path / "megadiscovery_collectives.json",
+        {
+            "status": "failed",
+            "active_benchmark": "ring16_edge_matching_even_sources",
+            "error": "torchrun status 124",
+            "environment": {"world_size": 16},
+            "traffic_contract": COLLECTIVES.build_traffic_contract(16),
+            "benchmarks": [],
+        },
+    )
+    host = {
+        "host": {"memory": {"total_bytes": 1}, "vmstat": {}},
+        "gpus": {"devices": [], "local_rank_mapping": []},
+    }
+    write_json(tmp_path / "megadiscovery_host_before.json", host)
+    write_json(tmp_path / "megadiscovery_host_after.json", host)
+
+    completed = subprocess.run(
+        ["python3", str(ANALYZER_SCRIPT), "--result-dir", str(tmp_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report = json.loads((tmp_path / "megadiscovery.json").read_text(encoding="utf-8"))
+    diagnosis = report["diagnosis"]
+    assert diagnosis["sequence_parallel_envelope_dominant_under_current_lazy_policy"] is True
+    assert diagnosis["ring_dense_attention_timing_available"] is False
+    assert diagnosis["communication_dominant_under_current_lazy_policy"] is None
+    assert (
+        diagnosis["communication_attribution_status"]
+        == "unresolved_ring_attention_nested_in_envelope"
+    )
+    markdown = (tmp_path / "megadiscovery.md").read_text(encoding="utf-8")
+    assert "Communication dominant under the current lazy policy: `unknown`" in markdown

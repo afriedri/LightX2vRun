@@ -26,6 +26,16 @@ SCHEMA_NAME = "lightx2v.minimax_h3.megadiscovery.collectives"
 SCHEMA_VERSION = 1
 
 
+def build_ring_edge_matchings(world_size: int) -> list[list[tuple[int, int]]]:
+    """Split a directed ring into two disjoint all-rank P2P matchings."""
+    if world_size < 2 or world_size % 2:
+        raise ValueError("ring edge matching requires an even world size")
+    return [
+        [(source, (source + 1) % world_size) for source in range(parity, world_size, 2)]
+        for parity in (0, 1)
+    ]
+
+
 def build_traffic_contract(world_size: int) -> dict[str, Any]:
     if world_size not in (8, 16):
         raise ValueError("MiniMax-H3 collective discovery supports world size 8 or 16")
@@ -161,14 +171,18 @@ def run_distributed(output: Path) -> None:
     import torch.distributed as dist
 
     local_rank = int(os.environ["LOCAL_RANK"])
+    device = torch.device("cuda", local_rank)
     torch.cuda.set_device(local_rank)
     if local_rank == 0:
         print("[MegaDiscovery][collectives] INIT process-group", flush=True)
-    dist.init_process_group("nccl", timeout=timedelta(minutes=20))
+    dist.init_process_group(
+        "nccl",
+        timeout=timedelta(minutes=20),
+        device_id=device,
+    )
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     contract = build_traffic_contract(world_size)
-    device = torch.device("cuda", local_rank)
     dtype = torch.bfloat16
     environment = {
         "world_size": world_size,
@@ -345,6 +359,103 @@ def run_distributed(output: Path) -> None:
         aux_tensor = torch.empty((aux_tokens, HEADS * HEAD_DIM), dtype=dtype, device=device)
         edge_receive = torch.empty_like(k_buffers[0])
 
+        def measure_edge_matching(
+            matching_name: str,
+            matching: list[tuple[int, int]],
+        ) -> list[dict[str, Any]]:
+            warmups = 1
+            iterations = 2
+            active_name = f"ring16_edge_matching_{matching_name}"
+            if rank == 0:
+                edges = ", ".join(f"{source:02d}->{destination:02d}" for source, destination in matching)
+                print(
+                    f"[MegaDiscovery][collectives] START {active_name} "
+                    f"warmups={warmups} iterations={iterations} edges={edges}",
+                    flush=True,
+                )
+            checkpoint("running", active_benchmark=active_name)
+
+            role = next(
+                (
+                    ("send", destination)
+                    if rank == source
+                    else ("recv", source)
+                    if rank == destination
+                    else None
+                )
+                for source, destination in matching
+                if rank in (source, destination)
+            )
+
+            def transfer() -> None:
+                operation, peer = role
+                p2p_operation = (
+                    dist.P2POp(dist.isend, k_buffers[0], peer)
+                    if operation == "send"
+                    else dist.P2POp(dist.irecv, edge_receive, peer)
+                )
+                for request in dist.batch_isend_irecv([p2p_operation]):
+                    request.wait()
+
+            local_samples = []
+            dist.barrier()
+            for _ in range(warmups):
+                transfer()
+            torch.cuda.synchronize(device)
+            dist.barrier()
+            for _ in range(iterations):
+                dist.barrier()
+                torch.cuda.synchronize(device)
+                started = time.perf_counter()
+                transfer()
+                torch.cuda.synchronize(device)
+                local_samples.append((time.perf_counter() - started) * 1000.0)
+
+            local_tensor = torch.tensor(local_samples, dtype=torch.float64, device=device)
+            gathered = [torch.empty_like(local_tensor) for _ in range(world_size)]
+            dist.all_gather(gathered, local_tensor)
+            per_rank = [item.cpu().tolist() for item in gathered]
+            logical_bytes = int(contract["one_k_or_v_payload_bytes"])
+            matching_results = []
+            for source, destination in matching:
+                critical = [
+                    max(per_rank[source][index], per_rank[destination][index])
+                    for index in range(iterations)
+                ]
+                critical_mean_ms = statistics.fmean(critical)
+                result = {
+                    "name": f"ring16_edge_{source:02d}_to_{destination:02d}",
+                    "warmups": warmups,
+                    "iterations": iterations,
+                    "logical_bytes_per_rank_per_iteration": logical_bytes,
+                    "logical_bytes_scope": "active_sender",
+                    "critical_path": _stats(critical),
+                    "effective_logical_GBps": logical_bytes / critical_mean_ms / 1_000_000.0,
+                    "per_rank": {
+                        str(source): _stats(per_rank[source]),
+                        str(destination): _stats(per_rank[destination]),
+                    },
+                    "matching": matching_name,
+                    "interpretation": (
+                        "One of eight disjoint current-order Ring edges measured concurrently "
+                        "on the production-size communicator."
+                    ),
+                }
+                matching_results.append(result)
+                if rank == 0:
+                    print(
+                        f"[MegaDiscovery][collectives] DONE  {result['name']} "
+                        f"mean={critical_mean_ms:.3f}ms "
+                        f"logical={result['effective_logical_GBps']:.3f}GB/s",
+                        flush=True,
+                    )
+            checkpoint(
+                "running",
+                active_benchmark=None,
+                benchmarks=[*results, *matching_results],
+            )
+            return matching_results
+
         def rotate_separate() -> None:
             current = 0
             for hop in range(world_size - 1):
@@ -384,29 +495,11 @@ def run_distributed(output: Path) -> None:
         def broadcast_aux() -> None:
             dist.broadcast(aux_tensor, src=0)
 
-        for source in range(world_size):
-            destination = (source + 1) % world_size
-
-            def transfer_ring_edge(source: int = source, destination: int = destination) -> None:
-                if rank == source:
-                    dist.isend(k_buffers[0], destination).wait()
-                elif rank == destination:
-                    dist.irecv(edge_receive, source).wait()
-
-            results.append(
-                measure(
-                    f"ring16_edge_{source:02d}_to_{destination:02d}",
-                    transfer_ring_edge,
-                    warmups=0,
-                    iterations=2,
-                    logical_bytes=int(contract["one_k_or_v_payload_bytes"]),
-                    logical_bytes_scope="active_sender",
-                    interpretation=(
-                        "One current-order Ring neighbor edge with the exact K payload; "
-                        "all non-participating ranks remain barrier-synchronized."
-                    ),
-                )
-            )
+        for matching_name, matching in zip(
+            ("even_sources", "odd_sources"),
+            build_ring_edge_matchings(world_size),
+        ):
+            results.extend(measure_edge_matching(matching_name, matching))
         results.append(
             measure(
                 "ring16_aux_broadcast",
