@@ -249,7 +249,7 @@ def build_report(result_dir: Path) -> dict[str, Any]:
         raise ValueError("run manifest and T1 summary world sizes disagree")
     if int(((collective.get("environment") or {}).get("world_size")) or 0) != world_size:
         raise ValueError("collective benchmark and T1 summary world sizes disagree")
-    topology = "ring_sp16" if world_size == 16 else "ulysses_sp8"
+    topology = "cp2_ulysses8_sp16" if world_size == 16 else "ulysses_sp8"
     totals = t1.get("critical_path_totals_ms") or {}
     h3_ms = float(totals.get("h3_step_gpu_ms") or 0.0)
     sp_ms = float(totals.get("sp_layout_and_communication_gpu_ms") or 0.0)
@@ -273,34 +273,39 @@ def build_report(result_dir: Path) -> dict[str, Any]:
     projected = {}
     edge_discovery: dict[str, Any] | None = None
     if world_size == 16:
-        separate_ms = critical_mean(benches.get("ring16_full_rotation_separate_kv"))
-        fused_ms = critical_mean(benches.get("ring16_full_rotation_fused_kv"))
-        broadcast_ms = critical_mean(benches.get("ring16_aux_broadcast"))
+        current_ms = critical_mean(benches.get("hybrid16_block_current_transport"))
+        fused_ms = critical_mean(benches.get("hybrid16_block_fused_transport"))
+        context_separate_ms = critical_mean(benches.get("hybrid16_context_kv_separate"))
+        context_fused_ms = critical_mean(benches.get("hybrid16_context_kv_fused"))
         fusion = {
-            "separate_kv_mean_ms": separate_ms,
-            "fused_kv_mean_ms": fused_ms,
-            "synthetic_speedup": safe_ratio(separate_ms or 0.0, fused_ms or 0.0),
+            "current_2d_mean_ms": current_ms,
+            "fused_2d_mean_ms": fused_ms,
+            "synthetic_speedup": safe_ratio(current_ms or 0.0, fused_ms or 0.0),
+            "context_separate_kv_mean_ms": context_separate_ms,
+            "context_fused_kv_mean_ms": context_fused_ms,
+            "context_synthetic_speedup": safe_ratio(
+                context_separate_ms or 0.0,
+                context_fused_ms or 0.0,
+            ),
             "bytes_changed": False,
-            "ring_hops_changed": False,
-            "p2p_ops_per_hop": {"current": 4, "fused": 2},
+            "context_hops_changed": False,
+            "context_p2p_ops_per_hop": {"current": 4, "fused": 2},
         }
-        edge_discovery = ring_edge_discovery(benches, host_before)
-        separate_ceiling_ms = separate_ms * 200 if separate_ms is not None else None
+        current_ceiling_ms = current_ms * 200 if current_ms is not None else None
         fused_ceiling_ms = fused_ms * 200 if fused_ms is not None else None
         projected = {
-            "separate_kv_transport_ceiling_ms_for_200_blocks": separate_ceiling_ms,
-            "fused_kv_transport_ceiling_ms_for_200_blocks": fused_ceiling_ms,
-            "synthetic_fusion_ceiling_delta_ms_for_200_blocks": (
-                separate_ceiling_ms - fused_ceiling_ms
-                if separate_ceiling_ms is not None and fused_ceiling_ms is not None
+            "current_2d_transport_ceiling_ms_for_200_blocks": current_ceiling_ms,
+            "fused_2d_transport_ceiling_ms_for_200_blocks": fused_ceiling_ms,
+            "synthetic_2d_fusion_ceiling_delta_ms_for_200_blocks": (
+                current_ceiling_ms - fused_ceiling_ms
+                if current_ceiling_ms is not None and fused_ceiling_ms is not None
                 else None
             ),
-            "observed_envelope_share_of_separate_transport_ceiling": safe_ratio(
-                sp_ms, float(separate_ceiling_ms or 0.0)
+            "current_isolated_share_of_observed_envelope": safe_ratio(
+                float(current_ceiling_ms or 0.0), sp_ms
             ),
-            "aux_broadcast_isolated_ms_for_200_blocks": (broadcast_ms * 200 if broadcast_ms is not None else None),
             "non_additive": True,
-            "guardrail": "Ring transport is overlapped with attention; these isolated projections are ceilings, not production savings.",
+            "guardrail": "The 2D transport is interleaved with layout and attention; isolated projections are ceilings, not production savings.",
         }
     else:
         current_ms = critical_mean(benches.get("ulysses_block_current_transport"))
@@ -348,10 +353,10 @@ def build_report(result_dir: Path) -> dict[str, Any]:
         and sp_share >= 0.25
         and exposed_share <= 0.03
     )
-    ring_dense_attention_timing_available = not (
+    distributed_dense_attention_timing_available = not (
         world_size == 16 and dense_attention_ms <= 0.0
     )
-    if ring_dense_attention_timing_available:
+    if distributed_dense_attention_timing_available:
         communication_dominant: bool | None = sequence_parallel_envelope_dominant
         communication_attribution_status = (
             "supported_by_collector_decomposition"
@@ -360,14 +365,14 @@ def build_report(result_dir: Path) -> dict[str, Any]:
         )
     else:
         communication_dominant = None
-        communication_attribution_status = "unresolved_ring_attention_nested_in_envelope"
+        communication_attribution_status = "unresolved_2d_attention_nested_in_envelope"
     opportunities = []
     if world_size == 16:
         fusion_speedup = (fusion or {}).get("synthetic_speedup")
         opportunities.append(
             {
                 "priority": 1,
-                "name": "ring_kv_payload_fusion",
+                "name": "2d_qkv_and_kv_payload_fusion",
                 "evidence": "isolated production-shape microbenchmark",
                 "measured_synthetic_speedup": fusion_speedup,
                 "production_change_applied": False,
@@ -383,35 +388,25 @@ def build_report(result_dir: Path) -> dict[str, Any]:
         opportunities.append(
             {
                 "priority": 2,
-                "name": "ring_rank_order_from_pcie_topology",
+                "name": "2d_subgroup_rank_order_from_pcie_topology",
                 "evidence": {
                     "pci_upstream_groups": groups,
                     "pcie_root_complex_groups": root_complex_groups,
                     "rccl_transport_evidence_present": rccl["transport_evidence_present"],
-                    "edge_discovery": edge_discovery,
+                    "ulysses_rows": [list(range(8)), list(range(8, 16))],
+                    "context_pairs": [[rank, rank + 8] for rank in range(8)],
                 },
                 "production_change_applied": False,
-                "decision": (
-                    "candidate"
-                    if (edge_discovery or {}).get("slowest_over_median")
-                    and float(edge_discovery["slowest_over_median"]) > 1.15
-                    else "no_slow_neighbor_edge_detected"
-                    if (edge_discovery or {}).get("measured_edge_count") == world_size
-                    else "insufficient_edge_evidence"
-                ),
+                "decision": "inspect_subgroup_placement",
             }
         )
         opportunities.append(
             {
                 "priority": 3,
-                "name": "replicated_aux_broadcast",
-                "evidence": projected.get("aux_broadcast_isolated_ms_for_200_blocks"),
+                "name": "2d_online_merge_and_layout_fusion",
+                "evidence": projected.get("current_2d_transport_ceiling_ms_for_200_blocks"),
                 "production_change_applied": False,
-                "decision": (
-                    "probe_unavailable"
-                    if broadcast_ms is None
-                    else "measure_against_ring_envelope_before_code_change"
-                ),
+                "decision": "measure_against_2d_envelope_before_code_change",
             }
         )
 
@@ -447,7 +442,8 @@ def build_report(result_dir: Path) -> dict[str, Any]:
             "sequence_parallel_envelope_share": sp_share,
             "sequence_parallel_envelope_dominant_under_current_lazy_policy": sequence_parallel_envelope_dominant,
             "dense_attention_gpu_ms": dense_attention_ms,
-            "ring_dense_attention_timing_available": ring_dense_attention_timing_available,
+            "ring_dense_attention_timing_available": distributed_dense_attention_timing_available,
+            "distributed_dense_attention_timing_available": distributed_dense_attention_timing_available,
             "exposed_h2d_gpu_ms": exposed_h2d_ms,
             "exposed_h2d_share": exposed_share,
             "rank_h3_total_ms": rank_totals,
@@ -481,8 +477,8 @@ def build_report(result_dir: Path) -> dict[str, Any]:
         "guardrails": [
             "Collector latency is not the production latency baseline.",
             "The sequence-parallel envelope includes layout, communication, online merge, and synchronization; it is not pure wire time.",
-            "A zero Ring dense-attention timer means attention remains nested in the sequence-parallel envelope, so pure communication attribution is unknown.",
-            "Ring communication overlaps attention, so isolated transport projections are non-additive.",
+            "A zero distributed dense-attention timer means attention remains nested in the sequence-parallel envelope, so pure communication attribution is unknown.",
+            "2D communication is interleaved with layout and attention, so isolated transport projections are non-additive.",
             "MegaDiscovery does not change BF16, lazy loading, CPU/GPU buffer counts, LoRA, TunableOp, attention kernels, or SP topology.",
         ],
     }
@@ -512,7 +508,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Communication dominant under the current lazy policy: `{communication_dominant_text}`",
         f"- Communication attribution: `{diagnosis['communication_attribution_status']}`",
         f"- Sequence-parallel envelope dominant: `{str(diagnosis['sequence_parallel_envelope_dominant_under_current_lazy_policy']).lower()}`",
-        f"- Ring dense-attention timing available: `{str(diagnosis['ring_dense_attention_timing_available']).lower()}`",
+        f"- Distributed dense-attention timing available: `{str(diagnosis['distributed_dense_attention_timing_available']).lower()}`",
         f"- Sequence-parallel envelope: `{diagnosis['sequence_parallel_envelope_gpu_ms'] / 1000.0:.3f}s` ({(diagnosis['sequence_parallel_envelope_share'] or 0.0) * 100.0:.2f}%)",
         f"- Exposed H2D: `{diagnosis['exposed_h2d_gpu_ms'] / 1000.0:.3f}s` ({(diagnosis['exposed_h2d_share'] or 0.0) * 100.0:.2f}%)",
         f"- Cross-rank H3 spread: `{diagnosis['rank_spread_ms'] / 1000.0:.3f}s`",
@@ -531,12 +527,13 @@ def render_markdown(report: dict[str, Any]) -> str:
     if report["world_size"] == 16:
         lines.extend(
             [
-                f"- Ring hops per block: `{traffic.get('ring_hops_per_block')}`",
+                f"- Topology: `CP{traffic.get('context_size')} x Ulysses{traffic.get('ulysses_size')}`",
+                f"- Ulysses A2As per block: `{traffic.get('ulysses_a2a_calls_per_block')}`",
+                f"- Context Ring hops per block: `{traffic.get('context_ring_hops_per_block')}`",
                 f"- P2P send/recv operations per run and rank: `{traffic.get('p2p_send_recv_ops_per_run')}`",
-                f"- Logical K/V send per run and rank: `{(traffic.get('logical_send_bytes_per_run_per_rank') or 0) / 1e9:.3f} GB`",
-                f"- Isolated fused-KV speedup: `{(fusion.get('synthetic_speedup') or 0.0):.3f}x`",
-                f"- Current-order neighbor edges measured: `{edge_discovery.get('measured_edge_count', 0)}`",
-                f"- Slowest edge over median: `{(edge_discovery.get('slowest_over_median') or 0.0):.3f}x`",
+                f"- Estimated remote traffic per run and rank: `{(traffic.get('estimated_remote_bytes_per_run_per_rank') or 0) / 1e9:.3f} GB`",
+                f"- Isolated full 2D fusion speedup: `{(fusion.get('synthetic_speedup') or 0.0):.3f}x`",
+                f"- Isolated CP2 K/V fusion speedup: `{(fusion.get('context_synthetic_speedup') or 0.0):.3f}x`",
             ]
         )
     else:

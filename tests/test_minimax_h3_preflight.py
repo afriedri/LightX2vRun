@@ -156,7 +156,7 @@ def test_artifact_contract_accepts_published_component_layout(tmp_path):
     assert artifacts["turbo"].endswith("minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors")
 
 
-def test_artifact_contract_allows_ring16_without_head_divisibility(tmp_path):
+def test_artifact_contract_uses_u8_head_divisibility_for_sp16(tmp_path):
     artifacts = PREFLIGHT.check_artifacts(*make_artifacts(tmp_path), expected_world_size=16)
     assert artifacts["attention_heads"] == 56
 
@@ -210,7 +210,7 @@ def test_runtime_contract_accepts_only_pure_ulysses(tmp_path, world_size):
         PREFLIGHT.check_runtime_config(path, world_size)
 
 
-def test_runtime_contract_accepts_ring16_lazy_rank0_encoder(tmp_path):
+def test_runtime_contract_accepts_cp2_ulysses8_lazy_rank0_encoder(tmp_path):
     config = {
         "video_flow_shift": 6.0,
         "h3_step_update": "training_euler",
@@ -230,21 +230,32 @@ def test_runtime_contract_accepts_ring16_lazy_rank0_encoder(tmp_path):
         "text_encoder_unload_after_infer": True,
         "warmup": False,
         "enable_cfg": False,
+        "target_video_length": 124,
+        "target_width": 1344,
+        "target_height": 768,
+        "fps": 24,
         "tensor_parallel": False,
         "text_encoder_tensor_parallel": False,
         "seq_parallel": True,
         "vae_decode_parallel": True,
         "parallel": {
             "seq_p_size": 16,
-            "seq_p_attn_type": "ring",
+            "seq_p_attn_type": "ulysses_ring",
+            "context_p_size": 2,
+            "ulysses_p_size": 8,
             "seq_p_prepost_backend": "torch",
             "seq_p_a2a_backend": "torch",
         },
     }
-    path = tmp_path / "runtime-ring16.json"
+    path = tmp_path / "runtime-cp2-u8-sp16.json"
     path.write_text(json.dumps(config), encoding="utf-8")
 
-    assert PREFLIGHT.check_runtime_config(path, 16)["parallel"]["seq_p_attn_type"] == "ring"
+    assert PREFLIGHT.check_runtime_config(path, 16)["parallel"]["seq_p_attn_type"] == "ulysses_ring"
+
+    config["h3_ulysses_minimize_aux_prefix"] = False
+    path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        PREFLIGHT.check_runtime_config(path, 16)
 
 
 @pytest.mark.parametrize(

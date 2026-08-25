@@ -205,11 +205,12 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
             die(f"LightX2V model-facing attention registry is missing: {backend}")
     sage_backend = PLATFORM_ATTN_WEIGHT_REGISTER["aiter_fav3_sage_bf16_attn"]
     if not callable(getattr(sage_backend, "apply_with_lse", None)):
-        die("LightX2V Sage backend is missing apply_with_lse required by Ring SP16")
+        die("LightX2V Sage backend is missing apply_with_lse required by CP2xU8 SP16")
     for registry, name in (
         (RUNNER_REGISTER, "minimax_h3"),
         (ATTN_WEIGHT_REGISTER, "ulysses"),
         (ATTN_WEIGHT_REGISTER, "ring"),
+        (ATTN_WEIGHT_REGISTER, "ulysses_ring"),
         (ATTN_WEIGHT_REGISTER, "torch_sdpa"),
         (RMS_WEIGHT_REGISTER, "torch_native"),
         (RMS_WEIGHT_REGISTER, "minimax_h3_aiter_triton_qk"),
@@ -252,6 +253,7 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
             "aiter_triton_mha",
             "ulysses",
             "ring",
+            "ulysses_ring",
         ],
         "h1_patch_embed": patch_embed_contract,
         "h3_runcollector": check_runcollector_runtime(required_runcollector_schema),
@@ -387,7 +389,7 @@ def standalone_sage_smoke_plan(world_size: int) -> tuple[tuple[int, int], ...]:
     if world_size not in (1, 2, 4, 8, 16):
         raise ValueError(f"MiniMax-H3 Sage preflight does not support world_size={world_size}")
     # Multi-GPU runs are covered once, through the exact torchrun
-    # Ulysses/Ring-to-Sage production path. A second parent-process Sage check would
+    # distributed-to-Sage production path. A second parent-process Sage check would
     # be redundant and can reuse device-local FlyDSL state incorrectly.
     return ((0, 56),) if world_size == 1 else ()
 
@@ -409,8 +411,9 @@ def smoke_distributed_attention() -> int:
 
     # These imports can initialize Aiter/Triton/FlyDSL device-local state, so
     # they must happen only after the torchrun worker has selected LOCAL_RANK.
-    from lightx2v.common.ops.attn.ring_attn import RingAttnWeight
     from lightx2v.common.ops.attn.ulysses_attn import UlyssesAttnWeight
+    from lightx2v.common.ops.attn.ulysses_ring_attn import UlyssesRingAttnWeight
+    from lightx2v.models.networks.minimax_h3.parallel import create_h3_2d_process_groups
     from lightx2v_platform.ops.attn.amd_rocm.sage_attn import AiterFav3SageBf16AttnWeight
 
     dist.init_process_group(backend="nccl")
@@ -420,7 +423,7 @@ def smoke_distributed_attention() -> int:
         if world_size not in (2, 4, 8, 16):
             raise RuntimeError(f"MiniMax-H3 distributed preflight requires world_size 2, 4, 8, or 16, got {world_size}")
         device = torch.device(f"cuda:{local_rank}")
-        aux_len = 3
+        aux_len = 4 if world_size == 16 else 3
         torch.manual_seed(20260817)
         aux_q = torch.randn(aux_len, 56, 128, device=device, dtype=torch.bfloat16)
         aux_k = torch.randn_like(aux_q)
@@ -430,9 +433,13 @@ def smoke_distributed_attention() -> int:
         q = torch.randn(local_len, heads, head_dim, device=device, dtype=torch.bfloat16)
         k = torch.randn_like(q)
         v = torch.randn_like(q)
-        attention_kind = "ring" if world_size == 16 else "ulysses"
-        distributed_attention = RingAttnWeight() if attention_kind == "ring" else UlyssesAttnWeight(a2a_backend="torch")
-        output, aux_output = distributed_attention.apply_new(
+        attention_kind = "ulysses_ring" if world_size == 16 else "ulysses"
+        distributed_attention = (
+            UlyssesRingAttnWeight(a2a_backend="torch")
+            if attention_kind == "ulysses_ring"
+            else UlyssesAttnWeight(a2a_backend="torch")
+        )
+        attention_kwargs = dict(
             q=q,
             k=k,
             v=v,
@@ -449,15 +456,24 @@ def smoke_distributed_attention() -> int:
             aux_first=True,
             attention_kwargs={"causal": False},
         )
+        if attention_kind == "ulysses_ring":
+            groups = create_h3_2d_process_groups(
+                dist.group.WORLD,
+                context_size=2,
+                ulysses_size=8,
+            )
+            attention_kwargs["ulysses_group"] = groups.ulysses_group
+            attention_kwargs["context_group"] = groups.context_group
+        output, aux_output = distributed_attention.apply_new(**attention_kwargs)
         torch.cuda.synchronize(device)
         expected_shape = (local_len, heads * head_dim)
         if tuple(output.shape) != expected_shape:
-            raise RuntimeError(f"Ulysses output shape {tuple(output.shape)} != {expected_shape}")
+            raise RuntimeError(f"Distributed attention output shape {tuple(output.shape)} != {expected_shape}")
         expected_aux_shape = (aux_len, heads * head_dim)
         if aux_output is None or tuple(aux_output.shape) != expected_aux_shape:
-            raise RuntimeError(f"Ulysses auxiliary output shape is not {expected_aux_shape}: {None if aux_output is None else tuple(aux_output.shape)}")
+            raise RuntimeError(f"Distributed auxiliary output shape is not {expected_aux_shape}: {None if aux_output is None else tuple(aux_output.shape)}")
         if not torch.isfinite(output).all() or output.abs().max().item() <= 0.0 or not torch.isfinite(aux_output).all():
-            raise RuntimeError("Ulysses produced zero or non-finite output")
+            raise RuntimeError("Distributed attention produced zero or non-finite output")
         dist.barrier()
         if rank == 0:
             print(
@@ -467,8 +483,8 @@ def smoke_distributed_attention() -> int:
                         "backend": attention_kind,
                         "attention": "aiter_fav3_sage_bf16_attn",
                         "attention_route": (
-                            "sage_attn_v2_gfx1201_ring_hybrid"
-                            if attention_kind == "ring"
+                            "sage_attn_v2_gfx1201_ulysses_ring_2d"
+                            if attention_kind == "ulysses_ring"
                             else "sage_attn_v2_gfx1201"
                         ),
                         "world_size": world_size,
@@ -510,8 +526,12 @@ def check_artifacts(model_dir: Path, turbo_dir: Path, first_frame: Path, last_fr
         attention_heads = int(transformer_config.get("num_attention_heads", 56))
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
         die(f"H3 transformer config cannot be parsed: {error}")
-    if expected_world_size != 16 and attention_heads % expected_world_size:
-        die(f"H3 Ulysses requires num_attention_heads={attention_heads} to be divisible by world_size={expected_world_size}")
+    head_parallel_size = 8 if expected_world_size == 16 else expected_world_size
+    if attention_heads % head_parallel_size:
+        die(
+            f"H3 Ulysses dimension requires num_attention_heads={attention_heads} "
+            f"to be divisible by {head_parallel_size}"
+        )
     processor_dir = model_dir / "processor"
     if not processor_dir.is_dir():
         die(f"H3 model component directory not found: {processor_dir}")
@@ -607,7 +627,7 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
     else:
         if not isinstance(parallel, dict):
             die(f"SP{expected_world_size} runtime config parallel must be a dictionary")
-        expected_attention = "ring" if expected_world_size == 16 else "ulysses"
+        expected_attention = "ulysses_ring" if expected_world_size == 16 else "ulysses"
         if parallel.get("seq_p_size") != expected_world_size or parallel.get("seq_p_attn_type") != expected_attention:
             die(
                 f"SP{expected_world_size} runtime config must select seq_p_size={expected_world_size} "
@@ -621,6 +641,22 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
             die(f"MiniMax-H3 gfx1201 SP{expected_world_size} communication must remain unquantized, got {parallel!r}")
         if parallel.get("seq_p_tensor_fusion", False) is not False or parallel.get("seq_p_head_parallel", False) is not False:
             die(f"MiniMax-H3 gfx1201 SP{expected_world_size} must not enable tensor fusion or the head pipeline, got {parallel!r}")
+        if expected_world_size == 16:
+            if parallel.get("context_p_size") != 2 or parallel.get("ulysses_p_size") != 8:
+                die(f"MiniMax-H3 gfx1201 SP16 requires CP2xU8, got {parallel!r}")
+            if not bool(config.get("h3_ulysses_minimize_aux_prefix", True)):
+                die("MiniMax-H3 gfx1201 CP2xU8 SP16 requires the minimal auxiliary prefix")
+            workload = (
+                config.get("target_video_length"),
+                config.get("target_width"),
+                config.get("target_height"),
+                config.get("fps"),
+            )
+            if workload != (124, 1344, 768, 24):
+                die(
+                    "MiniMax-H3 gfx1201 SP16 is validated only for "
+                    f"124f 1344x768 at 24fps, got {workload!r}"
+                )
     return config
 
 
@@ -648,7 +684,7 @@ def main() -> int:
     # The parent preflight process initializes Aiter once on logical cuda:0.
     # Do not execute native Sage on multiple devices from that one process:
     # FlyDSL owns device-local runtime state. Multi-GPU Sage coverage is
-    # provided below by the one-process-per-device torchrun Ulysses/Ring smoke.
+    # provided below by the one-process-per-device torchrun distributed smoke.
     torch.cuda.set_device(0)
     runtime = check_runtime_dependencies(args.source_mode, args.required_runcollector_schema)
     artifacts = {}
@@ -707,7 +743,7 @@ def main() -> int:
         )
         kernel_status = f"Triton Refiner ran on cuda:0; {sage_status}"
     else:
-        kernel_status = "Triton Refiner ran on cuda:0; standalone Sage skipped; distributed Ulysses/Ring-to-Sage smoke follows"
+        kernel_status = "Triton Refiner ran on cuda:0; standalone Sage skipped; distributed-to-Sage smoke follows"
     print(
         f"[H3Preflight] gfx={gpu['arch']} rocm={gpu['rocm']} source={args.source_mode} "
         f"{kernel_status}",

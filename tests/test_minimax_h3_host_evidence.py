@@ -56,7 +56,7 @@ def test_host_evidence_cli_writes_sp8_read_only_contract(tmp_path):
     assert payload["paths"]["result"]["exists"] is True
 
 
-def test_host_evidence_cli_writes_ring16_rank_mapping(tmp_path):
+def test_host_evidence_cli_writes_cp2_ulysses8_sp16_rank_mapping(tmp_path):
     output = tmp_path / "host-before.json"
     completed = subprocess.run(
         [
@@ -86,7 +86,7 @@ def test_host_evidence_cli_writes_ring16_rank_mapping(tmp_path):
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["schema_name"] == "lightx2v.minimax_h3.megadiscovery.host"
     assert payload["profile"] == "megadiscovery"
-    assert payload["workload_contract"]["parallel"] == "ring_sp16"
+    assert payload["workload_contract"]["parallel"] == "cp2_ulysses8_sp16"
     mapping = payload["gpus"]["local_rank_mapping"]
     assert [item["local_rank"] for item in mapping] == list(range(16))
     assert [item["rocm_index"] for item in mapping] == list(range(16))

@@ -45,22 +45,22 @@ launcher explicitly disables TunableOp and does not load a tuning cache: its
 weighted gain was only 1.035x and QKV LoRA-up regressed. Preflight executes
 only static/runtime contracts during a normal inference start;
 `--preflight-only` additionally executes both Attention kernels and the real
-Ulysses-to-Sage adapter.
+distributed-to-Sage adapter.
 
-The final native Sage schedule selector lives only in Aiter revision
-`189d95fdd964c64b010e43aefeaf13779ccfd41e`. LightX2V deliberately passes only
+The native Sage schedule selector lives in Aiter. LightX2V deliberately passes only
 `{"backend":"sage_attn_v2_gfx1201"}` so Aiter can route from the actual BSHD:
 
 ```text
-finite allowlist without a key tail -> r32_kv
-finite allowlist with a key tail    -> p8kv_res8_peel
-other D128 shapes                   -> pad8_kv
+automatic B1/D128 with a key tail -> p8kv_res8_peel
+automatic B1/D128 without a tail  -> tuned no-tail schedule
+explicit tuning mappings          -> caller-selected schedule
 ```
 
 The exact H3 Ulysses shapes `[1,42196,28,128]`, `[1,42196,14,128]`, and
-`[1,42196,7,128]` are allowlisted for SP2/SP4/SP8. Ring16 retains all 56 heads;
-its square `[1,2483,56,128]` and `[1,4951,56,128]` calls are allowlisted, while
-the rectangular auxiliary remains on its explicit safe route.
+`[1,42196,7,128]` are used by SP2/SP4/SP8. CP2xU8 SP16 uses seven heads per U8
+shard; its dominant square calls are `[1,21096,7,128]` and
+`[1,21100,7,128]`, both on `p8kv_res8_peel`. The two-row rectangular auxiliary
+remains on its explicit cross-attention route.
 
 Run the production 2/4/8/16-card timing sweep and write the same CSV/Markdown
 table used by Wan2.2:
@@ -70,7 +70,7 @@ bash scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh \
   --image IMAGE
 ```
 
-SP2/SP4/SP8 use Ulysses and SP16 uses Ring. The workload is frozen at
+SP2/SP4/SP8 use Ulysses and SP16 uses CP2xU8. The workload is frozen at
 1344x768, 124 frames, 24 FPS, and approximately 5.17 seconds.
 
 Runtime status uses one stable LightX2V format:
@@ -123,7 +123,7 @@ bash scripts/run_minimax_h3_fl2av_4step_768p.sh \
 For Sage shape collection only, do not use `--collect`. The Sage adapter already
 emits one normalized first-real-dispatch event per rank. The dedicated Run sweep
 runs the frozen 1344x768, 124-frame workload sequentially at Ulysses SP4,
-Ulysses SP8, and Ring16, checks every rank, reconstructs Ring's exact internal
+Ulysses SP8, and CP2xU8 SP16, checks every rank, reconstructs the 2D path's exact internal
 kernel contracts, and writes `sage_shapes.json`:
 
 ```bash
@@ -135,9 +135,9 @@ bash scripts/collector/run_minimax_h3_sage_shape_sweep.sh \
 
 The default GPU pool is `0..15`; override it with `--gpus` when needed. The
 expected Ulysses contracts are `[1,42196,14,128]` for SP4 and
-`[1,42196,7,128]` for SP8. Ring16 keeps all 56 heads and reports its local query
-contract; the collector combines that with the Ulysses global sequence to emit
-the non-final rectangular auxiliary, non-final square main-shard, and final
+`[1,42196,7,128]` for SP8. CP2xU8 SP16 reports `[1,21098,7,128]` for its first
+local query; the collector combines that with the global sequence to emit the
+two-row non-final rectangular auxiliary, `[1,21096,7,128]` main square, and final
 combined-square contracts. Values come from real runtime dispatches and the
 sweep fails on missing ranks, route/head mismatches, or cross-rank disagreement.
 
@@ -174,7 +174,7 @@ metrics. SuperCollect is diagnostic and its latency is not a production timing
 baseline.
 
 For one observer-only full-stack communication investigation, run
-MegaDiscovery. It defaults to Ring16 and also accepts exactly eight GPUs for an
+MegaDiscovery. It defaults to CP2xU8 SP16 and also accepts exactly eight GPUs for an
 SP8/Ulysses capture:
 
 ```bash
@@ -184,16 +184,15 @@ bash scripts/collector/run_minimax_h3_megadiscovery.sh \
 ```
 
 MegaDiscovery first runs the unchanged production workload, then starts a short
-isolated communication process with the exact BF16 production payloads. Ring16
-evidence covers the current 15-hop separate K/V rotation, a synthetic fused-KV
-comparison, all 16 current-order neighbor edges, and the replicated auxiliary
-broadcast. SP8 covers one A2A, the current four-A2A-plus-gather block contract,
+isolated communication process with the exact BF16 production payloads. SP16
+evidence covers the two disjoint U8 A2As, eight CP2 single-hop K/V exchanges,
+both auxiliary gathers, the complete current 2D block transport, and synthetic
+QKV/KV-fused comparisons. SP8 covers one A2A, the current four-A2A-plus-gather block contract,
 and a synthetic QKV-fused comparison. Synthetic probes are discovery evidence
 only; they do not enable fusion or modify production configuration.
 
 The probes normally take one to three minutes and have a default 300-second hard
-timeout. Ring16 measures neighbor edges and aux traffic before the full-ring
-comparisons, and atomically checkpoints every completed measurement. A probe
+timeout. The probe atomically checkpoints every completed measurement. A probe
 timeout therefore preserves both the completed production run and any finished
 transport evidence, then emits a partial diagnosis instead of blocking
 indefinitely. The result directory adds
@@ -201,8 +200,8 @@ indefinitely. The result directory adds
 RCCL logs, KFD/PCIe/NUMA before/after snapshots, and `megadiscovery.{json,md}`. The
 unified report correlates transport measurements with the schema-2 sequence
 parallel envelope, exposed H2D, rank spread, current local-rank-to-physical-GPU
-mapping, slow Ring edges, host counters, and memory headroom. Collector latency
-and isolated Ring transport ceilings remain non-additive diagnostics, not a new
+mapping, subgroup placement, host counters, and memory headroom. Collector latency
+and isolated 2D transport ceilings remain non-additive diagnostics, not a new
 production timing baseline.
 
 ## Package and upload any result directory

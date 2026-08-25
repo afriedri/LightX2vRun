@@ -5,14 +5,14 @@ observe the frozen production workload and must not silently change model
 precision, offload policy, buffer counts, tuned kernels, or parallel topology.
 
 - `run_minimax_h3_sp8_supercollect.sh`: SP8/Ulysses full-run evidence.
-- `run_minimax_h3_sage_shape_sweep.sh`: SP4/SP8/Ring16 Sage contracts.
-- `run_minimax_h3_megadiscovery.sh`: SP8 or Ring16 full-stack discovery.
+- `run_minimax_h3_sage_shape_sweep.sh`: SP4/SP8/CP2xU8-SP16 Sage contracts.
+- `run_minimax_h3_megadiscovery.sh`: SP8 or CP2xU8-SP16 full-stack discovery.
 - `collect_minimax_h3_host_evidence.py`: host, PCIe, KFD, NUMA, and storage snapshots.
 - `benchmark_minimax_h3_collectives.py`: isolated production-shape communication probes.
 - `summarize_minimax_h3_t1.py`: cross-rank H3 critical-path summary.
 - `analyze_minimax_h3_megadiscovery.py`: unified JSON and Markdown diagnosis.
 
-Run Ring16 MegaDiscovery with:
+Run CP2xU8 SP16 MegaDiscovery with:
 
 ```bash
 bash scripts/collector/run_minimax_h3_megadiscovery.sh \
@@ -22,8 +22,7 @@ bash scripts/collector/run_minimax_h3_megadiscovery.sh \
 
 The isolated probes run after inference in a separate process. Their synthetic
 fusion variants and timing overhead never alter the production model process.
-Ring16 prints each active measurement, checkpoints every completed result, and
-runs edge/aux probes before the bounded full-ring comparisons. A timeout keeps
-those checkpoints and marks the unified report partial.
+SP16 prints each active U8/CP2 measurement and checkpoints every completed
+result. A timeout keeps those checkpoints and marks the unified report partial.
 The historical root-level SuperCollect and Sage sweep shell entry points remain
 compatibility wrappers.

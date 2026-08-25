@@ -281,7 +281,7 @@ def build_snapshot(args: argparse.Namespace) -> dict[str, Any]:
     mega = args.profile == "megadiscovery"
     workload_contract = {
         "model": "minimax_h3",
-        "parallel": "ring_sp16" if len(args.gpu_indices) == 16 else "ulysses_sp8",
+        "parallel": "cp2_ulysses8_sp16" if len(args.gpu_indices) == 16 else "ulysses_sp8",
         "width": 1344,
         "height": 768,
         "frames": 124,

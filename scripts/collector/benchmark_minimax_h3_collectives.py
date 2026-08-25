@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark the exact MiniMax-H3 SP8 and Ring16 communication payloads."""
+"""Benchmark the exact MiniMax-H3 SP8 and CP2 x Ulysses8 SP16 payloads."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from typing import Any, Callable
 
 GLOBAL_MAIN_TOKENS = 39_728
 AUX_TOKENS = 2_468
+SP16_GLOBAL_MAIN_TOKENS = 42_192
+SP16_AUX_TOKENS = 4
 HEADS = 56
 HEAD_DIM = 128
 DTYPE_BYTES = 2
@@ -71,29 +73,52 @@ def build_traffic_contract(world_size: int) -> dict[str, Any]:
             "guardrail": "Remote bytes are an end-to-end traffic estimate; RCCL protocol traffic may differ.",
         }
 
-    ring_hops = world_size - 1
-    p2p_ops_per_block = ring_hops * 4
-    send_bytes_per_block = 2 * one_main_payload * ring_hops
+    context_size = 2
+    ulysses_size = 8
+    global_main = SP16_GLOBAL_MAIN_TOKENS
+    aux_tokens = SP16_AUX_TOKENS
+    local_main = global_main // world_size
+    shard_heads = HEADS // ulysses_size
+    ulysses_main = local_main * ulysses_size
+    one_ulysses_payload = local_main * HEADS * HEAD_DIM * DTYPE_BYTES
+    one_context_payload = ulysses_main * shard_heads * HEAD_DIM * DTYPE_BYTES
+    context_aux_shard_payload = (aux_tokens // context_size) * shard_heads * HEAD_DIM * DTYPE_BYTES
+    ulysses_aux_payload = aux_tokens * shard_heads * HEAD_DIM * DTYPE_BYTES
+    one_ulysses_remote = one_ulysses_payload * (ulysses_size - 1) // ulysses_size
+    send_bytes_per_block = (
+        4 * one_ulysses_remote
+        + 2 * one_context_payload
+        + context_aux_shard_payload
+        + ulysses_aux_payload * (ulysses_size - 1)
+    )
     return {
-        "topology": "ring_sp16",
+        "topology": "cp2_ulysses8_sp16",
         "world_size": world_size,
-        "global_main_tokens": GLOBAL_MAIN_TOKENS,
+        "context_size": context_size,
+        "ulysses_size": ulysses_size,
+        "global_main_tokens": global_main,
         "local_main_tokens": local_main,
-        "aux_tokens": AUX_TOKENS,
+        "ulysses_main_tokens": ulysses_main,
+        "aux_tokens": aux_tokens,
         "heads": HEADS,
+        "shard_heads": shard_heads,
         "head_dim": HEAD_DIM,
         "dtype": "torch.bfloat16",
-        "one_k_or_v_payload_bytes": one_main_payload,
-        "fused_kv_payload_bytes": 2 * one_main_payload,
-        "aux_broadcast_payload_bytes": aux_full_payload,
-        "ring_hops_per_block": ring_hops,
-        "ring_rounds_per_run": ring_hops * calls,
-        "p2p_send_recv_ops_per_block": p2p_ops_per_block,
-        "p2p_send_recv_ops_per_run": p2p_ops_per_block * calls,
-        "logical_send_bytes_per_block_per_rank": send_bytes_per_block,
-        "logical_send_bytes_per_run_per_rank": send_bytes_per_block * calls,
-        "aux_broadcast_calls_per_run": calls,
-        "guardrail": "Ring traffic excludes attention overlap and RCCL protocol amplification.",
+        "one_ulysses_a2a_payload_bytes": one_ulysses_payload,
+        "one_context_k_or_v_payload_bytes": one_context_payload,
+        "fused_context_kv_payload_bytes": 2 * one_context_payload,
+        "context_aux_shard_payload_bytes": context_aux_shard_payload,
+        "ulysses_aux_payload_bytes": ulysses_aux_payload,
+        "ulysses_a2a_calls_per_block": 4,
+        "context_ring_hops_per_block": 1,
+        "context_ring_rounds_per_run": calls,
+        "p2p_send_recv_ops_per_block": 4,
+        "p2p_send_recv_ops_per_run": 4 * calls,
+        "collective_phases_per_block": 7,
+        "collective_phases_per_run": 7 * calls,
+        "estimated_remote_bytes_per_block_per_rank": send_bytes_per_block,
+        "estimated_remote_bytes_per_run_per_rank": send_bytes_per_block * calls,
+        "guardrail": "2D traffic excludes layout, attention overlap, online merge, and RCCL protocol amplification.",
     }
 
 
@@ -192,7 +217,7 @@ def run_distributed(output: Path) -> None:
     }
     guardrails = [
         "The benchmark runs in a separate torchrun process after inference and retains no model or allocator state.",
-        "Ring measurements intentionally remove attention overlap, so they are transport ceilings rather than projected production latency.",
+        "2D measurements intentionally remove attention overlap, so they are transport ceilings rather than projected production latency.",
         "Synthetic fused payloads are discovery evidence and do not enable tensor fusion in the production run.",
     ]
     probe_started_at = datetime.now(timezone.utc).isoformat()
@@ -345,190 +370,218 @@ def run_distributed(output: Path) -> None:
             )
         )
     else:
-        next_rank = (rank + 1) % world_size
-        previous_rank = (rank - 1) % world_size
-        k_buffers = [
-            torch.empty((local_main, HEADS, HEAD_DIM), dtype=dtype, device=device)
-            for _ in range(2)
-        ]
-        v_buffers = [torch.empty_like(k_buffers[0]) for _ in range(2)]
-        fused_buffers = [
-            torch.empty((local_main * 2, HEADS, HEAD_DIM), dtype=dtype, device=device)
-            for _ in range(2)
-        ]
-        aux_tensor = torch.empty((aux_tokens, HEADS * HEAD_DIM), dtype=dtype, device=device)
-        edge_receive = torch.empty_like(k_buffers[0])
+        context_size = int(contract["context_size"])
+        ulysses_size = int(contract["ulysses_size"])
+        shard_heads = int(contract["shard_heads"])
+        ulysses_main = int(contract["ulysses_main_tokens"])
 
-        def measure_edge_matching(
-            matching_name: str,
-            matching: list[tuple[int, int]],
-        ) -> list[dict[str, Any]]:
-            warmups = 1
-            iterations = 2
-            active_name = f"ring16_edge_matching_{matching_name}"
-            if rank == 0:
-                edges = ", ".join(f"{source:02d}->{destination:02d}" for source, destination in matching)
-                print(
-                    f"[MegaDiscovery][collectives] START {active_name} "
-                    f"warmups={warmups} iterations={iterations} edges={edges}",
-                    flush=True,
+        ulysses_groups = []
+        for context_rank in range(context_size):
+            ranks = list(
+                range(
+                    context_rank * ulysses_size,
+                    (context_rank + 1) * ulysses_size,
                 )
-            checkpoint("running", active_benchmark=active_name)
+            )
+            ulysses_groups.append(dist.new_group(ranks=ranks))
+        context_groups = []
+        for ulysses_rank in range(ulysses_size):
+            ranks = [
+                context_rank * ulysses_size + ulysses_rank
+                for context_rank in range(context_size)
+            ]
+            context_groups.append(dist.new_group(ranks=ranks))
+        ulysses_group = ulysses_groups[rank // ulysses_size]
+        context_group = context_groups[rank % ulysses_size]
+        context_peer = rank + ulysses_size if rank < ulysses_size else rank - ulysses_size
 
-            role = next(
-                (
-                    ("send", destination)
-                    if rank == source
-                    else ("recv", source)
-                    if rank == destination
-                    else None
-                )
-                for source, destination in matching
-                if rank in (source, destination)
+        a2a_input = torch.empty(
+            (ulysses_size, local_main, shard_heads, HEAD_DIM),
+            dtype=dtype,
+            device=device,
+        )
+        a2a_output = torch.empty_like(a2a_input)
+        fused_qkv_input = torch.empty(
+            (ulysses_size, local_main, 3, shard_heads, HEAD_DIM),
+            dtype=dtype,
+            device=device,
+        )
+        fused_qkv_output = torch.empty_like(fused_qkv_input)
+        context_k_send = torch.empty(
+            (ulysses_main, shard_heads, HEAD_DIM),
+            dtype=dtype,
+            device=device,
+        )
+        context_k_receive = torch.empty_like(context_k_send)
+        context_v_send = torch.empty_like(context_k_send)
+        context_v_receive = torch.empty_like(context_k_send)
+        context_kv_send = torch.empty(
+            (2 * ulysses_main, shard_heads, HEAD_DIM),
+            dtype=dtype,
+            device=device,
+        )
+        context_kv_receive = torch.empty_like(context_kv_send)
+        context_aux_input = torch.empty(
+            (aux_tokens // context_size, shard_heads, HEAD_DIM),
+            dtype=dtype,
+            device=device,
+        )
+        context_aux_output = [
+            torch.empty_like(context_aux_input) for _ in range(context_size)
+        ]
+        ulysses_aux_input = torch.empty(
+            (aux_tokens, shard_heads, HEAD_DIM),
+            dtype=dtype,
+            device=device,
+        )
+        ulysses_aux_output = [
+            torch.empty_like(ulysses_aux_input) for _ in range(ulysses_size)
+        ]
+
+        def one_ulysses_a2a() -> None:
+            dist.all_to_all_single(
+                a2a_output,
+                a2a_input,
+                group=ulysses_group,
             )
 
-            def transfer() -> None:
-                operation, peer = role
-                p2p_operation = (
-                    dist.P2POp(dist.isend, k_buffers[0], peer)
-                    if operation == "send"
-                    else dist.P2POp(dist.irecv, edge_receive, peer)
-                )
-                for request in dist.batch_isend_irecv([p2p_operation]):
-                    request.wait()
+        def context_kv_separate() -> None:
+            operations = [
+                dist.P2POp(
+                    dist.isend,
+                    context_k_send,
+                    context_peer,
+                    group=context_group,
+                ),
+                dist.P2POp(
+                    dist.irecv,
+                    context_k_receive,
+                    context_peer,
+                    group=context_group,
+                ),
+                dist.P2POp(
+                    dist.isend,
+                    context_v_send,
+                    context_peer,
+                    group=context_group,
+                ),
+                dist.P2POp(
+                    dist.irecv,
+                    context_v_receive,
+                    context_peer,
+                    group=context_group,
+                ),
+            ]
+            for request in dist.batch_isend_irecv(operations):
+                request.wait()
 
-            local_samples = []
-            dist.barrier()
-            for _ in range(warmups):
-                transfer()
-            torch.cuda.synchronize(device)
-            dist.barrier()
-            for _ in range(iterations):
-                dist.barrier()
-                torch.cuda.synchronize(device)
-                started = time.perf_counter()
-                transfer()
-                torch.cuda.synchronize(device)
-                local_samples.append((time.perf_counter() - started) * 1000.0)
+        def context_kv_fused() -> None:
+            operations = [
+                dist.P2POp(
+                    dist.isend,
+                    context_kv_send,
+                    context_peer,
+                    group=context_group,
+                ),
+                dist.P2POp(
+                    dist.irecv,
+                    context_kv_receive,
+                    context_peer,
+                    group=context_group,
+                ),
+            ]
+            for request in dist.batch_isend_irecv(operations):
+                request.wait()
 
-            local_tensor = torch.tensor(local_samples, dtype=torch.float64, device=device)
-            gathered = [torch.empty_like(local_tensor) for _ in range(world_size)]
-            dist.all_gather(gathered, local_tensor)
-            per_rank = [item.cpu().tolist() for item in gathered]
-            logical_bytes = int(contract["one_k_or_v_payload_bytes"])
-            matching_results = []
-            for source, destination in matching:
-                critical = [
-                    max(per_rank[source][index], per_rank[destination][index])
-                    for index in range(iterations)
-                ]
-                critical_mean_ms = statistics.fmean(critical)
-                result = {
-                    "name": f"ring16_edge_{source:02d}_to_{destination:02d}",
-                    "warmups": warmups,
-                    "iterations": iterations,
-                    "logical_bytes_per_rank_per_iteration": logical_bytes,
-                    "logical_bytes_scope": "active_sender",
-                    "critical_path": _stats(critical),
-                    "effective_logical_GBps": logical_bytes / critical_mean_ms / 1_000_000.0,
-                    "per_rank": {
-                        str(source): _stats(per_rank[source]),
-                        str(destination): _stats(per_rank[destination]),
-                    },
-                    "matching": matching_name,
-                    "interpretation": (
-                        "One of eight disjoint current-order Ring edges measured concurrently "
-                        "on the production-size communicator."
-                    ),
-                }
-                matching_results.append(result)
-                if rank == 0:
-                    print(
-                        f"[MegaDiscovery][collectives] DONE  {result['name']} "
-                        f"mean={critical_mean_ms:.3f}ms "
-                        f"logical={result['effective_logical_GBps']:.3f}GB/s",
-                        flush=True,
-                    )
-            checkpoint(
-                "running",
-                active_benchmark=None,
-                benchmarks=[*results, *matching_results],
+        def current_2d_block() -> None:
+            for _ in range(3):
+                one_ulysses_a2a()
+            context_kv_separate()
+            dist.all_gather(
+                context_aux_output,
+                context_aux_input,
+                group=context_group,
             )
-            return matching_results
+            one_ulysses_a2a()
+            dist.all_gather(
+                ulysses_aux_output,
+                ulysses_aux_input,
+                group=ulysses_group,
+            )
 
-        def rotate_separate() -> None:
-            current = 0
-            for hop in range(world_size - 1):
-                following = 1 - current
-                operations = [
-                    dist.P2POp(dist.isend, k_buffers[current], next_rank),
-                    dist.P2POp(dist.irecv, k_buffers[following], previous_rank),
-                    dist.P2POp(dist.isend, v_buffers[current], next_rank),
-                    dist.P2POp(dist.irecv, v_buffers[following], previous_rank),
-                ]
-                for request in dist.batch_isend_irecv(operations):
-                    request.wait()
-                current = following
-                if rank == 0:
-                    print(
-                        f"[MegaDiscovery][collectives] HOP   ring16_full_rotation_separate_kv {hop + 1}/{world_size - 1}",
-                        flush=True,
-                    )
+        def fused_2d_block() -> None:
+            dist.all_to_all_single(
+                fused_qkv_output,
+                fused_qkv_input,
+                group=ulysses_group,
+            )
+            context_kv_fused()
+            dist.all_gather(
+                context_aux_output,
+                context_aux_input,
+                group=context_group,
+            )
+            one_ulysses_a2a()
+            dist.all_gather(
+                ulysses_aux_output,
+                ulysses_aux_input,
+                group=ulysses_group,
+            )
 
-        def rotate_fused() -> None:
-            current = 0
-            for hop in range(world_size - 1):
-                following = 1 - current
-                operations = [
-                    dist.P2POp(dist.isend, fused_buffers[current], next_rank),
-                    dist.P2POp(dist.irecv, fused_buffers[following], previous_rank),
-                ]
-                for request in dist.batch_isend_irecv(operations):
-                    request.wait()
-                current = following
-                if rank == 0:
-                    print(
-                        f"[MegaDiscovery][collectives] HOP   ring16_full_rotation_fused_kv {hop + 1}/{world_size - 1}",
-                        flush=True,
-                    )
-
-        def broadcast_aux() -> None:
-            dist.broadcast(aux_tensor, src=0)
-
-        for matching_name, matching in zip(
-            ("even_sources", "odd_sources"),
-            build_ring_edge_matchings(world_size),
-        ):
-            results.extend(measure_edge_matching(matching_name, matching))
+        one_ulysses_remote = int(
+            contract["one_ulysses_a2a_payload_bytes"]
+            * (ulysses_size - 1)
+            // ulysses_size
+        )
+        context_kv_bytes = 2 * int(contract["one_context_k_or_v_payload_bytes"])
         results.append(
             measure(
-                "ring16_aux_broadcast",
-                broadcast_aux,
+                "hybrid16_ulysses_one_a2a",
+                one_ulysses_a2a,
+                warmups=2,
+                iterations=5,
+                logical_bytes=one_ulysses_remote,
+                interpretation="One production-shape A2A inside each disjoint U8 row.",
+            )
+        )
+        results.append(
+            measure(
+                "hybrid16_context_kv_separate",
+                context_kv_separate,
+                warmups=2,
+                iterations=5,
+                logical_bytes=context_kv_bytes,
+                interpretation="The production CP2 single-hop K/V exchange for eight disjoint rank pairs.",
+            )
+        )
+        results.append(
+            measure(
+                "hybrid16_context_kv_fused",
+                context_kv_fused,
+                warmups=2,
+                iterations=5,
+                logical_bytes=context_kv_bytes,
+                interpretation="Synthetic fused-KV comparison; production tensor fusion remains disabled.",
+            )
+        )
+        results.append(
+            measure(
+                "hybrid16_block_current_transport",
+                current_2d_block,
                 warmups=1,
                 iterations=3,
-                logical_bytes=int(contract["aux_broadcast_payload_bytes"]),
-                interpretation="Canonical replicated-aux broadcast used once per transformer block.",
-            )
-        )
-        ring_bytes = int(contract["logical_send_bytes_per_block_per_rank"])
-        results.append(
-            measure(
-                "ring16_full_rotation_fused_kv",
-                rotate_fused,
-                warmups=0,
-                iterations=1,
-                logical_bytes=ring_bytes,
-                interpretation="Synthetic fused-KV comparison only; bytes and hop count are unchanged.",
+                logical_bytes=int(contract["estimated_remote_bytes_per_block_per_rank"]),
+                interpretation="Four U8 A2As, one CP2 K/V exchange, and both auxiliary gathers.",
             )
         )
         results.append(
             measure(
-                "ring16_full_rotation_separate_kv",
-                rotate_separate,
-                warmups=0,
-                iterations=1,
-                logical_bytes=ring_bytes,
-                interpretation="Current 15-hop K/V transport without attention overlap or online merge.",
+                "hybrid16_block_fused_transport",
+                fused_2d_block,
+                warmups=1,
+                iterations=3,
+                logical_bytes=int(contract["estimated_remote_bytes_per_block_per_rank"]),
+                interpretation="Synthetic QKV/KV-fused 2D comparison; production configuration remains unchanged.",
             )
         )
 

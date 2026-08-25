@@ -33,7 +33,7 @@ def sage_log(world_size: int, sequence: int = 42196) -> str:
     return "\n".join(lines) + "\n"
 
 
-def ring_sage_log(local_query_sequence: int = 4951) -> str:
+def hybrid_sage_log(local_query_sequence: int = 21098) -> str:
     lines = []
     for rank in range(16):
         lines.append(
@@ -43,20 +43,20 @@ def ring_sage_log(local_query_sequence: int = 4951) -> str:
             f"rank={rank}/16 causal=false kernel=sage_attention2 "
             "layout=BSHD numerics=int8_qk_fp8_pv return_lse=true "
             "route=sage_attn_v2_gfx1201_ring_hybrid "
-            f"shape=[1,{local_query_sequence},56,128]"
+            f"shape=[1,{local_query_sequence},7,128]"
         )
     return "\n".join(lines) + "\n"
 
 
-def test_collector_builds_exact_sp4_sp8_ring16_summary(tmp_path):
+def test_collector_builds_exact_sp4_sp8_cp2_ulysses8_summary(tmp_path):
     sp4 = tmp_path / "sp4.log"
     sp8 = tmp_path / "sp8.log"
-    ring16 = tmp_path / "ring16.log"
+    hybrid16 = tmp_path / "hybrid16.log"
     sp4.write_text(sage_log(4), encoding="utf-8")
     sp8.write_text(sage_log(8), encoding="utf-8")
-    ring16.write_text(ring_sage_log(), encoding="utf-8")
+    hybrid16.write_text(hybrid_sage_log(), encoding="utf-8")
 
-    payload = COLLECTOR.build_summary([(4, sp4), (8, sp8), (16, ring16)])
+    payload = COLLECTOR.build_summary([(4, sp4), (8, sp8), (16, hybrid16)])
 
     assert payload["schema_name"] == "lightx2v.minimax_h3.sage_shape_sweep"
     assert payload["schema_version"] == 2
@@ -66,33 +66,35 @@ def test_collector_builds_exact_sp4_sp8_ring16_summary(tmp_path):
     assert [run["shape_bshd"] for run in payload["runs"]] == [
         [1, 42196, 14, 128],
         [1, 42196, 7, 128],
-        [1, 4951, 56, 128],
+        [1, 21098, 7, 128],
     ]
     assert [run["rank_count"] for run in payload["runs"]] == [4, 8, 16]
-    ring = payload["runs"][2]
-    assert ring["topology"] == "ring"
-    assert ring["dispatch_sequence_scope"] == "local_query_with_replicated_aux"
-    assert ring["aux_sequence_length"] == 2468
-    assert ring["main_shard_sequence_length"] == 2483
-    assert ring["kernel_contracts"] == [
+    hybrid = payload["runs"][2]
+    assert hybrid["topology"] == "ulysses_ring_2d"
+    assert hybrid["dispatch_sequence_scope"] == "context_local_query"
+    assert hybrid["aux_sequence_length"] == 4
+    assert hybrid["local_aux_query_sequence_length"] == 2
+    assert hybrid["main_shard_sequence_length"] == 2637
+    assert hybrid["ulysses_main_sequence_length"] == 21096
+    assert hybrid["kernel_contracts"] == [
         {
-            "name": "ring_nonfinal_aux_rectangular",
-            "q_shape_bshd": [1, 2468, 56, 128],
-            "kv_shape_bshd": [1, 2483, 56, 128],
-            "calls_per_attention": 15,
+            "name": "cp2_nonfinal_aux_rectangular",
+            "q_shape_bshd": [1, 2, 7, 128],
+            "kv_shape_bshd": [1, 21096, 7, 128],
+            "calls_per_attention": 1,
             "backend_config": None,
         },
         {
-            "name": "ring_nonfinal_main_square",
-            "q_shape_bshd": [1, 2483, 56, 128],
-            "kv_shape_bshd": [1, 2483, 56, 128],
-            "calls_per_attention": 15,
+            "name": "cp2_nonfinal_main_square",
+            "q_shape_bshd": [1, 21096, 7, 128],
+            "kv_shape_bshd": [1, 21096, 7, 128],
+            "calls_per_attention": 1,
             "backend_config": {"backend": "sage_attn_v2_gfx1201"},
         },
         {
-            "name": "ring_final_combined_square",
-            "q_shape_bshd": [1, 4951, 56, 128],
-            "kv_shape_bshd": [1, 4951, 56, 128],
+            "name": "cp2_final_combined_square",
+            "q_shape_bshd": [1, 21100, 7, 128],
+            "kv_shape_bshd": [1, 21100, 7, 128],
             "calls_per_attention": 1,
             "backend_config": {"backend": "sage_attn_v2_gfx1201"},
         },
@@ -117,12 +119,12 @@ def test_collector_rejects_cross_topology_sequence_disagreement(tmp_path):
         COLLECTOR.build_summary([(4, sp4), (8, sp8)])
 
 
-def test_collector_rejects_ring_without_global_sequence_reference(tmp_path):
-    ring16 = tmp_path / "ring16.log"
-    ring16.write_text(ring_sage_log(), encoding="utf-8")
+def test_collector_rejects_hybrid_without_global_sequence_reference(tmp_path):
+    hybrid16 = tmp_path / "hybrid16.log"
+    hybrid16.write_text(hybrid_sage_log(), encoding="utf-8")
 
     with pytest.raises(ValueError, match="requires at least one dense/Ulysses reference"):
-        COLLECTOR.build_summary([(16, ring16)])
+        COLLECTOR.build_summary([(16, hybrid16)])
 
 
 def test_collector_cli_writes_json(tmp_path):

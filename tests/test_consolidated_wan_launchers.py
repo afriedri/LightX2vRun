@@ -87,7 +87,7 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
                         self.assertEqual(manifest["duration_seconds"], 5.17)
                         self.assertEqual(manifest["parallel_topologies"], {"2": "ulysses"})
                         self.assertIn(
-                            "MiniMax-H3 topology: SP2/SP4/SP8=Ulysses, SP16=Ring",
+                            "MiniMax-H3 topology: SP2/SP4/SP8=Ulysses, SP16=CP2xU8",
                             completed.stdout,
                         )
                         self.assertIn("--env TARGET_VIDEO_LENGTH=124", completed.stdout)
@@ -142,7 +142,7 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
             self.assertEqual(manifest["gpu_counts"], [2, 4, 8, 16])
             self.assertEqual(
                 manifest["parallel_topologies"],
-                {"2": "ulysses", "4": "ulysses", "8": "ulysses", "16": "ring"},
+                {"2": "ulysses", "4": "ulysses", "8": "ulysses", "16": "ulysses_ring_2d"},
             )
             for count in (2, 4, 8, 16):
                 self.assertTrue((result_dir / f"{count}gpu.log").is_file())

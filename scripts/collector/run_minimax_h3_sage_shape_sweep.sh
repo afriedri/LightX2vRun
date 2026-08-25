@@ -12,12 +12,12 @@ Usage:
   bash scripts/collector/run_minimax_h3_sage_shape_sweep.sh --image IMAGE [options]
 
 Runs the frozen 1344x768/124-frame MiniMax-H3 workload sequentially at Ulysses
-SP4, Ulysses SP8, and Ring16, then extracts only the first real Sage dispatch
+SP4, Ulysses SP8, and CP2xU8 SP16, then extracts only the first real Sage dispatch
 from every rank. The schema-2 H3 runcollector remains disabled.
 
 Options:
   --image IMAGE          Production gfx1201 H3 image with LightX2V/Aiter source
-  --counts LIST          4,8,16 (default); Ring16 requires SP4 or SP8 as reference
+  --counts LIST          4,8,16 (default); SP16 requires SP4 or SP8 as reference
   --gpus IDS             Ordered physical GPU pool (default: GPU ids 0 through 15)
   --result-dir DIR       Exact sweep result directory (default: timestamped)
   --model-dir DIR        Host MiniMax-H3 checkpoint directory
@@ -28,7 +28,7 @@ Options:
   --prompt-file FILE     Custom H3-structured prompt; overrides the preset
 
 The first N ids from --gpus are used for each topology, matching the unified
-Wan2.2 sweep convention. SP4/SP8 use Ulysses; 16 GPUs always use Ring.
+Wan2.2 sweep convention. SP4/SP8 use Ulysses; 16 GPUs use CP2xU8.
 EOF
 }
 
@@ -148,7 +148,7 @@ for count in "${selected_counts[@]}"; do
     (( count > max_count )) && max_count="${count}"
 done
 if [[ -n "${seen_counts[16]:-}" && -z "${seen_counts[4]:-}" && -z "${seen_counts[8]:-}" ]]; then
-    echo "ERROR: Ring16 requires SP4 or SP8 in --counts to reconstruct exact kernel shapes" >&2
+    echo "ERROR: CP2xU8 SP16 requires SP4 or SP8 in --counts to reconstruct exact kernel shapes" >&2
     exit 2
 fi
 (( ${#gpu_ids[@]} >= max_count )) || {
@@ -177,7 +177,7 @@ payload = {
     "image": image,
     "sp_sizes": [int(value) for value in counts.split(",")],
     "topologies": {
-        value: "ring" if int(value) == 16 else "ulysses"
+        value: "ulysses_ring_2d" if int(value) == 16 else "ulysses"
         for value in counts.split(",")
     },
     "gpu_pool": [int(value) for value in gpu_pool.split(",")],
@@ -205,7 +205,7 @@ PY
 echo "MiniMax-H3 Sage-only shape sweep: ${result_dir}"
 echo "SP sizes: ${counts}"
 echo "GPU pool: ${gpu_pool}"
-echo "Topology policy: SP4/SP8=Ulysses, 16=Ring"
+echo "Topology policy: SP4/SP8=Ulysses, 16=CP2xU8"
 echo "Full H3 collector: disabled"
 
 collector_args=()
@@ -226,7 +226,7 @@ for count in "${selected_counts[@]}"; do
         child_args+=(--prompt-file "${prompt_file}")
     fi
     if [[ "${count}" == 16 ]]; then
-        topology_label=Ring16
+        topology_label="CP2xU8 SP16"
     else
         topology_label="SP${count} Ulysses"
     fi

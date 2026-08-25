@@ -280,7 +280,7 @@ payload = {
     "duration_seconds": ${duration_seconds},
     "gpu_counts": gpu_counts,
     "parallel_topologies": {
-        str(count): ("ring" if count == 16 else "ulysses")
+        str(count): ("ulysses_ring_2d" if count == 16 else "ulysses")
         for count in gpu_counts
     } if "${RUN_MODEL_VERSION}" == "minimax_h3" else None,
     "video_pattern": "/workspace/LightX2V/save_results/${run_tag}/<count>gpu.mp4",
@@ -304,7 +304,7 @@ fi
 if [[ "${RUN_MODEL_VERSION}" == wan22 ]]; then
     echo "Wan2.2 B1 policy: auto (2/4=baseline, 8/16=b1; explicit override remains available)"
 elif [[ "${RUN_MODEL_VERSION}" == minimax_h3 ]]; then
-    echo "MiniMax-H3 topology: SP2/SP4/SP8=Ulysses, SP16=Ring"
+    echo "MiniMax-H3 topology: SP2/SP4/SP8=Ulysses, SP16=CP2xU8"
 fi
 
 for count in "${counts[@]}"; do

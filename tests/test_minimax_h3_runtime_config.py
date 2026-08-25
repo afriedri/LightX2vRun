@@ -140,7 +140,7 @@ def test_builder_enables_pure_ulysses_sp8_and_parallel_vae_decode():
     }
 
 
-def test_builder_enables_ring16_without_head_divisibility_requirement():
+def test_builder_enables_cp2_ulysses8_for_sp16():
     config = BUILDER.build(published_config(), amd_overlay(), smoke=False, seq_parallel_size=16)
 
     assert config["tensor_parallel"] is False
@@ -152,12 +152,19 @@ def test_builder_enables_ring16_without_head_divisibility_requirement():
     assert config["vae_decode_parallel"] is True
     assert config["parallel"] == {
         "seq_p_size": 16,
-        "seq_p_attn_type": "ring",
+        "seq_p_attn_type": "ulysses_ring",
         "seq_p_prepost_backend": "torch",
         "seq_p_a2a_backend": "torch",
         "seq_p_tensor_fusion": False,
         "seq_p_head_parallel": False,
+        "context_p_size": 2,
+        "ulysses_p_size": 8,
     }
+
+
+def test_builder_rejects_sp16_smoke_geometry():
+    with pytest.raises(SystemExit, match="full 124f 1344x768 workload"):
+        BUILDER.build(published_config(), amd_overlay(), smoke=True, seq_parallel_size=16)
 
 
 def test_builder_rejects_unsupported_sequence_parallel_size():

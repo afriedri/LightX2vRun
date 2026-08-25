@@ -34,7 +34,7 @@ SUPPORTED_SP_SIZES = (1, 2, 4, 8, 16)
 
 def topology_for(sp_size: int) -> str:
     if sp_size == 16:
-        return "ring"
+        return "ulysses_ring_2d"
     if sp_size == 1:
         return "dense"
     return "ulysses"
@@ -92,7 +92,7 @@ def collect_log(log_path: Path, expected_world_size: int) -> dict:
         )
 
     topology = topology_for(expected_world_size)
-    expected_route = RING_ROUTE if topology == "ring" else ULYSSES_ROUTE
+    expected_route = RING_ROUTE if topology == "ulysses_ring_2d" else ULYSSES_ROUTE
     by_rank: dict[int, dict] = {}
     for event in events:
         rank, world_size = parse_rank(event.get("rank"))
@@ -131,15 +131,16 @@ def collect_log(log_path: Path, expected_world_size: int) -> dict:
             raise ValueError(
                 f"rank {rank} Sage shape must be [1,S,H,{EXPECTED_HEAD_DIM}], got {shape}"
             )
-        if topology == "ring":
-            if local_heads != EXPECTED_GLOBAL_HEADS:
+        if topology == "ulysses_ring_2d":
+            expected_local_heads = EXPECTED_GLOBAL_HEADS // 8
+            if local_heads != expected_local_heads:
                 raise ValueError(
-                    f"rank {rank} Ring local_heads={local_heads}, expected all "
-                    f"MiniMax-H3 heads={EXPECTED_GLOBAL_HEADS}"
+                    f"rank {rank} CP2xU8 local_heads={local_heads}, "
+                    f"expected {expected_local_heads}"
                 )
             if event.get("return_lse") is not True:
                 raise ValueError(
-                    f"rank {rank} Ring Sage dispatch must return LSE, "
+                    f"rank {rank} CP2xU8 Sage dispatch must return LSE, "
                     f"got return_lse={event.get('return_lse')!r}"
                 )
         elif local_heads * expected_world_size != EXPECTED_GLOBAL_HEADS:
@@ -178,7 +179,7 @@ def collect_log(log_path: Path, expected_world_size: int) -> dict:
         "shape_bshd": shape,
         "dispatch_sequence_length": shape[1],
         "dispatch_sequence_scope": (
-            "local_query_with_replicated_aux" if topology == "ring" else "global"
+            "context_local_query" if topology == "ulysses_ring_2d" else "global"
         ),
         "local_heads": shape[2],
         "global_heads": EXPECTED_GLOBAL_HEADS,
@@ -192,7 +193,7 @@ def add_kernel_contracts(run: dict, global_sequence_length: int) -> None:
     shape = run["shape_bshd"]
     batch, dispatch_sequence_length, heads, head_dim = shape
     run["global_sequence_length"] = global_sequence_length
-    if run["topology"] != "ring":
+    if run["topology"] != "ulysses_ring_2d":
         if dispatch_sequence_length != global_sequence_length:
             raise ValueError(
                 f"SP{run['sp_size']} dispatch sequence {dispatch_sequence_length} "
@@ -210,40 +211,50 @@ def add_kernel_contracts(run: dict, global_sequence_length: int) -> None:
         return
 
     world_size = run["world_size"]
-    aux_numerator = world_size * dispatch_sequence_length - global_sequence_length
-    aux_length, remainder = divmod(aux_numerator, world_size - 1)
-    main_shard_length = dispatch_sequence_length - aux_length
-    if remainder or aux_length <= 0 or main_shard_length <= 0:
+    context_size = 2
+    ulysses_size = 8
+    aux_length = global_sequence_length % world_size
+    main_shard_length = (global_sequence_length - aux_length) // world_size
+    ulysses_main_length = main_shard_length * ulysses_size
+    local_aux_query_length = aux_length // context_size
+    expected_dispatch_length = ulysses_main_length + local_aux_query_length
+    if (
+        aux_length <= 0
+        or aux_length % context_size
+        or main_shard_length <= 0
+        or dispatch_sequence_length != expected_dispatch_length
+    ):
         raise ValueError(
-            f"Ring{world_size} dispatch sequence {dispatch_sequence_length} cannot "
-            f"reconstruct global sequence {global_sequence_length} into a positive "
-            "replicated auxiliary prefix and main shard"
+            f"CP2xU8 SP{world_size} dispatch sequence {dispatch_sequence_length} "
+            f"does not match global sequence {global_sequence_length}"
         )
-    if aux_length + world_size * main_shard_length != global_sequence_length:
-        raise ValueError("internal Ring sequence reconstruction mismatch")
 
-    aux_shape = [batch, aux_length, heads, head_dim]
-    main_shape = [batch, main_shard_length, heads, head_dim]
-    combined_shape = list(shape)
+    aux_shape = [batch, local_aux_query_length, heads, head_dim]
+    main_shape = [batch, ulysses_main_length, heads, head_dim]
+    combined_shape = [batch, ulysses_main_length + aux_length, heads, head_dim]
+    run["context_size"] = context_size
+    run["ulysses_size"] = ulysses_size
     run["aux_sequence_length"] = aux_length
+    run["local_aux_query_sequence_length"] = local_aux_query_length
     run["main_shard_sequence_length"] = main_shard_length
+    run["ulysses_main_sequence_length"] = ulysses_main_length
     run["kernel_contracts"] = [
         {
-            "name": "ring_nonfinal_aux_rectangular",
+            "name": "cp2_nonfinal_aux_rectangular",
             "q_shape_bshd": aux_shape,
             "kv_shape_bshd": main_shape,
-            "calls_per_attention": world_size - 1,
+            "calls_per_attention": 1,
             "backend_config": None,
         },
         {
-            "name": "ring_nonfinal_main_square",
+            "name": "cp2_nonfinal_main_square",
             "q_shape_bshd": main_shape,
             "kv_shape_bshd": main_shape,
-            "calls_per_attention": world_size - 1,
+            "calls_per_attention": 1,
             "backend_config": {"backend": ULYSSES_ROUTE},
         },
         {
-            "name": "ring_final_combined_square",
+            "name": "cp2_final_combined_square",
             "q_shape_bshd": combined_shape,
             "kv_shape_bshd": combined_shape,
             "calls_per_attention": 1,
@@ -262,11 +273,11 @@ def build_summary(run_specs: list[tuple[int, Path]]) -> dict:
     sequence_lengths = {
         run["dispatch_sequence_length"]
         for run in runs
-        if run["topology"] != "ring"
+        if run["topology"] != "ulysses_ring_2d"
     }
     if not sequence_lengths:
         raise ValueError(
-            "Ring shape reconstruction requires at least one dense/Ulysses reference run"
+            "CP2xU8 shape reconstruction requires at least one dense/Ulysses reference run"
         )
     if len(sequence_lengths) != 1:
         raise ValueError(
@@ -319,7 +330,11 @@ def main() -> int:
     write_atomic(args.output, payload)
     print(f"MiniMax-H3 Sage shapes: {args.output}")
     for run in payload["runs"]:
-        label = f"Ring{run['sp_size']}" if run["topology"] == "ring" else f"SP{run['sp_size']}"
+        label = (
+            f"CP2xU8-SP{run['sp_size']}"
+            if run["topology"] == "ulysses_ring_2d"
+            else f"SP{run['sp_size']}"
+        )
         print(f"{label}: dispatch={run['shape_bshd']} ({run['rank_count']} ranks)")
         for contract in run["kernel_contracts"]:
             print(

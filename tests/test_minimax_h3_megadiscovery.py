@@ -44,15 +44,18 @@ def test_exact_shape_traffic_contracts_match_production_calls():
     assert sp8["collective_calls_per_run"] == 1_000
     assert sp8["estimated_remote_bytes_per_run_per_rank"] == 56_026_521_600
 
-    ring16 = COLLECTIVES.build_traffic_contract(16)
-    assert ring16["local_main_tokens"] == 2_483
-    assert ring16["one_k_or_v_payload_bytes"] == 35_596_288
-    assert ring16["aux_broadcast_payload_bytes"] == 35_381_248
-    assert ring16["ring_hops_per_block"] == 15
-    assert ring16["ring_rounds_per_run"] == 3_000
-    assert ring16["p2p_send_recv_ops_per_block"] == 60
-    assert ring16["p2p_send_recv_ops_per_run"] == 12_000
-    assert ring16["logical_send_bytes_per_run_per_rank"] == 213_577_728_000
+    hybrid16 = COLLECTIVES.build_traffic_contract(16)
+    assert hybrid16["topology"] == "cp2_ulysses8_sp16"
+    assert hybrid16["local_main_tokens"] == 2_637
+    assert hybrid16["ulysses_main_tokens"] == 21_096
+    assert hybrid16["aux_tokens"] == 4
+    assert hybrid16["one_ulysses_a2a_payload_bytes"] == 37_804_032
+    assert hybrid16["one_context_k_or_v_payload_bytes"] == 37_804_032
+    assert hybrid16["context_ring_hops_per_block"] == 1
+    assert hybrid16["context_ring_rounds_per_run"] == 200
+    assert hybrid16["p2p_send_recv_ops_per_block"] == 4
+    assert hybrid16["p2p_send_recv_ops_per_run"] == 800
+    assert hybrid16["estimated_remote_bytes_per_run_per_rank"] == 41_595_187_200
 
 
 def test_ring_edges_are_split_into_two_disjoint_all_rank_matchings():
@@ -76,7 +79,7 @@ def test_ring_edge_matching_requires_an_even_world_size():
 
 def test_failure_record_preserves_completed_checkpoints(tmp_path):
     output = tmp_path / "megadiscovery_collectives.json"
-    completed = benchmark("ring16_edge_00_to_01", 10.0)
+    completed = benchmark("hybrid16_ulysses_one_a2a", 10.0)
     write_json(
         output,
         {
@@ -84,7 +87,7 @@ def test_failure_record_preserves_completed_checkpoints(tmp_path):
             "schema_version": COLLECTIVES.SCHEMA_VERSION,
             "probe_started_at": "2026-08-25T02:11:04+00:00",
             "status": "running",
-            "active_benchmark": "ring16_full_rotation_fused_kv",
+            "active_benchmark": "hybrid16_block_fused_transport",
             "environment": {"world_size": 16, "torch_version": "test"},
             "traffic_contract": COLLECTIVES.build_traffic_contract(16),
             "benchmarks": [completed],
@@ -95,13 +98,13 @@ def test_failure_record_preserves_completed_checkpoints(tmp_path):
 
     failed = json.loads(output.read_text(encoding="utf-8"))
     assert failed["status"] == "failed"
-    assert failed["active_benchmark"] == "ring16_full_rotation_fused_kv"
+    assert failed["active_benchmark"] == "hybrid16_block_fused_transport"
     assert failed["completed_benchmark_count"] == 1
     assert failed["benchmarks"] == [completed]
     assert failed["environment"]["torch_version"] == "test"
 
 
-def test_analyzer_builds_ring16_diagnosis_and_finds_slow_neighbor(tmp_path):
+def test_analyzer_builds_cp2_ulysses8_sp16_diagnosis(tmp_path):
     write_json(tmp_path / "run_manifest.json", {"gpu_count": 16})
     write_json(
         tmp_path / "h3_t1_summary.json",
@@ -120,17 +123,11 @@ def test_analyzer_builds_ring16_diagnosis_and_finds_slow_neighbor(tmp_path):
         },
     )
     benches = [
-        benchmark("ring16_full_rotation_separate_kv", 100.0),
-        benchmark("ring16_full_rotation_fused_kv", 80.0),
-        benchmark("ring16_aux_broadcast", 2.0),
+        benchmark("hybrid16_block_current_transport", 100.0),
+        benchmark("hybrid16_block_fused_transport", 80.0),
+        benchmark("hybrid16_context_kv_separate", 10.0),
+        benchmark("hybrid16_context_kv_fused", 8.0),
     ]
-    benches.extend(
-        benchmark(
-            f"ring16_edge_{source:02d}_to_{(source + 1) % 16:02d}",
-            20.0 if source == 7 else 10.0,
-        )
-        for source in range(16)
-    )
     write_json(
         tmp_path / "megadiscovery_collectives.json",
         {
@@ -211,12 +208,10 @@ def test_analyzer_builds_ring16_diagnosis_and_finds_slow_neighbor(tmp_path):
     report = json.loads((tmp_path / "megadiscovery.json").read_text(encoding="utf-8"))
     assert report["diagnosis"]["communication_dominant_under_current_lazy_policy"] is True
     assert report["fusion_discovery"]["synthetic_speedup"] == pytest.approx(1.25)
-    edges = report["ring_edge_discovery"]
-    assert edges["measured_edge_count"] == 16
-    assert edges["slowest_edge"]["source_local_rank"] == 7
-    assert edges["slowest_edge"]["same_pcie_root_complex"] is False
-    assert edges["slowest_over_median"] == pytest.approx(2.0)
-    assert report["opportunities"][1]["decision"] == "candidate"
+    assert report["fusion_discovery"]["context_synthetic_speedup"] == pytest.approx(1.25)
+    assert report["profile"] == "cp2_ulysses8_sp16"
+    assert report["ring_edge_discovery"] is None
+    assert report["opportunities"][1]["decision"] == "inspect_subgroup_placement"
     assert report["system"]["pcie_root_complex_groups"] == {
         "pci0000:00": list(range(8)),
         "pci0000:80": list(range(8, 16)),
@@ -231,7 +226,7 @@ def test_analyzer_builds_ring16_diagnosis_and_finds_slow_neighbor(tmp_path):
     ]
     assert report["system"]["rccl"]["max_p2p_op_count_by_rank"] == {"0": 7}
     markdown = (tmp_path / "megadiscovery.md").read_text(encoding="utf-8")
-    assert "Current-order neighbor edges measured: `16`" in markdown
+    assert "Topology: `CP2 x Ulysses8`" in markdown
     assert "Production configuration changed: `false`" in markdown
 
     failure = subprocess.run(
@@ -267,7 +262,7 @@ def test_analyzer_builds_ring16_diagnosis_and_finds_slow_neighbor(tmp_path):
     assert "Production and schema-2 evidence remain available" in partial_markdown
 
 
-def test_ring16_missing_dense_attention_keeps_communication_attribution_unknown(
+def test_sp16_missing_dense_attention_keeps_communication_attribution_unknown(
     tmp_path,
 ):
     write_json(tmp_path / "run_manifest.json", {"gpu_count": 16})
@@ -291,7 +286,7 @@ def test_ring16_missing_dense_attention_keeps_communication_attribution_unknown(
         tmp_path / "megadiscovery_collectives.json",
         {
             "status": "failed",
-            "active_benchmark": "ring16_edge_matching_even_sources",
+            "active_benchmark": "hybrid16_ulysses_one_a2a",
             "error": "torchrun status 124",
             "environment": {"world_size": 16},
             "traffic_contract": COLLECTIVES.build_traffic_contract(16),
@@ -319,7 +314,7 @@ def test_ring16_missing_dense_attention_keeps_communication_attribution_unknown(
     assert diagnosis["communication_dominant_under_current_lazy_policy"] is None
     assert (
         diagnosis["communication_attribution_status"]
-        == "unresolved_ring_attention_nested_in_envelope"
+        == "unresolved_2d_attention_nested_in_envelope"
     )
     markdown = (tmp_path / "megadiscovery.md").read_text(encoding="utf-8")
     assert "Communication dominant under the current lazy policy: `unknown`" in markdown

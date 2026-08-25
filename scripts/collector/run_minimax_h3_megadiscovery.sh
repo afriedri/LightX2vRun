@@ -13,7 +13,7 @@ Usage:
 Runs one frozen MiniMax-H3 production workload with the schema-2 runtime
 collector, exact-shape collective microbenchmarks, RCCL initialization logs,
 host/KFD/PCIe/NUMA snapshots, process/cgroup/VRAM monitoring, and a unified
-JSON/Markdown diagnosis. The default is Ring16; SP8/Ulysses is also supported.
+JSON/Markdown diagnosis. The default is CP2xU8 SP16; SP8/Ulysses is also supported.
 
 Options:
   --gpus IDS   Exactly 8 or 16 ordered physical GPU ids (default: 0..15)
@@ -23,7 +23,7 @@ and preflight-only runs are rejected because they do not expose the production
 communication contract.
 
 MegaDiscovery does not change BF16, dynamic LoRA, lazy B1, two CPU buffers,
-two GPU buffers, TunableOp, Sage kernels, Ulysses SP8, or Ring16.
+two GPU buffers, TunableOp, Sage kernels, Ulysses SP8, or CP2xU8 SP16.
 Production inference runs first. Isolated communication probes normally take
 1-3 minutes and have a default hard timeout of 300 seconds.
 EOF
@@ -75,7 +75,7 @@ for gpu_id in "${gpu_ids[@]}"; do
 done
 
 gpu_count="${#gpu_ids[@]}"
-profile="ring16"
+profile="cp2_u8_sp16"
 if (( gpu_count == 8 )); then
     profile="sp8"
 fi

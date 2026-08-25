@@ -274,21 +274,31 @@ def test_h3_dry_run_accepts_eight_gpu_ulysses_without_tp(tmp_path):
     }
 
 
-def test_h3_dry_run_accepts_sixteen_gpu_ring_without_tp(tmp_path):
+def test_h3_dry_run_accepts_sixteen_gpu_cp2_ulysses8_without_tp(tmp_path):
     gpu_ids = ",".join(str(index) for index in range(16))
     completed, result_dir = run_dry(tmp_path, "--gpus", gpu_ids)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["gpus"] == list(range(16))
     assert manifest["parallel"] == {
-        "seq_p_attn_type": "ring",
+        "context_p_size": 2,
+        "seq_p_attn_type": "ulysses_ring",
         "seq_p_size": 16,
         "seq_parallel": True,
         "tensor_parallel": False,
+        "ulysses_p_size": 8,
         "vae_decode_parallel": True,
     }
-    assert manifest["backends"]["h3_core_attention"]["route"] == "sage_attn_v2_gfx1201_ring_hybrid"
+    assert manifest["backends"]["h3_core_attention"]["route"] == "sage_attn_v2_gfx1201_ulysses_ring_2d"
     assert manifest["memory_policy"]["text_encoder_rank0_only"] is True
+
+
+def test_h3_launcher_rejects_sp16_smoke_geometry(tmp_path):
+    gpu_ids = ",".join(str(index) for index in range(16))
+    completed, _ = run_dry(tmp_path, "--smoke", "--gpus", gpu_ids)
+
+    assert completed.returncode == 2
+    assert "full 124f 1344x768 workload" in completed.stderr
 
 
 def test_h3_collect_is_opt_in_and_passed_to_each_rank(tmp_path):
@@ -386,7 +396,7 @@ def test_sp8_supercollect_rejects_non_sp8_or_smoke(tmp_path):
     assert "full production workload" in smoke.stderr
 
 
-def test_ring16_megadiscovery_is_observer_only_and_freezes_production_contract(tmp_path):
+def test_cp2_ulysses8_sp16_megadiscovery_is_observer_only(tmp_path):
     result_dir = tmp_path / "megadiscovery"
     gpu_ids = ",".join(str(index) for index in range(16))
     completed = subprocess.run(
@@ -436,7 +446,7 @@ def test_ring16_megadiscovery_is_observer_only_and_freezes_production_contract(t
     assert "NCCL_DEBUG_FILE=/workspace/LightX2V/save_results/rccl.%h.%p.log" in completed.stdout
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["gpus"] == list(range(16))
-    assert manifest["parallel"]["seq_p_attn_type"] == "ring"
+    assert manifest["parallel"]["seq_p_attn_type"] == "ulysses_ring"
     assert manifest["memory_policy"]["cpu_block_buffers"] == 2
     assert manifest["memory_policy"]["gpu_block_buffers"] == 2
     assert manifest["runcollector"]["enabled"] is True
@@ -451,12 +461,14 @@ def test_ring16_megadiscovery_is_observer_only_and_freezes_production_contract(t
         "production_collective_contract": {
             "a2a_backend": "torch",
             "communication_quantization": None,
+            "context_p_size": 2,
             "prepost_backend": "torch",
             "tensor_fusion": False,
-            "topology": "ring_sp16",
+            "topology": "cp2_ulysses8_sp16",
+            "ulysses_p_size": 8,
         },
         "production_contract_changed": False,
-        "profile": "ring16_full_stack_v1",
+        "profile": "cp2_ulysses8_sp16_full_stack_v1",
         "rccl_debug_pattern": "rccl.*.log",
         "rccl_environment": {
             "NCCL_DEBUG": "INFO",

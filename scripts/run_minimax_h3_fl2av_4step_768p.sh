@@ -12,9 +12,9 @@ Usage:
   bash scripts/run_minimax_h3_fl2av_4step_768p.sh --image IMAGE
 
 Runs MiniMax-H3 FL2V on one, two, four, eight, or sixteen gfx1201 GPUs. SP2/SP4/SP8
-use Ulysses sequence parallelism; SP16 uses Ring. --image is required and must contain
-the complete production LightX2V source at /workspace/LightX2V. Host source overlays
-are deliberately unsupported; rebuild the image before production runs.
+use Ulysses sequence parallelism; SP16 uses CP2xU8. --image is required and must
+contain the complete production LightX2V source at /workspace/LightX2V. Host source
+overlays are deliberately unsupported; rebuild the image before production runs.
 
 Options:
   --image IMAGE          Rebuilt gfx1201 H3 image containing production source
@@ -29,8 +29,8 @@ Options:
   --result-dir DIR       Exact host result directory (default: timestamped)
   --prompt-preset NAME   bird-stable (default), bird-dynamic, or bird-audio
   --prompt-file FILE     Custom H3-structured prompt; overrides the preset
-  --smoke                Use 480x480 instead of 1344x768; both run 124 frames
-  --preflight-only       Run per-GPU MHA and RCCL Ulysses/Ring smoke, then exit
+  --smoke                Use 480x480 instead of 1344x768; unavailable for SP16
+  --preflight-only       Run per-GPU MHA and RCCL parallel smoke, then exit
   --collect              Record schema-2 H3 T1 lifecycle/operator evidence
   --gpus IDS             One, two, four, eight, or sixteen comma-separated GPU ids
                          (default: 0,1,2,3; four-GPU pure Ulysses SP4)
@@ -40,14 +40,14 @@ Environment:
   PROMPT / SEED          PROMPT overrides preset/file; seed defaults to 42
   H3_PROMPT_PRESET       Default prompt preset (default: bird-stable)
   H3_PROMPT_FILE         Custom prompt file, overridden by PROMPT
-  GPU_DEVICES            One, two, four, eight, or sixteen ids; SP16 uses Ring
+  GPU_DEVICES            One, two, four, eight, or sixteen ids; SP16 uses CP2xU8
   H3_MODEL_DIR           Override the default complete H3 checkpoint directory
   H3_TURBO_DIR           Override the default Turbo LoRA directory
   MEMORY_MONITOR         1 (default) records host RAM, process RSS/PSS and VRAM
   LIGHTX2V_H3_RUN_COLLECTOR
                          Prefer --collect; direct environment use accepts 0/1
   H3_SUPERCOLLECT        1 enables the read-only SP8 SuperCollect evidence set
-  H3_MEGADISCOVERY       1 enables SP8/Ring16 full-stack discovery evidence
+  H3_MEGADISCOVERY       1 enables SP8/CP2xU8-SP16 discovery evidence
   H3_MEGADISCOVERY_TIMEOUT_SECONDS
                          Isolated probe timeout after inference (default: 300)
 EOF
@@ -167,6 +167,10 @@ for gpu_device_id in "${gpu_device_ids[@]}"; do
     }
     seen_gpu_device_ids["${gpu_device_id}"]=1
 done
+if [[ "${gpu_count}" == 16 && "${smoke}" == 1 ]]; then
+    echo "ERROR: MiniMax-H3 CP2xU8 SP16 requires the full 124f 1344x768 workload" >&2
+    exit 2
+fi
 
 case "${super_collect}" in
     0 | 1) ;;
@@ -190,7 +194,7 @@ if [[ "${super_collect}" == 1 ]]; then
 fi
 if [[ "${mega_discovery}" == 1 ]]; then
     [[ "${gpu_count}" == 8 || "${gpu_count}" == 16 ]] || {
-        echo "ERROR: MiniMax-H3 MegaDiscovery requires SP8 or Ring16" >&2
+        echo "ERROR: MiniMax-H3 MegaDiscovery requires SP8 or CP2xU8 SP16" >&2
         exit 2
     }
     [[ "${smoke}" == 0 && "${preflight_only}" == 0 ]] || {
@@ -295,6 +299,28 @@ def sha256(path):
     return digest.hexdigest()
 
 gpus = [int(item) for item in gpu_devices.split(",")]
+parallel_manifest = {
+    "tensor_parallel": False,
+    "seq_parallel": len(gpus) > 1,
+    "seq_p_size": len(gpus),
+    "seq_p_attn_type": "ulysses_ring" if len(gpus) == 16 else "ulysses" if len(gpus) > 1 else None,
+    "vae_decode_parallel": len(gpus) > 1,
+}
+if len(gpus) == 16:
+    parallel_manifest.update({"context_p_size": 2, "ulysses_p_size": 8})
+megadiscovery_collective_contract = None
+if mega_discovery == "1":
+    megadiscovery_collective_contract = {
+        "topology": "cp2_ulysses8_sp16" if len(gpus) == 16 else "ulysses_sp8",
+        "tensor_fusion": False,
+        "communication_quantization": None,
+        "prepost_backend": "torch",
+        "a2a_backend": "torch",
+    }
+    if len(gpus) == 16:
+        megadiscovery_collective_contract.update(
+            {"context_p_size": 2, "ulysses_p_size": 8}
+        )
 payload = {
     "kind": "minimax_h3_gfx1201_production",
     "task": "fl2av",
@@ -311,13 +337,7 @@ payload = {
     "gpu": gpus[0],
     "gpus": gpus,
     "gpu_count": len(gpus),
-    "parallel": {
-        "tensor_parallel": False,
-        "seq_parallel": len(gpus) > 1,
-        "seq_p_size": len(gpus),
-        "seq_p_attn_type": "ring" if len(gpus) == 16 else "ulysses" if len(gpus) > 1 else None,
-        "vae_decode_parallel": len(gpus) > 1,
-    },
+    "parallel": parallel_manifest,
     "memory_policy": {
         "lazy_load": True,
         "cpu_offload": True,
@@ -340,7 +360,7 @@ payload = {
         },
         "h3_core_attention": {
             "name": "aiter_fav3_sage_bf16_attn",
-            "route": "sage_attn_v2_gfx1201_ring_hybrid" if len(gpus) == 16 else "sage_attn_v2_gfx1201",
+            "route": "sage_attn_v2_gfx1201_ulysses_ring_2d" if len(gpus) == 16 else "sage_attn_v2_gfx1201",
             "numerics": "int8_qk_fp8_pv",
         },
         "h3_refiner_attention": "aiter_triton_mha",
@@ -378,7 +398,7 @@ payload = {
     "megadiscovery": {
         "enabled": mega_discovery == "1",
         "profile": (
-            "ring16_full_stack_v1" if mega_discovery == "1" and len(gpus) == 16
+            "cp2_ulysses8_sp16_full_stack_v1" if mega_discovery == "1" and len(gpus) == 16
             else "ulysses_sp8_full_stack_v1" if mega_discovery == "1"
             else None
         ),
@@ -389,16 +409,7 @@ payload = {
             int(os.environ.get("H3_MEGADISCOVERY_TIMEOUT_SECONDS", "300"))
             if mega_discovery == "1" else None
         ),
-        "production_collective_contract": (
-            {
-                "topology": "ring_sp16" if len(gpus) == 16 else "ulysses_sp8",
-                "tensor_fusion": False,
-                "communication_quantization": None,
-                "prepost_backend": "torch",
-                "a2a_backend": "torch",
-            }
-            if mega_discovery == "1" else None
-        ),
+        "production_collective_contract": megadiscovery_collective_contract,
         "rccl_environment": (
             {
                 "NCCL_DEBUG": os.environ.get("NCCL_DEBUG"),

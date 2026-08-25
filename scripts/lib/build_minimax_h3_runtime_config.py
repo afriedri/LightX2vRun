@@ -73,6 +73,8 @@ def load_json(path: Path) -> dict:
 def build(publish: dict, overlay: dict, *, smoke: bool, seq_parallel_size: int = 1) -> dict:
     if seq_parallel_size not in (1, 2, 4, 8, 16):
         raise SystemExit(f"MiniMax-H3 gfx1201 supports seq_parallel_size 1, 2, 4, 8, or 16, got {seq_parallel_size}")
+    if seq_parallel_size == 16 and smoke:
+        raise SystemExit("MiniMax-H3 CP2xU8 SP16 requires the full 124f 1344x768 workload")
     missing = [key for key in REQUIRED_PUBLISH_KEYS if key not in publish]
     if missing:
         raise SystemExit(f"published H3 JSON is missing keys: {missing}")
@@ -112,14 +114,22 @@ def build(publish: dict, overlay: dict, *, smoke: bool, seq_parallel_size: int =
     config["seq_parallel"] = seq_parallel_size > 1
     config["vae_decode_parallel"] = seq_parallel_size > 1
     if seq_parallel_size > 1:
-        config["parallel"] = {
+        parallel = {
             "seq_p_size": seq_parallel_size,
-            "seq_p_attn_type": "ring" if seq_parallel_size == 16 else "ulysses",
+            "seq_p_attn_type": "ulysses_ring" if seq_parallel_size == 16 else "ulysses",
             "seq_p_prepost_backend": "torch",
             "seq_p_a2a_backend": "torch",
             "seq_p_tensor_fusion": False,
             "seq_p_head_parallel": False,
         }
+        if seq_parallel_size == 16:
+            parallel.update(
+                {
+                    "context_p_size": 2,
+                    "ulysses_p_size": 8,
+                }
+            )
+        config["parallel"] = parallel
     else:
         # A truthy parallel dictionary would make the single-process entry try
         # to initialize torch.distributed without torchrun rendezvous variables.
