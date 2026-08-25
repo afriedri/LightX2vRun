@@ -210,7 +210,12 @@ def test_runtime_contract_accepts_only_pure_ulysses(tmp_path, world_size):
         PREFLIGHT.check_runtime_config(path, world_size)
 
 
-def test_runtime_contract_accepts_cp2_ulysses8_lazy_rank0_encoder(tmp_path):
+@pytest.mark.parametrize(("target_width", "target_height"), ((1344, 768), (832, 480)))
+def test_runtime_contract_accepts_cp2_ulysses8_lazy_rank0_encoder(
+    tmp_path,
+    target_width,
+    target_height,
+):
     config = {
         "video_flow_shift": 6.0,
         "h3_step_update": "training_euler",
@@ -231,8 +236,8 @@ def test_runtime_contract_accepts_cp2_ulysses8_lazy_rank0_encoder(tmp_path):
         "warmup": False,
         "enable_cfg": False,
         "target_video_length": 124,
-        "target_width": 1344,
-        "target_height": 768,
+        "target_width": target_width,
+        "target_height": target_height,
         "fps": 24,
         "tensor_parallel": False,
         "text_encoder_tensor_parallel": False,

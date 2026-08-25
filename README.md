@@ -251,6 +251,14 @@ Run every configured GPU count:
 bash scripts/run_07_wan22_720p_121f_24fps_scale.sh
 ```
 
+Run the MiniMax-H3 832x480 scale with the rebuilt production image. Task 09
+uses `FL2V_START_480P.jpg` and `FL2V_END_480P.jpg` from the runtime input
+directory and keeps the existing `bird-stable` prompt:
+
+```bash
+bash scripts/run_09_minimax_h3_480p_124f_24fps_scale.sh --image IMAGE
+```
+
 Run only one scale point (both forms are supported):
 
 ```bash

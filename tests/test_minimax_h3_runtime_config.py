@@ -162,9 +162,37 @@ def test_builder_enables_cp2_ulysses8_for_sp16():
     }
 
 
+def test_builder_enables_cp2_ulysses8_for_480p_sp16():
+    config = BUILDER.build(
+        published_config(),
+        amd_overlay(),
+        smoke=False,
+        seq_parallel_size=16,
+        target_height=480,
+        target_width=832,
+    )
+
+    assert (config["target_height"], config["target_width"]) == (480, 832)
+    assert config["parallel"]["seq_p_attn_type"] == "ulysses_ring"
+    assert config["parallel"]["context_p_size"] == 2
+    assert config["parallel"]["ulysses_p_size"] == 8
+
+
 def test_builder_rejects_sp16_smoke_geometry():
-    with pytest.raises(SystemExit, match="full 124f 1344x768 workload"):
+    with pytest.raises(SystemExit, match="supported production geometry"):
         BUILDER.build(published_config(), amd_overlay(), smoke=True, seq_parallel_size=16)
+
+
+def test_builder_rejects_unknown_production_geometry():
+    with pytest.raises(SystemExit, match="unsupported MiniMax-H3 production geometry 640x480"):
+        BUILDER.build(
+            published_config(),
+            amd_overlay(),
+            smoke=False,
+            seq_parallel_size=8,
+            target_height=480,
+            target_width=640,
+        )
 
 
 def test_builder_rejects_unsupported_sequence_parallel_size():

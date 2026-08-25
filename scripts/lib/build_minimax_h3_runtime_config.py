@@ -64,17 +64,28 @@ ALLOWED_OVERLAY_CHANGES = {
 TURBO_NAME = "minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
 TEST_WORKLOAD = {"target_video_length": 124, "fps": 24, "target_fps": 24}
 SMOKE = {"target_height": 480, "target_width": 480}
+PRODUCTION_GEOMETRIES = {(768, 1344), (480, 832)}
 
 
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def build(publish: dict, overlay: dict, *, smoke: bool, seq_parallel_size: int = 1) -> dict:
+def build(
+    publish: dict,
+    overlay: dict,
+    *,
+    smoke: bool,
+    seq_parallel_size: int = 1,
+    target_height: int | None = None,
+    target_width: int | None = None,
+) -> dict:
     if seq_parallel_size not in (1, 2, 4, 8, 16):
         raise SystemExit(f"MiniMax-H3 gfx1201 supports seq_parallel_size 1, 2, 4, 8, or 16, got {seq_parallel_size}")
     if seq_parallel_size == 16 and smoke:
-        raise SystemExit("MiniMax-H3 CP2xU8 SP16 requires the full 124f 1344x768 workload")
+        raise SystemExit("MiniMax-H3 CP2xU8 SP16 requires a supported production geometry")
+    if (target_height is None) != (target_width is None):
+        raise SystemExit("target_height and target_width must be provided together")
     missing = [key for key in REQUIRED_PUBLISH_KEYS if key not in publish]
     if missing:
         raise SystemExit(f"published H3 JSON is missing keys: {missing}")
@@ -92,6 +103,15 @@ def build(publish: dict, overlay: dict, *, smoke: bool, seq_parallel_size: int =
     config.update(TEST_WORKLOAD)
     if smoke:
         config.update(SMOKE)
+    else:
+        geometry = (
+            int(config["target_height"]) if target_height is None else target_height,
+            int(config["target_width"]) if target_width is None else target_width,
+        )
+        if geometry not in PRODUCTION_GEOMETRIES:
+            supported = ", ".join(f"{width}x{height}" for height, width in sorted(PRODUCTION_GEOMETRIES))
+            raise SystemExit(f"unsupported MiniMax-H3 production geometry {geometry[1]}x{geometry[0]}; expected {supported}")
+        config.update({"target_height": geometry[0], "target_width": geometry[1]})
     for key, expected in FROZEN_VALUES.items():
         if config.get(key) != expected:
             raise SystemExit(f"{key} must be {expected!r}, got {config.get(key)!r}")
@@ -144,12 +164,16 @@ def main() -> int:
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--seq-parallel-size", type=int, choices=(1, 2, 4, 8, 16), default=1)
+    parser.add_argument("--target-height", type=int)
+    parser.add_argument("--target-width", type=int)
     args = parser.parse_args()
     config = build(
         load_json(args.publish_json),
         load_json(args.overlay_json),
         smoke=args.smoke,
         seq_parallel_size=args.seq_parallel_size,
+        target_height=args.target_height,
+        target_width=args.target_width,
     )
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

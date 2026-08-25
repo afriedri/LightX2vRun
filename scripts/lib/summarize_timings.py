@@ -174,7 +174,16 @@ def write_csv(path: Path, scales, results, *, model: str) -> None:
             )
 
 
-def markdown_table(scales, results, *, model: str) -> str:
+def markdown_table(
+    scales,
+    results,
+    *,
+    model: str,
+    width: int = 1344,
+    height: int = 768,
+    frames: int = 124,
+    fps: int = 24,
+) -> str:
     lines = [
         "| metric | " + " | ".join(str(scale) for scale in scales) + " |",
         "| --- | " + " | ".join("---:" for _ in scales) + " |",
@@ -188,8 +197,8 @@ def markdown_table(scales, results, *, model: str) -> str:
     lines.append("")
     if model == "minimax_h3":
         lines.append(
-            "> **MiniMax-H3 口径：**1344x768、124 帧、24 FPS；2/4/8 卡使用 "
-            "Ulysses，16 卡使用 Ring。跨 rank 指标取关键路径上的最慢 rank。"
+            f"> **MiniMax-H3 口径：**{width}x{height}、{frames} 帧、{fps} FPS；"
+            "2/4/8 卡使用 Ulysses，16 卡使用 CP2xU8。跨 rank 指标取关键路径上的最慢 rank。"
         )
     else:
         lines.append(
@@ -206,6 +215,10 @@ def main() -> int:
     parser.add_argument("--model", choices=tuple(SCALES), required=True)
     parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--counts", type=parse_counts, required=True)
+    parser.add_argument("--width", type=int, default=1344)
+    parser.add_argument("--height", type=int, default=768)
+    parser.add_argument("--frames", type=int, default=124)
+    parser.add_argument("--fps", type=int, default=24)
     args = parser.parse_args()
 
     scales = SCALES[args.model]
@@ -236,7 +249,15 @@ def main() -> int:
     output_csv = args.log_dir / "timings.csv"
     output_md = args.log_dir / "timings.md"
     write_csv(output_csv, scales, results, model=args.model)
-    table = markdown_table(scales, results, model=args.model)
+    table = markdown_table(
+        scales,
+        results,
+        model=args.model,
+        width=args.width,
+        height=args.height,
+        frames=args.frames,
+        fps=args.fps,
+    )
     output_md.write_text(table, encoding="utf-8")
     print(table, end="")
     if args.model == "wan22":

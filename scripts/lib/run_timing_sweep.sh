@@ -138,6 +138,12 @@ memory_monitor_container="${MEMORY_MONITOR_CONTAINER:-${CONTAINER_NAME:-lightx2v
 run_tag="${TIMING_RUN_TAG:-${WAN_RUN_TAG:-${RUN_TASK_ID}_$(date +%Y%m%d_%H%M%S)}}"
 result_dir="${TIMING_RESULT_DIR:-${WAN_RESULT_DIR:-${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}}}"
 gpu_groups_value="${TIMING_GPU_GROUPS:-${WAN_GPU_GROUPS:-${RUN_DEFAULT_GPU_GROUPS}}}"
+h3_first_frame=
+h3_last_frame=
+if [[ "${RUN_MODEL_VERSION}" == minimax_h3 ]]; then
+    h3_first_frame="${H3_FIRST_FRAME:-${RUN_H3_FIRST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png}}"
+    h3_last_frame="${H3_LAST_FRAME:-${RUN_H3_LAST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png}}"
+fi
 
 [[ -x "${model_run}" ]] || { echo "ERROR: launcher is not executable: ${model_run}" >&2; exit 1; }
 [[ -f "${summary_script}" ]] || { echo "ERROR: timing summary not found: ${summary_script}" >&2; exit 1; }
@@ -263,9 +269,10 @@ wait_memory_monitor() {
 }
 
 duration_seconds="${RUN_DURATION_SECONDS:-$(( (RUN_TARGET_FRAMES - 1) / RUN_TARGET_FPS ))}"
-python3 - "${result_dir}/run_manifest.json" <<PY
+python3 - "${result_dir}/run_manifest.json" "${h3_first_frame}" "${h3_last_frame}" <<PY
 import json
 import pathlib
+import sys
 
 gpu_counts = [${selected_counts//,/, }]
 supported_counts = [${RUN_SUPPORTED_COUNTS//,/, }]
@@ -291,6 +298,9 @@ payload = {
         str(count): ("ulysses_ring_2d" if count == 16 else "ulysses")
         for count in gpu_counts
     } if "${RUN_MODEL_VERSION}" == "minimax_h3" else None,
+    "first_frame": sys.argv[2] or None,
+    "last_frame": sys.argv[3] or None,
+    "prompt_preset": "${H3_PROMPT_PRESET:-bird-stable}" if "${RUN_MODEL_VERSION}" == "minimax_h3" else None,
     "video_pattern": "/workspace/LightX2V/save_results/${run_tag}/<count>gpu.mp4",
     "b1_policy": "2/4 baseline, 8/16 b1" if "${RUN_MODEL_VERSION}" == "wan22" else None,
 }
@@ -337,8 +347,8 @@ for count in "${counts[@]}"; do
         run_environment+=(
             LIGHTX2V_H3_EXPLICIT_IMAGE=1
             H3_FRAME_SOURCE="${H3_FRAME_SOURCE:-host}"
-            H3_FIRST_FRAME="${H3_FIRST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png}"
-            H3_LAST_FRAME="${H3_LAST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png}"
+            H3_FIRST_FRAME="${h3_first_frame}"
+            H3_LAST_FRAME="${h3_last_frame}"
             H3_PROMPT_PRESET="${H3_PROMPT_PRESET:-bird-stable}"
         )
     fi
@@ -368,7 +378,11 @@ fi
 PYTHONDONTWRITEBYTECODE=1 python3 -B "${summary_script}" \
     --model "${summary_model}" \
     --log-dir "${result_dir}" \
-    --counts "${selected_counts}"
+    --counts "${selected_counts}" \
+    --width "${RUN_TARGET_WIDTH}" \
+    --height "${RUN_TARGET_HEIGHT}" \
+    --frames "${RUN_TARGET_FRAMES}" \
+    --fps "${RUN_TARGET_FPS}"
 
 echo "Timing sweep complete: ${run_tag}"
 echo "Raw logs : ${result_dir}/<count>gpu.log"

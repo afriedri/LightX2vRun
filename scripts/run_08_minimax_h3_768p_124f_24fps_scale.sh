@@ -17,4 +17,6 @@ export RUN_TARGET_WIDTH=1344
 export RUN_TARGET_FRAMES=124
 export RUN_TARGET_FPS=24
 export RUN_DURATION_SECONDS=5.17
+export RUN_H3_FIRST_FRAME=/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png
+export RUN_H3_LAST_FRAME=/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png
 exec bash "${script_dir}/lib/run_timing_sweep.sh" "$@"

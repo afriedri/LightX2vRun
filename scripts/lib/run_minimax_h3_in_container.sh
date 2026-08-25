@@ -99,9 +99,14 @@ if [[ "${H3_SMOKE:-0}" == 1 ]]; then
     smoke_flag+=(--smoke)
     target_height=480
     target_width=480
-elif [[ "${target_height}" != 768 || "${target_width}" != 1344 ]]; then
-    echo "ERROR: MiniMax-H3 production timing is frozen at 1344x768" >&2
-    exit 1
+else
+    case "${target_width}x${target_height}" in
+        1344x768 | 832x480) ;;
+        *)
+            echo "ERROR: MiniMax-H3 production timing supports 1344x768 or 832x480" >&2
+            exit 1
+            ;;
+    esac
 fi
 if [[ "${H3_PREFLIGHT_ONLY:-0}" == 1 ]]; then
     kernel_smoke_flag+=(--kernel-smoke)
@@ -115,6 +120,8 @@ python3 "${script_dir}/build_minimax_h3_runtime_config.py" \
     --overlay-json "${overlay_json}" \
     --output-json "${runtime_config_json}" \
     --seq-parallel-size "${gpu_count}" \
+    --target-height "${target_height}" \
+    --target-width "${target_width}" \
     "${smoke_flag[@]}"
 
 python3 "${script_dir}/preflight_minimax_h3_gfx1201.py" \

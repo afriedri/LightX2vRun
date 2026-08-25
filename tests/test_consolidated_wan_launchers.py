@@ -17,6 +17,10 @@ FIX1_IMAGE = (
     "gfx1201-R9600-FP8-260813-CKConv3dV1-Hot28-B0B1-Fix1"
 )
 H3_IMAGE = "example.invalid/lightx2v:h3-production"
+H3_768_FIRST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png"
+H3_768_LAST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png"
+H3_480_FIRST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/FL2V_START_480P.jpg"
+H3_480_LAST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/FL2V_END_480P.jpg"
 
 
 TASKS = {
@@ -27,6 +31,7 @@ TASKS = {
     "run_06_wan22_720p_81f_16fps_scale.sh": ("wan22", 720, 1280, 81, 16, [2, 4, 8, 16]),
     "run_07_wan22_720p_121f_24fps_scale.sh": ("wan22", 720, 1280, 121, 24, [2, 4, 8, 16]),
     "run_08_minimax_h3_768p_124f_24fps_scale.sh": ("minimax_h3", 768, 1344, 124, 24, [2, 4, 8, 16]),
+    "run_09_minimax_h3_480p_124f_24fps_scale.sh": ("minimax_h3", 480, 832, 124, 24, [2, 4, 8, 16]),
 }
 
 THERMAL_GPU_GROUPS = {
@@ -91,7 +96,7 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
                     expected_group = "0"
                     if name in DEFAULT_GPU_GROUPS:
                         expected_group = DEFAULT_GPU_GROUPS[name][str(counts[0])]
-                    elif name == "run_08_minimax_h3_768p_124f_24fps_scale.sh":
+                    elif model == "minimax_h3":
                         expected_group = THERMAL_GPU_GROUPS[str(counts[0])]
                     self.assertEqual(
                         manifest["gpu_groups"],
@@ -110,11 +115,27 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
                     if model == "minimax_h3":
                         self.assertEqual(manifest["duration_seconds"], 5.17)
                         self.assertEqual(manifest["parallel_topologies"], {"2": "ulysses"})
+                        expected_frames = (
+                            (H3_480_FIRST_FRAME, H3_480_LAST_FRAME)
+                            if height == 480
+                            else (H3_768_FIRST_FRAME, H3_768_LAST_FRAME)
+                        )
+                        self.assertEqual(manifest["first_frame"], expected_frames[0])
+                        self.assertEqual(manifest["last_frame"], expected_frames[1])
+                        self.assertEqual(manifest["prompt_preset"], "bird-stable")
                         self.assertIn(
                             "MiniMax-H3 topology: SP2/SP4/SP8=Ulysses, SP16=CP2xU8",
                             completed.stdout,
                         )
                         self.assertIn("--env TARGET_VIDEO_LENGTH=124", completed.stdout)
+                        self.assertIn(
+                            f"H3 first frame: {expected_frames[0]} -> /inputs/minimax_h3_first_frame",
+                            completed.stdout,
+                        )
+                        self.assertIn(
+                            f"H3 last frame:  {expected_frames[1]} -> /inputs/minimax_h3_last_frame",
+                            completed.stdout,
+                        )
 
     def test_wan_default_sweeps_preserve_thermal_gpu_rotation(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -217,6 +238,44 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
                     f"minimax_h3: {count} GPUs ({group})",
                     completed.stdout,
                 )
+
+    def test_minimax_h3_480p_default_sweep_uses_jpg_keyframes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            result_dir = Path(temporary) / "result"
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(SCRIPTS / "run_09_minimax_h3_480p_124f_24fps_scale.sh"),
+                    "--image",
+                    H3_IMAGE,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "DRY_RUN": "1",
+                    "TIMING_RESULT_DIR": str(result_dir),
+                    "RUN_REPO_DIR": str(REPO_ROOT),
+                },
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            manifest = json.loads(
+                (result_dir / "run_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual((manifest["width"], manifest["height"]), (832, 480))
+            self.assertEqual(manifest["gpu_counts"], [2, 4, 8, 16])
+            self.assertEqual(manifest["gpu_groups"], THERMAL_GPU_GROUPS)
+            self.assertEqual(manifest["first_frame"], H3_480_FIRST_FRAME)
+            self.assertEqual(manifest["last_frame"], H3_480_LAST_FRAME)
+            self.assertEqual(manifest["prompt_preset"], "bird-stable")
+            self.assertEqual(
+                manifest["parallel_topologies"],
+                {"2": "ulysses", "4": "ulysses", "8": "ulysses", "16": "ulysses_ring_2d"},
+            )
+            self.assertIn("Workload: 832x480, 124 frames @ 24 FPS (5.17s)", completed.stdout)
+            self.assertIn(H3_480_FIRST_FRAME, completed.stdout)
+            self.assertIn(H3_480_LAST_FRAME, completed.stdout)
 
     def wan22_config(self, count: int, schedule: str = "auto") -> tuple[dict, str]:
         devices = ",".join(str(index) for index in range(count))
@@ -339,6 +398,14 @@ DiT summary: status=complete, steps=4/4, total=40.000s, average=10.000s/it
                     str(root),
                     "--counts",
                     "2",
+                    "--width",
+                    "832",
+                    "--height",
+                    "480",
+                    "--frames",
+                    "124",
+                    "--fps",
+                    "24",
                 ],
                 check=False,
                 capture_output=True,
@@ -351,7 +418,8 @@ DiT summary: status=complete, steps=4/4, total=40.000s, average=10.000s/it
         self.assertIn("| Image Encoder | N/A |", table)
         self.assertIn("| Encoders 合计 | 5.000s |", table)
         self.assertIn("| DiT 4 steps | 40.000s |", table)
-        self.assertIn("2/4/8 卡使用 Ulysses，16 卡使用 Ring", table)
+        self.assertIn("832x480、124 帧、24 FPS", table)
+        self.assertIn("2/4/8 卡使用 Ulysses，16 卡使用 CP2xU8", table)
         self.assertIn("Encoders 合计,5.000000", csv_text)
 
 
