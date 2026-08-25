@@ -257,6 +257,11 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
                     "DRY_RUN": "1",
                     "TIMING_RESULT_DIR": str(result_dir),
                     "RUN_REPO_DIR": str(REPO_ROOT),
+                    "H3_FRAME_SOURCE": "image",
+                    "H3_FIRST_FRAME": H3_768_FIRST_FRAME,
+                    "H3_LAST_FRAME": H3_768_LAST_FRAME,
+                    "IMAGE_PATH": "/tmp/stale-container-first.png",
+                    "LAST_FRAME_PATH": "/tmp/stale-container-last.png",
                 },
             )
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
@@ -274,8 +279,15 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
                 {"2": "ulysses", "4": "ulysses", "8": "ulysses", "16": "ulysses_ring_2d"},
             )
             self.assertIn("Workload: 832x480, 124 frames @ 24 FPS (5.17s)", completed.stdout)
+            self.assertIn("H3 frame source: host", completed.stdout)
             self.assertIn(H3_480_FIRST_FRAME, completed.stdout)
             self.assertIn(H3_480_LAST_FRAME, completed.stdout)
+            self.assertNotIn("flf2v_input_first_frame-fs8.png", completed.stdout)
+            self.assertNotIn("flf2v_input_last_frame-fs8.png", completed.stdout)
+            self.assertNotIn("/tmp/stale-container-first.png", completed.stdout)
+            self.assertNotIn("/tmp/stale-container-last.png", completed.stdout)
+            self.assertEqual(completed.stdout.count("--env IMAGE_PATH="), 4)
+            self.assertEqual(completed.stdout.count("--env LAST_FRAME_PATH="), 4)
 
     def wan22_config(self, count: int, schedule: str = "auto") -> tuple[dict, str]:
         devices = ",".join(str(index) for index in range(count))

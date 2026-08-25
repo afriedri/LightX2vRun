@@ -77,6 +77,8 @@ def run_dry(
             "H3_PROMPT_FILE": "",
             "H3_PROMPT_PRESET": "",
             "PROMPT": "",
+            "IMAGE_PATH": "/tmp/stale-container-first.png",
+            "LAST_FRAME_PATH": "/tmp/stale-container-last.png",
         },
     )
     return completed, result_dir
@@ -213,6 +215,10 @@ def test_h3_launcher_mounts_explicit_host_frames(tmp_path):
     assert "--env H3_FRAME_SOURCE=host" in completed.stdout
     assert "target=/inputs/minimax_h3_first_frame" in completed.stdout
     assert "target=/inputs/minimax_h3_last_frame" in completed.stdout
+    assert "/tmp/stale-container-first.png" not in completed.stdout
+    assert "/tmp/stale-container-last.png" not in completed.stdout
+    assert completed.stdout.count("--env IMAGE_PATH=") == 1
+    assert completed.stdout.count("--env LAST_FRAME_PATH=") == 1
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["first_frame"]["source"] == "host"
     assert manifest["last_frame"]["source"] == "host"

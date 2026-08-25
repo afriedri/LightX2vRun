@@ -141,8 +141,10 @@ gpu_groups_value="${TIMING_GPU_GROUPS:-${WAN_GPU_GROUPS:-${RUN_DEFAULT_GPU_GROUP
 h3_first_frame=
 h3_last_frame=
 if [[ "${RUN_MODEL_VERSION}" == minimax_h3 ]]; then
-    h3_first_frame="${H3_FIRST_FRAME:-${RUN_H3_FIRST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png}}"
-    h3_last_frame="${H3_LAST_FRAME:-${RUN_H3_LAST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png}}"
+    # Numbered tasks are fixed workloads. Do not let frame settings inherited
+    # from a previous shell silently replace the task's declared keyframes.
+    h3_first_frame="${RUN_H3_FIRST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png}"
+    h3_last_frame="${RUN_H3_LAST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png}"
 fi
 
 [[ -x "${model_run}" ]] || { echo "ERROR: launcher is not executable: ${model_run}" >&2; exit 1; }
@@ -346,7 +348,7 @@ for count in "${counts[@]}"; do
     elif [[ "${RUN_MODEL_VERSION}" == minimax_h3 ]]; then
         run_environment+=(
             LIGHTX2V_H3_EXPLICIT_IMAGE=1
-            H3_FRAME_SOURCE="${H3_FRAME_SOURCE:-host}"
+            H3_FRAME_SOURCE=host
             H3_FIRST_FRAME="${h3_first_frame}"
             H3_LAST_FRAME="${h3_last_frame}"
             H3_PROMPT_PRESET="${H3_PROMPT_PRESET:-bird-stable}"

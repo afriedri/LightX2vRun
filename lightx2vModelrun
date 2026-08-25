@@ -487,6 +487,12 @@ for inference_env in \
     H3_MEGADISCOVERY_TIMEOUT_SECONDS \
     NCCL_DEBUG NCCL_DEBUG_SUBSYS NCCL_DEBUG_FILE \
     LIGHTX2V_H3_RUN_COLLECTOR LIGHTX2V_H3_RUN_COLLECTOR_OUTPUT; do
+    # H3 resolves these paths from H3_FRAME_SOURCE and mounts the selected host
+    # files above. Re-appending inherited values here would create duplicate
+    # Docker environment entries whose final (stale) value wins.
+    if [[ "${is_minimax_h3_mode}" == 1 && ( "${inference_env}" == IMAGE_PATH || "${inference_env}" == LAST_FRAME_PATH ) ]]; then
+        continue
+    fi
     if [[ -n "${!inference_env:-}" ]]; then
         docker_args+=(--env "${inference_env}=${!inference_env}")
     fi
