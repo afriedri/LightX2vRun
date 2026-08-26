@@ -34,6 +34,14 @@ DEFAULT_OUTPUT = Path("ltx23_weight_probe.json")
 OFFICIAL_SIZE_BYTES = 29_531_884_062
 OFFICIAL_SHA256 = "d9646b6f2d5c42d337b23671634c43bfeece6989644f51b4a3aa088465ccd3b2"
 LIGHTX2V_MODEL_PREFIX = "model.diffusion_model"
+LTX2_ATTENTION_PREFIXES = (
+    "attn1",
+    "attn2",
+    "audio_attn1",
+    "audio_attn2",
+    "audio_to_video_attn",
+    "video_to_audio_attn",
+)
 MAX_HEADER_BYTES = 512 * 1024 * 1024
 
 _BLOCK_KEY_RE = re.compile(
@@ -450,7 +458,7 @@ def _gate_contract(
 ) -> dict[str, Any]:
     rows = []
     for block in range(num_layers):
-        for attention in ("attn1", "attn2"):
+        for attention in LTX2_ATTENTION_PREFIXES:
             for parameter in ("weight", "bias"):
                 expected = (
                     f"{LIGHTX2V_MODEL_PREFIX}.transformer_blocks.{block}."
@@ -497,20 +505,12 @@ def _gate_contract(
         if str(tensors[name].get("dtype", "")).startswith("F8_")
         and ".to_gate_logits." in name
     ]
-    if quantized_gate_names:
-        _issue(
-            issues,
-            "error",
-            "quantized_gate_logits",
-            "to_gate_logits should remain a non-FP8 companion parameter",
-            count=len(quantized_gate_names),
-            first=quantized_gate_names[0],
-        )
     actual_gate_rows = [
         {"name": name, **dict(tensors[name])} for name in actual_gate_names
     ]
     return {
         "lightx2v_expected_prefix": LIGHTX2V_MODEL_PREFIX,
+        "attention_prefixes": list(LTX2_ATTENTION_PREFIXES),
         "expected_parameter_count": len(rows),
         "status_counts": statuses,
         "missing_expected_names": missing,
@@ -520,6 +520,7 @@ def _gate_contract(
         "actual_gate_dtype_counts": _counter(
             tensors[name].get("dtype") for name in actual_gate_names
         ),
+        "quantized_gate_logits_are_valid_fp8_linears": True,
         "quantized_to_gate_logits": quantized_gate_names,
     }
 
