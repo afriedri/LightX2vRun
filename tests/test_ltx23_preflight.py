@@ -182,6 +182,17 @@ def test_exact_local_video_token_contract():
     }
 
 
+def test_scaled_mm_probe_uses_the_production_tn_layout_contract():
+    assert PREFLIGHT.scaled_mm_layout_contract(1760, 4096, 4096) == {
+        "lhs_shape": [1760, 4096],
+        "lhs_stride": [4096, 1],
+        "rhs_shape": [4096, 4096],
+        "rhs_stride": [1, 4096],
+    }
+    with pytest.raises(ValueError, match="positive"):
+        PREFLIGHT.scaled_mm_layout_contract(0, 4096, 4096)
+
+
 def test_runtime_config_accepts_only_frozen_b0(tmp_path):
     path = tmp_path / "config.json"
     path.write_text(json.dumps(runtime_config()), encoding="utf-8")

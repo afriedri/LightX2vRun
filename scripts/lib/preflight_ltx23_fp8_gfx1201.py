@@ -488,15 +488,48 @@ def require_gfx1201(expected_devices: int = 2) -> dict[str, Any]:
     }
 
 
+def scaled_mm_layout_contract(m: int, n: int, k: int) -> dict[str, list[int]]:
+    if min(m, n, k) <= 0:
+        raise ValueError("scaled-mm dimensions must be positive")
+    return {
+        "lhs_shape": [m, k],
+        "lhs_stride": [k, 1],
+        "rhs_shape": [k, n],
+        "rhs_stride": [1, k],
+    }
+
+
 def _scaled_mm_probe(torch, *, m: int, n: int, k: int, bias: bool) -> dict[str, Any]:
     device = torch.device("cuda", torch.cuda.current_device())
     generator = torch.Generator(device=device).manual_seed(20260826 + m + n + k)
     a = torch.randn((m, k), device=device, dtype=torch.bfloat16, generator=generator)
-    b = torch.randn((k, n), device=device, dtype=torch.bfloat16, generator=generator)
+    # Match the real LightX2V checkpoint path exactly: weights are contiguous
+    # [N, K] on disk, then exposed to torch._scaled_mm through a zero-copy
+    # [K, N] transpose view. ROCm hipBLASLt rejects a row-major [K, N] RHS.
+    b_checkpoint = torch.randn(
+        (n, k), device=device, dtype=torch.bfloat16, generator=generator
+    )
     scale_a = torch.clamp(a.abs().max().float() / 448.0, min=1.0e-8)
-    scale_b = torch.clamp(b.abs().max().float() / 448.0, min=1.0e-8)
+    scale_b = torch.clamp(
+        b_checkpoint.abs().max().float() / 448.0, min=1.0e-8
+    )
     a_fp8 = torch.clamp(a / scale_a, -448, 448).to(torch.float8_e4m3fn)
-    b_fp8 = torch.clamp(b / scale_b, -448, 448).to(torch.float8_e4m3fn)
+    b_fp8_checkpoint = torch.clamp(
+        b_checkpoint / scale_b, -448, 448
+    ).to(torch.float8_e4m3fn)
+    b_fp8 = b_fp8_checkpoint.t()
+    layout = scaled_mm_layout_contract(m, n, k)
+    actual_layout = {
+        "lhs_shape": list(a_fp8.shape),
+        "lhs_stride": list(a_fp8.stride()),
+        "rhs_shape": list(b_fp8.shape),
+        "rhs_stride": list(b_fp8.stride()),
+    }
+    if actual_layout != layout:
+        die(
+            "torch._scaled_mm probe layout disagrees with the production TN "
+            f"contract: expected={layout}, actual={actual_layout}"
+        )
     bias_tensor = (
         torch.randn((n,), device=device, dtype=torch.bfloat16, generator=generator)
         if bias
@@ -529,8 +562,9 @@ def _scaled_mm_probe(torch, *, m: int, n: int, k: int, bias: bool) -> dict[str, 
         "scale_dtype": str(scale_a.dtype),
         "scale_shape": list(scale_a.shape),
         "output_dtype": str(out.dtype),
+        "layout": actual_layout,
     }
-    del a, b, a_fp8, b_fp8, bias_tensor, out
+    del a, b_checkpoint, a_fp8, b_fp8_checkpoint, b_fp8, bias_tensor, out
     torch.cuda.empty_cache()
     return result
 
