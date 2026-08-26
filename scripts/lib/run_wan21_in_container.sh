@@ -55,7 +55,7 @@ if [[ "${expected_gpu_count}" == 16 ]]; then
     seq_p_attn_type="${SEQ_P_ATTN_TYPE:-ring}"
 fi
 case "${self_attn_type}" in
-    aiter_flydsl_bf16_flash_attn | aiter_triton_bf16_flash_attn | aiter_fav3_sage_bf16_attn) ;;
+    aiter_flydsl_bf16_flash_attn | aiter_triton_mha | aiter_fav3_sage_bf16_attn) ;;
     *) echo "ERROR: unsupported SELF_ATTN_TYPE=${self_attn_type}" >&2; exit 1 ;;
 esac
 case "${seq_p_attn_type}" in
@@ -153,8 +153,8 @@ config.update(
         "fps": int(target_fps_text),
         "text_len": 512,
         "self_attn_1_type": self_attn_type,
-        "cross_attn_1_type": "aiter_triton_bf16_flash_attn",
-        "cross_attn_2_type": "aiter_triton_bf16_flash_attn",
+        "cross_attn_1_type": "aiter_triton_mha",
+        "cross_attn_2_type": "aiter_triton_mha",
         "sample_guide_scale": 5,
         "sample_shift": 5,
         "enable_cfg": False,

@@ -78,7 +78,7 @@ esac
 
 self_attn_type="${SELF_ATTN_TYPE:-aiter_fav3_sage_bf16_attn}"
 case "${self_attn_type}" in
-    aiter_flydsl_bf16_flash_attn | aiter_triton_bf16_flash_attn | aiter_fav3_sage_bf16_attn) ;;
+    aiter_flydsl_bf16_flash_attn | aiter_triton_mha | aiter_fav3_sage_bf16_attn) ;;
     *) echo "ERROR: unsupported SELF_ATTN_TYPE=${self_attn_type}" >&2; exit 1 ;;
 esac
 if [[ "${expected_gpu_count}" == 16 ]]; then

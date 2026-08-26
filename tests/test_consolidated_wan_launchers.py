@@ -320,6 +320,8 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
                 self.assertEqual(config["offload_ratio"], 1.0)
                 self.assertEqual(config["wan_block_offload_schedule_request"], "auto")
                 self.assertEqual(config["wan_block_offload_schedule"], expected)
+                self.assertEqual(config["cross_attn_1_type"], "aiter_triton_mha")
+                self.assertEqual(config["cross_attn_2_type"], "aiter_triton_mha")
                 self.assertIn(
                     f"Wan block-offload schedule: {expected} (request=auto)",
                     output,
@@ -329,6 +331,21 @@ class ConsolidatedTimingLauncherTest(unittest.TestCase):
         forced_off, _ = self.wan22_config(16, "baseline")
         self.assertEqual(forced_on["wan_block_offload_schedule"], "b1")
         self.assertEqual(forced_off["wan_block_offload_schedule"], "baseline")
+
+    def test_wan_runtime_sources_only_use_the_canonical_triton_name(self):
+        sources = [
+            REPO_ROOT
+            / "configs/wan22_moe_i2v_distill_fp8_4step_sage_gfx1201_lazy.json",
+            SCRIPTS / "lib/run_wan21_in_container.sh",
+            SCRIPTS / "lib/run_wan22_in_container.sh",
+            SCRIPTS
+            / "deprecated/wan22_legacy/run_wan22_moe_i2v_distill_fp8_4step_gfx1201_common.sh",
+        ]
+        for path in sources:
+            with self.subTest(source=path.name):
+                source = path.read_text(encoding="utf-8")
+                self.assertNotIn("aiter_triton_bf16_flash_attn", source)
+                self.assertIn("aiter_triton_mha", source)
 
     def test_single_count_selection_runs_only_that_count(self):
         with tempfile.TemporaryDirectory() as temporary:

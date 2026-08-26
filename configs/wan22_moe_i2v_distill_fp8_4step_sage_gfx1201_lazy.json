@@ -5,8 +5,8 @@
     "target_height": 720,
     "target_width": 1280,
     "self_attn_1_type": "aiter_fav3_sage_bf16_attn",
-    "cross_attn_1_type": "aiter_triton_bf16_flash_attn",
-    "cross_attn_2_type": "aiter_triton_bf16_flash_attn",
+    "cross_attn_1_type": "aiter_triton_mha",
+    "cross_attn_2_type": "aiter_triton_mha",
     "sample_guide_scale": [
         3.5,
         3.5

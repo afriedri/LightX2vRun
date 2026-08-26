@@ -108,7 +108,7 @@ case "${expected_gpu_count}" in
     16)
         seq_p_size=16
         seq_p_attn_type=ring
-        self_attn_type=aiter_triton_bf16_flash_attn
+        self_attn_type=aiter_triton_mha
         ;;
     *)
         echo "ERROR: supported GPU counts are 1, 2, 4, 8, and 16" >&2
@@ -118,7 +118,7 @@ esac
 
 if [[ -n "${SELF_ATTN_TYPE:-}" ]]; then
     case "${SELF_ATTN_TYPE}" in
-        aiter_flydsl_bf16_flash_attn | aiter_triton_bf16_flash_attn | aiter_fav3_sage_bf16_attn)
+        aiter_flydsl_bf16_flash_attn | aiter_triton_mha | aiter_fav3_sage_bf16_attn)
             self_attn_type="${SELF_ATTN_TYPE}"
             ;;
         *)
