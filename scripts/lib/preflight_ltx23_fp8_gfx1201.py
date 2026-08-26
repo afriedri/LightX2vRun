@@ -309,7 +309,7 @@ def check_runtime_config(path: Path) -> dict[str, Any]:
         "enable_cfg": False,
         "cpu_offload": True,
         "offload_granularity": "block",
-        "lazy_load": False,
+        "lazy_load": True,
         "unload_modules": True,
         "gemma_cpu_offload": True,
         "vae_cpu_offload": True,
@@ -424,6 +424,10 @@ def check_runtime_dependencies() -> dict[str, Any]:
         die("LightX2V checkpoint SHA256 disagrees with the launcher")
     if not callable(getattr(LTX2HeterogeneousOffloadManager, "current_buffer", None)):
         die("image lacks the heterogeneous LTX BF16/FP8 offload manager")
+    if not callable(
+        getattr(LTX2HeterogeneousOffloadManager, "init_cpu_buffer_pools", None)
+    ):
+        die("image lacks mixed BF16/FP8 disk-streaming host pools")
     lightx2v_root = Path(lightx2v.__file__).resolve().parents[1]
     aiter_root = Path(aiter.__file__).resolve().parents[1]
     lightx2v_revision = os.getenv("LIGHTX2V_SOURCE_REVISION") or git_revision(lightx2v_root)

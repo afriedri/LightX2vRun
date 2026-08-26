@@ -85,7 +85,7 @@ def runtime_config() -> dict:
         "enable_cfg": False,
         "cpu_offload": True,
         "offload_granularity": "block",
-        "lazy_load": False,
+        "lazy_load": True,
         "unload_modules": True,
         "gemma_cpu_offload": True,
         "vae_cpu_offload": True,

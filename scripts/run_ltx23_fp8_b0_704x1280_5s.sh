@@ -24,6 +24,7 @@ Options:
   --gemma-dir DIR      Host Gemma 3 12B QAT unquantized asset directory
   --result-dir DIR     Exact empty output directory (default: timestamped)
   --prompt TEXT        T2AV prompt; PROMPT is also accepted
+  --mock-memory-only   Header-only memory gate; needs no image or GPU
   --preflight-only     Run SHA/header/image/RCCL/exact-shape FP8 probes, then exit
   --collect            Enable collector (default)
   --no-collect         Disable timing/memory observers; safety preflight remains
@@ -35,6 +36,8 @@ Environment:
                        Use small matrices for an explicit diagnostic only
   LTX23_WEIGHT_PROBE_ONLY=1
                        Collector wrapper only: inspect weights in the B0 container
+  LTX23_DYNAMIC_MEMORY_BUDGET_GIB=16
+                       No-GPU gate reserve for activations and kernel workspace
 EOF
 }
 
@@ -52,6 +55,8 @@ collect="${LTX23_COLLECT:-1}"
 quick_gemm_probe="${LTX23_QUICK_GEMM_PROBE:-0}"
 weight_probe_only="${LTX23_WEIGHT_PROBE_ONLY:-0}"
 weight_probe_sha256="${LTX23_WEIGHT_PROBE_SHA256:-0}"
+mock_memory_only=0
+dynamic_memory_budget_gib="${LTX23_DYNAMIC_MEMORY_BUDGET_GIB:-16}"
 
 while (( $# > 0 )); do
     case "$1" in
@@ -64,6 +69,7 @@ while (( $# > 0 )); do
         --gemma-dir) (( $# >= 2 )) || { echo "ERROR: --gemma-dir requires a value" >&2; exit 2; }; gemma_dir="$2"; shift 2 ;;
         --result-dir) (( $# >= 2 )) || { echo "ERROR: --result-dir requires a value" >&2; exit 2; }; result_dir="$2"; shift 2 ;;
         --prompt) (( $# >= 2 )) || { echo "ERROR: --prompt requires a value" >&2; exit 2; }; prompt="$2"; shift 2 ;;
+        --mock-memory-only) mock_memory_only=1; shift ;;
         --preflight-only) preflight_only=1; shift ;;
         --collect) collect=1; shift ;;
         --no-collect) collect=0; shift ;;
@@ -71,7 +77,9 @@ while (( $# > 0 )); do
     esac
 done
 
-[[ -n "${image}" ]] || { echo "ERROR: --image is required; B0 must use an image built from the current hvat-gfx1201 source" >&2; exit 2; }
+if [[ "${mock_memory_only}" != 1 ]]; then
+    [[ -n "${image}" ]] || { echo "ERROR: --image is required; B0 must use an image built from the current hvat-gfx1201 source" >&2; exit 2; }
+fi
 case "${collect}" in 0 | 1) ;; *) echo "ERROR: LTX23_COLLECT must be 0 or 1" >&2; exit 2 ;; esac
 case "${quick_gemm_probe}" in 0 | 1) ;; *) echo "ERROR: LTX23_QUICK_GEMM_PROBE must be 0 or 1" >&2; exit 2 ;; esac
 case "${weight_probe_only}" in 0 | 1) ;; *) echo "ERROR: LTX23_WEIGHT_PROBE_ONLY must be 0 or 1" >&2; exit 2 ;; esac
@@ -84,11 +92,18 @@ if [[ "${weight_probe_only}" == 1 && "${preflight_only}" == 1 ]]; then
     echo "ERROR: weight-probe-only and preflight-only are mutually exclusive" >&2
     exit 2
 fi
+if [[ "${mock_memory_only}" == 1 && ( "${weight_probe_only}" == 1 || "${preflight_only}" == 1 ) ]]; then
+    echo "ERROR: mock-memory-only cannot be combined with another probe-only mode" >&2
+    exit 2
+fi
 [[ "${gpu_devices}" =~ ^[0-9]+,[0-9]+$ ]] || { echo "ERROR: --gpus requires exactly two comma-separated ids" >&2; exit 2; }
 IFS=',' read -r gpu0 gpu1 <<<"${gpu_devices}"
 [[ "${gpu0}" != "${gpu1}" ]] || { echo "ERROR: --gpus ids must be unique" >&2; exit 2; }
 
 run_kind=ltx23_fp8_b0_704x1280
+if [[ "${mock_memory_only}" == 1 ]]; then
+    run_kind=ltx23_memory_mock
+fi
 if [[ "${weight_probe_only}" == 1 ]]; then
     run_kind=ltx23_weight_probe
 fi
@@ -102,24 +117,36 @@ if [[ -d "${result_dir}" && -n "$(find "${result_dir}" -mindepth 1 -maxdepth 1 -
 fi
 mkdir -p "${result_dir}"
 
+memory_mock="${run_root}/scripts/lib/mock_ltx23_b0_memory.py"
+[[ -f "${memory_mock}" ]] || { echo "ERROR: memory mock not found: ${memory_mock}" >&2; exit 1; }
+if [[ "${mock_memory_only}" == 1 ]]; then
+    python3 "${memory_mock}" \
+        --checkpoint "${checkpoint}" \
+        --output "${result_dir}/mock_memory.json" \
+        --dynamic-budget-gib "${dynamic_memory_budget_gib}"
+    echo "LTX-2.3 no-GPU memory report: ${result_dir}/mock_memory.json"
+    exit 0
+fi
+
 preflight="${run_root}/scripts/lib/preflight_ltx23_fp8_gfx1201.py"
 host_collector="${run_root}/scripts/collector/collect_ltx23_host_evidence.py"
 summary_script="${run_root}/scripts/lib/summarize_ltx23_b0.py"
 weight_probe="${run_root}/scripts/collector/collect_ltx23_weight_probe.py"
-for script in "${model_run}" "${preflight}" "${host_collector}" "${summary_script}" "${weight_probe}"; do
+for script in "${model_run}" "${preflight}" "${memory_mock}" "${host_collector}" "${summary_script}" "${weight_probe}"; do
     [[ -f "${script}" ]] || { echo "ERROR: required launcher component not found: ${script}" >&2; exit 1; }
 done
 
 python3 - "${result_dir}/run_manifest.json" "${image}" "${fps}" "${frames}" \
     "${gpu_devices}" "${checkpoint}" "${upscaler}" "${gemma_dir}" \
     "${prompt}" "${preflight_only}" "${collect}" "${weight_probe_only}" \
-    "${weight_probe_sha256}" <<'PY'
+    "${weight_probe_sha256}" "${dynamic_memory_budget_gib}" <<'PY'
 import json
 import pathlib
 import sys
 
 (output, image, fps, frames, gpus, checkpoint, upscaler, gemma, prompt,
- preflight_only, collect, weight_probe_only, weight_probe_sha256) = sys.argv[1:]
+ preflight_only, collect, weight_probe_only, weight_probe_sha256,
+ dynamic_memory_budget_gib) = sys.argv[1:]
 payload = {
     "schema_name": "lightx2v.ltx23_fp8.b0.manifest",
     "schema_version": 1,
@@ -161,6 +188,13 @@ payload = {
         "attention": "torch_sdpa",
         "norm_rope_modulate": "torch",
         "sequence_parallel": "ulysses_sp2_torch_a2a",
+    },
+    "residency": {
+        "strategy": "disk_streamed_mixed_bf16_fp8",
+        "gpu_slots": {"bf16": 2, "fp8": 2},
+        "pinned_host_slots": {"bf16": 2, "fp8": 2},
+        "mock_memory_report": "mock_memory.json",
+        "dynamic_activation_workspace_budget_gib": float(dynamic_memory_budget_gib),
     },
 }
 pathlib.Path(output).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -219,6 +253,10 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ "${DRY_RUN:-0}" != 1 && "${weight_probe_only}" != 1 ]]; then
+    python3 "${memory_mock}" \
+        --checkpoint "${checkpoint}" \
+        --output "${result_dir}/mock_memory.json" \
+        --dynamic-budget-gib "${dynamic_memory_budget_gib}"
     python3 "${preflight}" \
         --mode host \
         --checkpoint "${checkpoint}" \

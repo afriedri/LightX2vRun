@@ -73,6 +73,13 @@ def test_dry_run_mounts_assets_and_enables_collector_by_default(tmp_path):
     manifest = json.loads((tmp_path / "result/run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["collector"]["enabled"] is True
     assert manifest["gpus"] == [3, 7]
+    assert manifest["residency"] == {
+        "dynamic_activation_workspace_budget_gib": 16.0,
+        "gpu_slots": {"bf16": 2, "fp8": 2},
+        "mock_memory_report": "mock_memory.json",
+        "pinned_host_slots": {"bf16": 2, "fp8": 2},
+        "strategy": "disk_streamed_mixed_bf16_fp8",
+    }
     assert manifest["workload"] == {
         "final_height": 704,
         "final_width": 1280,
