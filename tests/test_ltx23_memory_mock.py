@@ -77,6 +77,12 @@ def test_mock_exactly_counts_mixed_double_pools_without_tensor_data(tmp_path):
     assert report["residency"]["pinned_host_block_pool_bytes"] == expected_pool
     assert report["residency"]["gpu_non_block_dit_bytes"] == 16 * 16 * 2
     assert report["residency"]["phase_unloaded_component_bytes"] == 32 * 32 * 2
+    assert report["residency"]["prompt_handoff"] == {
+        "consumer": "fresh_sp2_dit_processes",
+        "gemma_dit_device_overlap": False,
+        "producer": "single_source_process_accelerate_auto",
+    }
+    assert report["gate"]["process_isolation"] == "PASS"
     assert report["workload"]["stages"]["stage1"]["local_video_tokens"] == 1760
     assert report["workload"]["stages"]["stage2"]["local_video_tokens"] == 7040
     assert report["workload"]["stages"]["stage2"]["ulysses_attention_tokens_per_rank"] == 14080

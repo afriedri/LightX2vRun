@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import struct
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,10 @@ SPEC.loader.exec_module(SUMMARY)
 
 
 def runtime_log() -> str:
-    lines = []
+    lines = [
+        "[Runtime] kind=route model=ltx2 stage=L1 component=prompt.encoder "
+        "status=configured backend=safetensors.process_isolated rank=0/2"
+    ]
     for stage, component in (
         ("L1", "prompt.encoder"),
         ("L2-S1", "dit.denoise"),
@@ -45,7 +49,11 @@ def collector(rank: int) -> dict:
         "steps": steps,
         "summary": {"gpu": {"fp8.gemm": {"total_ms": 12.5 + rank}}},
         "device_memory_snapshots": [
-            {"max_allocated_bytes": 100 + rank, "max_reserved_bytes": 200 + rank}
+            {
+                "label": "ltx23_l1_prompt_cache_loaded",
+                "max_allocated_bytes": 100 + rank,
+                "max_reserved_bytes": 200 + rank,
+            }
         ],
     }
 
@@ -100,6 +108,53 @@ def test_route_validation_requires_scaled_mm_on_both_ranks():
     assert SUMMARY.validate_routes(events)["scaled_mm_dispatch_ranks"] == ["0", "1"]
     with pytest.raises(SystemExit):
         SUMMARY.validate_routes(events[:-1])
+
+
+def test_prompt_handoff_header_proves_process_boundary(tmp_path):
+    header = {
+        "__metadata__": {
+            "schema_name": "lightx2v.ltx23.prompt_embeddings",
+            "schema_version": "1",
+            "process_isolated": "true",
+            "producer_pid": "123",
+            "source_rank": "0",
+        },
+        **{
+            name: {"dtype": "BF16", "shape": [1, 8, 16], "data_offsets": [0, 0]}
+            for name in SUMMARY.PROMPT_CACHE_TENSORS
+        },
+    }
+    encoded = json.dumps(header).encode("utf-8")
+    (tmp_path / "ltx23_prompt_embeddings.safetensors").write_bytes(
+        struct.pack("<Q", len(encoded)) + encoded
+    )
+    result = SUMMARY.prompt_cache_summary(tmp_path)
+    assert result["process_isolated"] is True
+    assert result["producer_pid"] == 123
+
+
+def test_phase_handoff_requires_pid_exit_and_low_physical_vram(tmp_path):
+    report = {
+        "schema_name": "lightx2v.ltx23.phase_handoff",
+        "status": "ok",
+        "producer_pid_alive": False,
+        "gpu_indices": [0, 1],
+        "vram_release_limit_bytes": 1024**3,
+        "gpus": [
+            {"rocm_index": 0, "used_bytes": 64 * 1024**2},
+            {"rocm_index": 1, "used_bytes": 64 * 1024**2},
+        ],
+    }
+    (tmp_path / "phase_handoff.json").write_text(
+        json.dumps(report), encoding="utf-8"
+    )
+    assert SUMMARY.phase_handoff_summary(tmp_path)["status"] == "ok"
+    report["gpus"][1]["used_bytes"] = 2 * 1024**3
+    (tmp_path / "phase_handoff.json").write_text(
+        json.dumps(report), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit):
+        SUMMARY.phase_handoff_summary(tmp_path)
 
 
 def test_ffprobe_contract_accepts_704x1280_av():

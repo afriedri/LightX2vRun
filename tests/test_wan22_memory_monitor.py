@@ -113,7 +113,8 @@ def test_single_process_infer_is_accounted_as_rank_zero():
     assert '"inferred_single_process": inferred_single_process' in MONITOR.CONTAINER_PROBE
     assert "pid == os.getpid()" in MONITOR.CONTAINER_PROBE
     assert '"benchmark_minimax_h3_collectives.py"' in MONITOR.CONTAINER_PROBE
-    assert '"workload": "collective_probe" if is_collective_probe else "inference"' in MONITOR.CONTAINER_PROBE
+    assert 'else "ltx23_prompt"' in MONITOR.CONTAINER_PROBE
+    assert 'if is_ltx23_prompt' in MONITOR.CONTAINER_PROBE
 
 
 def test_collective_probe_lifecycle_is_separate_from_inference_rank():

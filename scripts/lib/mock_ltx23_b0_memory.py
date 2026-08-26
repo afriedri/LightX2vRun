@@ -246,7 +246,12 @@ def inspect_residency(path: Path) -> dict[str, Any]:
             "bytes_per_bf16_block": scheme_block_bytes["bf16"],
         },
         "residency": {
-            "strategy": "disk_streamed_mixed_bf16_fp8",
+            "strategy": "process_isolated_gemma_then_disk_streamed_mixed_bf16_fp8",
+            "prompt_handoff": {
+                "producer": "single_source_process_accelerate_auto",
+                "consumer": "fresh_sp2_dit_processes",
+                "gemma_dit_device_overlap": False,
+            },
             "gpu_slots": {"bf16": 2, "fp8": 2},
             "pinned_host_slots": {"bf16": 2, "fp8": 2},
             "gpu_block_pool_bytes": block_pool_bytes,
@@ -331,6 +336,7 @@ def build_report(
                 "stages": stages,
             },
             "gate": {
+                "process_isolation": "PASS",
                 "static_fit": "PASS" if static_pass else "FAIL",
                 "budgeted_fit": "PASS" if budget_pass else "FAIL",
                 "dynamic_activation_workspace_budget_bytes": dynamic_budget_bytes,
@@ -343,6 +349,7 @@ def build_report(
             },
             "limitations": [
                 "Exact bytes cover checkpoint-derived resident tensors and configured staging slots only.",
+                "Gemma is excluded from the DiT peak only because the launcher enforces a child-process exit before torchrun.",
                 "Pinned host bytes are conservatively charged to physical VRAM for this R9600D/ROCm gate.",
                 "The dynamic budget is a policy reserve, not a measured Torch/SDPA/scaled-mm workspace peak.",
                 "A real two-rank collector run remains the final acceptance test.",
@@ -375,6 +382,10 @@ def print_summary(report: Mapping[str, Any]) -> None:
     print(
         "Workload: 2x32GB, 704x1280 final, 121f@24fps, "
         "SP=2 / TP=1"
+    )
+    print(
+        "L1/L2 handoff: Accelerate source process -> safetensors -> "
+        "process exit -> fresh SP2 [PASS]"
     )
     print(
         "Tokens: Stage 1 global/local="

@@ -36,6 +36,7 @@ from typing import Any
 KIB = 1024
 GIB = 1024**3
 RANK_CMD_TOKEN = "lightx2v.infer"
+LTX23_PROMPT_CMD_TOKEN = "lightx2v.utils.ltx2_prompt_cache"
 SMAPS_FIELDS = (
     "Rss",
     "Pss",
@@ -72,6 +73,7 @@ RUNTIME_ENV_KEYS = {
     "LIGHTX2V_H3_RUN_COLLECTOR", "LOCAL_RANK", "MASTER_ADDR",
     "LIGHTX2V_WAN_RUNTUNE", "LIGHTX2V_WAN_RUNTUNE_BACKEND",
     "LIGHTX2V_WAN_RUNTUNE_OUTPUT", "LTX23_COLLECT",
+    "LIGHTX2V_LTX23_PROMPT_CACHE",
     "LTX23_PREFLIGHT_ONLY", "LTX23_QUICK_GEMM_PROBE",
     "MASTER_PORT", "NCCL_P2P_LEVEL", "OMP_NUM_THREADS", "RANK",
     "ROCR_VISIBLE_DEVICES", "TORCH_NCCL_ASYNC_ERROR_HANDLING",
@@ -198,11 +200,12 @@ def find_ranks():
             continue
         argv = [item.decode(errors="replace") for item in raw_cmd.split(b"\0") if item]
         is_inference = "lightx2v.infer" in argv
+        is_ltx23_prompt = "lightx2v.utils.ltx2_prompt_cache" in argv
         is_collective_probe = any(
             item.rsplit("/", 1)[-1] == "benchmark_minimax_h3_collectives.py"
             for item in argv
         )
-        if not is_inference and not is_collective_probe:
+        if not is_inference and not is_ltx23_prompt and not is_collective_probe:
             continue
         env = parse_environ(pid)
         local_rank = env.get("LOCAL_RANK")
@@ -226,7 +229,13 @@ def find_ranks():
             "rank": int(rank) if rank is not None and rank.lstrip("-").isdigit() else rank,
             "local_rank": int(local_rank) if local_rank is not None and local_rank.lstrip("-").isdigit() else local_rank,
             "inferred_single_process": inferred_single_process,
-            "workload": "collective_probe" if is_collective_probe else "inference",
+            "workload": (
+                "collective_probe"
+                if is_collective_probe
+                else "ltx23_prompt"
+                if is_ltx23_prompt
+                else "inference"
+            ),
             "cmdline_argv": argv,
             "cmdline": " ".join(argv),
             "runtime_environment": {

@@ -38,9 +38,11 @@ IFS=',' read -r gpu0 gpu1 <<<"${visible_devices}"
 config_json="${lightx2v_path}/configs/ltx2/ltx2_3_distill_fp8_gfx1201_b0_704x1280_24fps.json"
 preflight="${run_root}/scripts/lib/preflight_ltx23_fp8_gfx1201.py"
 weight_probe="${run_root}/scripts/collector/collect_ltx23_weight_probe.py"
+handoff_probe="${run_root}/scripts/lib/check_ltx23_phase_handoff.py"
 video_path="${evidence_dir}/ltx23_b0_704x1280_${fps}fps.mp4"
+prompt_cache="${evidence_dir}/ltx23_prompt_embeddings.safetensors"
 mkdir -p "${evidence_dir}"
-for required_file in "${checkpoint}" "${upscaler}" "${config_json}" "${preflight}" "${weight_probe}"; do
+for required_file in "${checkpoint}" "${upscaler}" "${config_json}" "${preflight}" "${weight_probe}" "${handoff_probe}"; do
     [[ -f "${required_file}" ]] || { echo "ERROR: required file not found: ${required_file}" >&2; exit 1; }
 done
 [[ -d "${gemma_dir}" ]] || { echo "ERROR: Gemma directory not found: ${gemma_dir}" >&2; exit 1; }
@@ -70,7 +72,7 @@ echo "LTX-2.3 FP8 B0 gfx1201"
 echo "Workload: 704x1280 final, 352x640 Stage 1, ${frames} frames @ ${fps} FPS"
 echo "Schedule: Stage 1=8 steps, spatial upsample x2, Stage 2=3 steps"
 echo "Parallel: Torch Ulysses SP2; Torch all-to-all/pre-post"
-echo "Residency: phase-serialized Gemma -> DiT -> VAE (32 GiB/rank)"
+echo "Residency: process-isolated Gemma source -> prompt cache -> fresh SP2 DiT -> VAE"
 echo "DiT stream: monolithic checkpoint -> BF16/FP8 pinned host x2 -> GPU x2"
 echo "L1: Gemma 3"
 echo "L2: torch._scaled_mm FP8, torch.mm BF16, Torch SDPA/norm/RoPE/modulate + Torch upsampler"
@@ -121,18 +123,46 @@ fi
 
 source "${lightx2v_path}/scripts/base/base.sh"
 cd /models
+run_prompt="${PROMPT:-A cinematic wide shot of a red fox walking through fresh snow at sunrise, with natural synchronized forest ambience.}"
+negative_prompt="${NEGATIVE_PROMPT:-}"
 infer_args=(
     --seed "${SEED:-42}"
     --model_cls ltx2
     --task t2av
     --model_path "${model_path}"
     --config_json "${config_json}"
-    --prompt "${PROMPT:-A cinematic wide shot of a red fox walking through fresh snow at sunrise, with natural synchronized forest ambience.}"
-    --negative_prompt "${NEGATIVE_PROMPT:-}"
+    --prompt "${run_prompt}"
+    --negative_prompt "${negative_prompt}"
     --save_result_path "${video_path}"
 )
 # Deliberately omit --target_shape. For an upsampled LTX run, LightX2V derives
 # Stage 1 as 352x640 from the config's final 704x1280 target, then doubles once.
+
+[[ ! -e "${prompt_cache}" ]] || {
+    echo "ERROR: prompt cache path already exists: ${prompt_cache}" >&2
+    exit 1
+}
+echo "L1 handoff: one source process shards Gemma over ${visible_devices} with Accelerate device_map=auto"
+LIGHTX2V_WAN_RUNTUNE_OUTPUT="${evidence_dir}/ltx23_collector.gemma.json" \
+python3 -m lightx2v.utils.ltx2_prompt_cache \
+    --checkpoint "${checkpoint}" \
+    --gemma-root "${gemma_dir}" \
+    --output "${prompt_cache}" \
+    --prompt "${run_prompt}" \
+    --negative-prompt "${negative_prompt}" \
+    --gemma-device-map auto
+[[ -s "${prompt_cache}" ]] || {
+    echo "ERROR: Gemma source process did not produce a prompt cache" >&2
+    exit 1
+}
+echo "L1 handoff complete: Gemma process exited; starting fresh two-rank SP2 DiT"
+python3 "${handoff_probe}" \
+    --gpu-indices "${visible_devices}" \
+    --prompt-cache "${prompt_cache}" \
+    --output "${evidence_dir}/phase_handoff.json" \
+    --limit-mib "${LTX23_HANDOFF_VRAM_LIMIT_MIB:-1024}" \
+    --timeout "${LTX23_HANDOFF_TIMEOUT_SECONDS:-60}"
+export LIGHTX2V_LTX23_PROMPT_CACHE="${prompt_cache}"
 torchrun --standalone --nproc_per_node=2 -m lightx2v.infer "${infer_args[@]}"
 
 ffprobe -v error -count_frames -show_streams -show_format -of json "${video_path}" \

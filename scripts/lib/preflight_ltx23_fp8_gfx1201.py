@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -312,6 +313,7 @@ def check_runtime_config(path: Path) -> dict[str, Any]:
         "lazy_load": True,
         "unload_modules": True,
         "gemma_cpu_offload": True,
+        "ltx23_process_isolated_prompt_required": True,
         "vae_cpu_offload": True,
         "use_tiling_vae": True,
         "warmup": False,
@@ -410,12 +412,18 @@ def git_dirty(path: Path) -> bool | None:
 
 def check_runtime_dependencies() -> dict[str, Any]:
     try:
+        import accelerate
         import aiter
         import lightx2v
+        from lightx2v.models.input_encoders.hf.ltx2.model import LTX2TextEncoder
         from lightx2v.models.networks.ltx2.infer.offload.manager import (
             LTX2HeterogeneousOffloadManager,
         )
         from lightx2v.utils import ltx2_checkpoint
+        from lightx2v.utils.ltx2_prompt_cache import (
+            build_prompt_cache,
+            load_prompt_cache,
+        )
     except Exception as exc:
         die(f"image is missing the LTX-2.3/Aiter runtime: {exc}")
     if ltx2_checkpoint.LTX23_FP8_CHECKPOINT_SIZE != EXPECTED_CHECKPOINT_SIZE:
@@ -428,6 +436,10 @@ def check_runtime_dependencies() -> dict[str, Any]:
         getattr(LTX2HeterogeneousOffloadManager, "init_cpu_buffer_pools", None)
     ):
         die("image lacks mixed BF16/FP8 disk-streaming host pools")
+    if "gemma_device_map" not in inspect.signature(LTX2TextEncoder).parameters:
+        die("image lacks Accelerate device-map support for LTX-2.3 Gemma")
+    if not callable(build_prompt_cache) or not callable(load_prompt_cache):
+        die("image lacks the process-isolated LTX-2.3 prompt handoff")
     lightx2v_root = Path(lightx2v.__file__).resolve().parents[1]
     aiter_root = Path(aiter.__file__).resolve().parents[1]
     lightx2v_revision = os.getenv("LIGHTX2V_SOURCE_REVISION") or git_revision(lightx2v_root)
@@ -449,6 +461,8 @@ def check_runtime_dependencies() -> dict[str, Any]:
         "aiter_revision": aiter_revision,
         "aiter_dirty": git_dirty(aiter_root),
         "offload_manager": LTX2HeterogeneousOffloadManager.__name__,
+        "accelerate_version": accelerate.__version__,
+        "prompt_handoff": "safetensors.process_isolated",
     }
 
 

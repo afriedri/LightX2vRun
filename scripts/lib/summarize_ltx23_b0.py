@@ -7,6 +7,7 @@ import argparse
 import json
 import math
 import re
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,12 @@ PROFILE_RE = re.compile(
 B0_FPS = 24
 B0_FRAMES = 121
 EXPECTED_LOCAL_VIDEO_TOKENS = {"stage1": 1760, "stage2": 7040}
+PROMPT_CACHE_TENSORS = {
+    "v_context_p",
+    "a_context_p",
+    "v_context_n",
+    "a_context_n",
+}
 
 
 def value(raw: str) -> Any:
@@ -166,7 +173,125 @@ def validate_routes(events: list[dict[str, Any]]) -> dict[str, Any]:
     ranks = {str(event.get("rank", "")).split("/", 1)[0] for event in scaled_mm}
     if ranks != {"0", "1"}:
         raise SystemExit(f"torch._scaled_mm dispatch evidence must cover ranks 0 and 1, got {sorted(ranks)}")
-    return {"stage_names": sorted(stage_names), "scaled_mm_dispatch_ranks": sorted(ranks)}
+    prompt_routes = [
+        event
+        for event in ltx
+        if event.get("kind") == "route"
+        and event.get("component") == "prompt.encoder"
+        and event.get("backend") == "safetensors.process_isolated"
+    ]
+    if not prompt_routes:
+        raise SystemExit(
+            "LTX-2.3 B0 must consume a process-isolated prompt cache"
+        )
+    return {
+        "stage_names": sorted(stage_names),
+        "scaled_mm_dispatch_ranks": sorted(ranks),
+        "prompt_backend": "safetensors.process_isolated",
+    }
+
+
+def prompt_cache_summary(result_dir: Path) -> dict[str, Any]:
+    path = result_dir / "ltx23_prompt_embeddings.safetensors"
+    if not path.is_file():
+        raise SystemExit(f"required prompt handoff is missing: {path}")
+    with path.open("rb") as stream:
+        prefix = stream.read(8)
+        if len(prefix) != 8:
+            raise SystemExit("prompt handoff has a truncated safetensors prefix")
+        header_bytes = struct.unpack("<Q", prefix)[0]
+        if not 2 <= header_bytes <= 16 * 1024 * 1024:
+            raise SystemExit(
+                f"prompt handoff has an invalid header size: {header_bytes}"
+            )
+        try:
+            header = json.loads(stream.read(header_bytes))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"prompt handoff header is invalid: {exc}") from exc
+    metadata = header.get("__metadata__", {})
+    if metadata.get("schema_name") != "lightx2v.ltx23.prompt_embeddings":
+        raise SystemExit("prompt handoff schema is not LTX-2.3 embeddings v1")
+    if metadata.get("schema_version") != "1":
+        raise SystemExit("prompt handoff schema version must be 1")
+    if metadata.get("process_isolated") != "true":
+        raise SystemExit("prompt handoff does not prove process isolation")
+    tensor_names = set(header) - {"__metadata__"}
+    if tensor_names != PROMPT_CACHE_TENSORS:
+        raise SystemExit(
+            "prompt handoff tensor set mismatch: "
+            f"expected={sorted(PROMPT_CACHE_TENSORS)}, got={sorted(tensor_names)}"
+        )
+    return {
+        "path": str(path),
+        "file_size_bytes": path.stat().st_size,
+        "schema_version": 1,
+        "process_isolated": True,
+        "producer_pid": int(metadata["producer_pid"]),
+        "source_rank": int(metadata["source_rank"]),
+        "tensor_shapes": {
+            name: header[name].get("shape") for name in sorted(tensor_names)
+        },
+    }
+
+
+def source_collector_summary(
+    result_dir: Path, required: bool
+) -> dict[str, Any] | None:
+    path = result_dir / "ltx23_collector.gemma.json"
+    report = load_json(path, required=required)
+    if report is None:
+        return None
+    environment = report.get("environment", {})
+    if int(environment.get("world_size", 0)) != 1:
+        raise SystemExit("Gemma source collector must have world_size=1")
+    labels = {
+        item.get("label") for item in report.get("device_memory_snapshots", [])
+    }
+    required_labels = {
+        "ltx23_l1_process_start",
+        "ltx23_l1_gemma_device_resident",
+        "ltx23_l1_prompt_cache_written",
+    }
+    if not required_labels.issubset(labels):
+        raise SystemExit(
+            "Gemma source collector is missing lifecycle labels: "
+            f"{sorted(required_labels - labels)}"
+        )
+    scope = next(
+        (
+            item
+            for item in report.get("scopes", [])
+            if item.get("name") == "ltx23_l1_process"
+        ),
+        None,
+    )
+    if scope is None or not scope.get("success"):
+        raise SystemExit("Gemma source collector did not close successfully")
+    return {
+        "path": str(path),
+        "pid": environment.get("pid"),
+        "world_size": 1,
+        "wall_ms": scope.get("wall_ms"),
+        "labels": sorted(labels - {None}),
+    }
+
+
+def phase_handoff_summary(result_dir: Path) -> dict[str, Any]:
+    path = result_dir / "phase_handoff.json"
+    report = load_json(path)
+    if report.get("schema_name") != "lightx2v.ltx23.phase_handoff":
+        raise SystemExit("phase handoff report has the wrong schema")
+    if report.get("status") != "ok" or report.get("producer_pid_alive"):
+        raise SystemExit("Gemma process did not exit cleanly before SP2 startup")
+    gpus = report.get("gpus", [])
+    if {int(item.get("rocm_index", -1)) for item in gpus} != set(
+        report.get("gpu_indices", [])
+    ):
+        raise SystemExit("phase handoff report does not cover both selected GPUs")
+    limit = int(report.get("vram_release_limit_bytes", 0))
+    if limit <= 0 or any(int(item.get("used_bytes", limit + 1)) > limit for item in gpus):
+        raise SystemExit("physical VRAM did not fall below the handoff limit")
+    return report
 
 
 def collector_summary(result_dir: Path, required: bool) -> dict[str, Any] | None:
@@ -193,6 +318,15 @@ def collector_summary(result_dir: Path, required: bool) -> dict[str, Any] | None
         if len(stage1) != 8 or len(stage2) != 3 or not all(item.get("success") for item in steps):
             raise SystemExit(f"collector must contain successful 8+3 denoise steps: {path}")
         memories = report.get("device_memory_snapshots", [])
+        labels = {item.get("label") for item in memories}
+        if "ltx23_l1_prompt_cache_loaded" not in labels:
+            raise SystemExit(f"DiT rank did not load the prompt handoff: {path}")
+        forbidden = {
+            "ltx23_l1_gemma_host_model_ready",
+            "ltx23_l1_gemma_device_resident",
+        }
+        if labels & forbidden:
+            raise SystemExit(f"DiT rank rebuilt Gemma instead of using the handoff: {path}")
         per_rank.append(
             {
                 "rank": report["environment"]["rank"],
@@ -235,6 +369,11 @@ def main() -> int:
             for match in PROFILE_RE.finditer(text)
         ],
         "collector": collector_summary(args.result_dir, args.expect_collector),
+        "source_collector": source_collector_summary(
+            args.result_dir, args.expect_collector
+        ),
+        "prompt_handoff": prompt_cache_summary(args.result_dir),
+        "phase_handoff": phase_handoff_summary(args.result_dir),
         "ffprobe": validate_ffprobe(load_json(args.result_dir / "ffprobe.json")),
         "memory_summary": load_json(args.result_dir / "memory.jsonl.summary.json", required=False),
     }

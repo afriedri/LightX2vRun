@@ -38,6 +38,10 @@ Environment:
                        Collector wrapper only: inspect weights in the B0 container
   LTX23_DYNAMIC_MEMORY_BUDGET_GIB=16
                        No-GPU gate reserve for activations and kernel workspace
+  LTX23_HANDOFF_VRAM_LIMIT_MIB=1024
+                       Require each card below this physical VRAM use before DiT
+  LTX23_HANDOFF_TIMEOUT_SECONDS=60
+                       Maximum wait for the process/VRAM handoff gate
 EOF
 }
 
@@ -57,6 +61,8 @@ weight_probe_only="${LTX23_WEIGHT_PROBE_ONLY:-0}"
 weight_probe_sha256="${LTX23_WEIGHT_PROBE_SHA256:-0}"
 mock_memory_only=0
 dynamic_memory_budget_gib="${LTX23_DYNAMIC_MEMORY_BUDGET_GIB:-16}"
+handoff_vram_limit_mib="${LTX23_HANDOFF_VRAM_LIMIT_MIB:-1024}"
+handoff_timeout_seconds="${LTX23_HANDOFF_TIMEOUT_SECONDS:-60}"
 
 while (( $# > 0 )); do
     case "$1" in
@@ -84,6 +90,8 @@ case "${collect}" in 0 | 1) ;; *) echo "ERROR: LTX23_COLLECT must be 0 or 1" >&2
 case "${quick_gemm_probe}" in 0 | 1) ;; *) echo "ERROR: LTX23_QUICK_GEMM_PROBE must be 0 or 1" >&2; exit 2 ;; esac
 case "${weight_probe_only}" in 0 | 1) ;; *) echo "ERROR: LTX23_WEIGHT_PROBE_ONLY must be 0 or 1" >&2; exit 2 ;; esac
 case "${weight_probe_sha256}" in 0 | 1) ;; *) echo "ERROR: LTX23_WEIGHT_PROBE_SHA256 must be 0 or 1" >&2; exit 2 ;; esac
+[[ "${handoff_vram_limit_mib}" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "ERROR: LTX23_HANDOFF_VRAM_LIMIT_MIB must be numeric" >&2; exit 2; }
+[[ "${handoff_timeout_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "ERROR: LTX23_HANDOFF_TIMEOUT_SECONDS must be numeric" >&2; exit 2; }
 if [[ "${quick_gemm_probe}" == 1 && "${preflight_only}" != 1 ]]; then
     echo "ERROR: LTX23_QUICK_GEMM_PROBE=1 is diagnostic-only and requires --preflight-only" >&2
     exit 2
@@ -132,21 +140,24 @@ preflight="${run_root}/scripts/lib/preflight_ltx23_fp8_gfx1201.py"
 host_collector="${run_root}/scripts/collector/collect_ltx23_host_evidence.py"
 summary_script="${run_root}/scripts/lib/summarize_ltx23_b0.py"
 weight_probe="${run_root}/scripts/collector/collect_ltx23_weight_probe.py"
-for script in "${model_run}" "${preflight}" "${memory_mock}" "${host_collector}" "${summary_script}" "${weight_probe}"; do
+handoff_probe="${run_root}/scripts/lib/check_ltx23_phase_handoff.py"
+for script in "${model_run}" "${preflight}" "${memory_mock}" "${host_collector}" "${summary_script}" "${weight_probe}" "${handoff_probe}"; do
     [[ -f "${script}" ]] || { echo "ERROR: required launcher component not found: ${script}" >&2; exit 1; }
 done
 
 python3 - "${result_dir}/run_manifest.json" "${image}" "${fps}" "${frames}" \
     "${gpu_devices}" "${checkpoint}" "${upscaler}" "${gemma_dir}" \
     "${prompt}" "${preflight_only}" "${collect}" "${weight_probe_only}" \
-    "${weight_probe_sha256}" "${dynamic_memory_budget_gib}" <<'PY'
+    "${weight_probe_sha256}" "${dynamic_memory_budget_gib}" \
+    "${handoff_vram_limit_mib}" "${handoff_timeout_seconds}" <<'PY'
 import json
 import pathlib
 import sys
 
 (output, image, fps, frames, gpus, checkpoint, upscaler, gemma, prompt,
  preflight_only, collect, weight_probe_only, weight_probe_sha256,
- dynamic_memory_budget_gib) = sys.argv[1:]
+ dynamic_memory_budget_gib, handoff_vram_limit_mib,
+ handoff_timeout_seconds) = sys.argv[1:]
 payload = {
     "schema_name": "lightx2v.ltx23_fp8.b0.manifest",
     "schema_version": 1,
@@ -169,6 +180,7 @@ payload = {
         "enabled": collect == "1",
         "default_enabled": True,
         "runtime_schema_version": 2,
+        "source_process_output": "ltx23_collector.gemma.json",
         "output_pattern": "ltx23_collector.rank{rank}.json",
         "observer_only": True,
     },
@@ -190,7 +202,15 @@ payload = {
         "sequence_parallel": "ulysses_sp2_torch_a2a",
     },
     "residency": {
-        "strategy": "disk_streamed_mixed_bf16_fp8",
+        "strategy": "process_isolated_gemma_then_disk_streamed_mixed_bf16_fp8",
+        "prompt_handoff": {
+            "producer": "single_source_process_accelerate_auto",
+            "artifact": "ltx23_prompt_embeddings.safetensors",
+            "consumer": "fresh_sp2_dit_processes",
+            "vram_release_gate": "phase_handoff.json",
+            "vram_release_limit_mib": float(handoff_vram_limit_mib),
+            "timeout_seconds": float(handoff_timeout_seconds)
+        },
         "gpu_slots": {"bf16": 2, "fp8": 2},
         "pinned_host_slots": {"bf16": 2, "fp8": 2},
         "mock_memory_report": "mock_memory.json",
@@ -276,6 +296,8 @@ export LTX23_PREFLIGHT_ONLY="${preflight_only}"
 export LTX23_COLLECT="${collect}"
 export LTX23_WEIGHT_PROBE_ONLY="${weight_probe_only}"
 export LTX23_WEIGHT_PROBE_SHA256="${weight_probe_sha256}"
+export LTX23_HANDOFF_VRAM_LIMIT_MIB="${handoff_vram_limit_mib}"
+export LTX23_HANDOFF_TIMEOUT_SECONDS="${handoff_timeout_seconds}"
 export LTX23_EVIDENCE_DIR=/workspace/LightX2V/save_results
 export PROMPT="${prompt}"
 export OUTPUT_DIR="${result_dir}"

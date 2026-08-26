@@ -314,6 +314,7 @@ fi
 if [[ "${is_ltx23_mode}" == 1 ]]; then
     require_file "${RUN_REPO_DIR}/${ltx23_run_script#${CONTAINER_RUN_ROOT}/}"
     require_file "${RUN_REPO_DIR}/scripts/lib/preflight_ltx23_fp8_gfx1201.py"
+    require_file "${RUN_REPO_DIR}/scripts/lib/check_ltx23_phase_handoff.py"
     require_file "${RUN_REPO_DIR}/scripts/collector/collect_ltx23_weight_probe.py"
 fi
 encoder_mount_source="${ENCODERS_DIR}"
@@ -538,6 +539,7 @@ for inference_env in \
     LTX23_PREFLIGHT_ONLY LTX23_COLLECT LTX23_EVIDENCE_DIR \
     LTX23_QUICK_GEMM_PROBE LTX23_EXPECTED_ROCM_PREFIX \
     LTX23_WEIGHT_PROBE_ONLY LTX23_WEIGHT_PROBE_SHA256 \
+    LTX23_HANDOFF_VRAM_LIMIT_MIB LTX23_HANDOFF_TIMEOUT_SECONDS \
     LIGHTX2V_SOURCE_REVISION AITER_SOURCE_REVISION AITER_COMMIT; do
     # H3 resolves these paths from H3_FRAME_SOURCE and mounts the selected host
     # files above. Re-appending inherited values here would create duplicate

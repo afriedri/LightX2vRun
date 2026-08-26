@@ -88,6 +88,7 @@ def runtime_config() -> dict:
         "lazy_load": True,
         "unload_modules": True,
         "gemma_cpu_offload": True,
+        "ltx23_process_isolated_prompt_required": True,
         "vae_cpu_offload": True,
         "use_tiling_vae": True,
         "warmup": False,

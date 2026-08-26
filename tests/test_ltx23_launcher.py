@@ -78,7 +78,15 @@ def test_dry_run_mounts_assets_and_enables_collector_by_default(tmp_path):
         "gpu_slots": {"bf16": 2, "fp8": 2},
         "mock_memory_report": "mock_memory.json",
         "pinned_host_slots": {"bf16": 2, "fp8": 2},
-        "strategy": "disk_streamed_mixed_bf16_fp8",
+        "prompt_handoff": {
+            "artifact": "ltx23_prompt_embeddings.safetensors",
+            "consumer": "fresh_sp2_dit_processes",
+            "producer": "single_source_process_accelerate_auto",
+            "timeout_seconds": 60.0,
+            "vram_release_gate": "phase_handoff.json",
+            "vram_release_limit_mib": 1024.0,
+        },
+        "strategy": "process_isolated_gemma_then_disk_streamed_mixed_bf16_fp8",
     }
     assert manifest["workload"] == {
         "final_height": 704,
@@ -137,6 +145,14 @@ def test_container_entry_does_not_override_stage1_target_shape():
     )
     assert "LIGHTX2V_WAN_RUNTUNE=1" in text
     assert "torchrun --standalone --nproc_per_node=2" in text
+    assert "python3 -m lightx2v.utils.ltx2_prompt_cache" in text
+    assert "check_ltx23_phase_handoff.py" in text
+    assert "--gemma-device-map auto" in text
+    assert 'HIP_VISIBLE_DEVICES="${gpu0}"' not in text
+    assert 'export LIGHTX2V_LTX23_PROMPT_CACHE="${prompt_cache}"' in text
+    assert text.index("lightx2v.utils.ltx2_prompt_cache") < text.index(
+        "-m lightx2v.infer"
+    )
     assert "wait_monitor" in ENTRY.read_text(encoding="utf-8")
 
 
