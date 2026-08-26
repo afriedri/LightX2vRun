@@ -310,6 +310,7 @@ def check_runtime_config(path: Path) -> dict[str, Any]:
         "cpu_offload": True,
         "offload_granularity": "block",
         "lazy_load": False,
+        "unload_modules": True,
         "gemma_cpu_offload": True,
         "vae_cpu_offload": True,
         "use_tiling_vae": True,

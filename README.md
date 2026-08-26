@@ -19,7 +19,9 @@ workload in a model-specific launcher and emits rank-critical evidence.
 The LTX-2.3 B0 entry is fixed at two gfx1201 GPUs, 704x1280 final output,
 352x640 Stage 1, 121 frames at 24 FPS, and the official 8+3-step two-stage
 schedule. It uses Torch Ulysses SP2, `torch._scaled_mm` for static-scalar FP8,
-Torch SDPA, and Torch norm/RoPE/modulate. There is no FPS selector.
+Torch SDPA, and Torch norm/RoPE/modulate. Gemma, DiT, and VAE residency is
+phase-serialized because Ulysses SP2 does not pool the two cards into one 64 GiB
+address space. There is no FPS selector.
 
 Expected host assets:
 
