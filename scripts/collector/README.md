@@ -6,6 +6,20 @@ precision, offload policy, buffer counts, tuned kernels, or parallel topology.
 
 ## LTX-2.3 B0
 
+- `run_ltx23_weight_probe.sh`: runs the header-only collector through the exact
+  production B0 launcher and container path. It therefore uses the same
+  explicit image, two-GPU visibility, model/cache/result mounts and ROCm
+  environment as inference. One-command collection:
+
+  ```bash
+  bash scripts/collector/run_ltx23_weight_probe.sh --image IMAGE
+  ```
+
+  It writes `ltx23_weight_probe.json` into the timestamped B0 result directory.
+  Pass `--result-dir DIR` to choose that directory or `--sha256` for a full
+  in-container artifact hash. The underlying `collect_ltx23_weight_probe.py`
+  records every tensor name/dtype/shape, namespace variant, per-block schema,
+  gate-logit compatibility and FP8 scale without loading tensor payloads.
 - `collect_ltx23_host_evidence.py`: read-only host/GPU/source/model snapshots.
 - Runtime schema-2 reports are emitted by LightX2V as
   `ltx23_collector.rank0.json` and `ltx23_collector.rank1.json`.

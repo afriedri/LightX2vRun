@@ -7,6 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY = REPO_ROOT / "scripts/run_ltx23_fp8_b0_704x1280_5s.sh"
 CONTAINER_ENTRY = REPO_ROOT / "scripts/lib/run_ltx23_in_container.sh"
+WEIGHT_PROBE_ENTRY = REPO_ROOT / "scripts/collector/run_ltx23_weight_probe.sh"
 
 
 def run_dry(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess[str]:
@@ -21,6 +22,32 @@ def run_dry(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess[str]:
         [
             "bash",
             str(ENTRY),
+            "--image",
+            "example.invalid/ltx23:b0",
+            "--result-dir",
+            str(result_dir),
+            *extra,
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def run_weight_probe_dry(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    result_dir = tmp_path / "probe-result"
+    env = {
+        **os.environ,
+        "DRY_RUN": "1",
+        "MODEL_RUN": str(REPO_ROOT / "lightx2vModelrun"),
+        "RUN_REPO_DIR": str(REPO_ROOT),
+    }
+    return subprocess.run(
+        [
+            "bash",
+            str(WEIGHT_PROBE_ENTRY),
             "--image",
             "example.invalid/ltx23:b0",
             "--result-dir",
@@ -64,6 +91,30 @@ def test_no_collect_is_explicit(tmp_path):
     manifest = json.loads((tmp_path / "result/run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["collector"]["enabled"] is False
     assert manifest["workload"]["frames"] == 121
+
+
+def test_weight_probe_reuses_exact_ltx_container_path(tmp_path):
+    completed = run_weight_probe_dry(tmp_path, "--gpus", "3,7", "--sha256")
+    assert completed.returncode == 0, completed.stderr
+    assert "Mode:           ltx23" in completed.stdout
+    assert "GPU devices:    3,7" in completed.stdout
+    assert "LTX action:     in-container weight probe only" in completed.stdout
+    assert "LTX23_WEIGHT_PROBE_ONLY=1" in completed.stdout
+    assert "LTX23_WEIGHT_PROBE_SHA256=1" in completed.stdout
+    assert "target=/models/ltx23/checkpoints/ltx-2.3-22b-distilled-fp8.safetensors" in completed.stdout
+    assert "/workspace/LightX2VRun/scripts/lib/run_ltx23_in_container.sh" in completed.stdout
+    manifest = json.loads(
+        (tmp_path / "probe-result/run_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["weight_probe_only"] is True
+    assert manifest["weight_probe_sha256"] is True
+
+
+def test_weight_probe_container_entry_writes_to_shared_result_mount():
+    text = CONTAINER_ENTRY.read_text(encoding="utf-8")
+    assert "collect_ltx23_weight_probe.py" in text
+    assert '${evidence_dir}/ltx23_weight_probe.json' in text
+    assert 'if [[ "${weight_probe_only}" == 1 ]]' in text
 
 
 def test_launcher_rejects_non_two_gpu_contract(tmp_path):

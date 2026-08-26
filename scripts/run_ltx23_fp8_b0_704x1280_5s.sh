@@ -33,6 +33,8 @@ Environment:
   MEMORY_MONITOR=0|1   Host memory/VRAM observer (defaults to collector setting)
   LTX23_QUICK_GEMM_PROBE=1
                        Use small matrices for an explicit diagnostic only
+  LTX23_WEIGHT_PROBE_ONLY=1
+                       Collector wrapper only: inspect weights in the B0 container
 EOF
 }
 
@@ -48,6 +50,8 @@ prompt="${PROMPT:-A cinematic wide shot of a red fox walking through fresh snow 
 preflight_only=0
 collect="${LTX23_COLLECT:-1}"
 quick_gemm_probe="${LTX23_QUICK_GEMM_PROBE:-0}"
+weight_probe_only="${LTX23_WEIGHT_PROBE_ONLY:-0}"
+weight_probe_sha256="${LTX23_WEIGHT_PROBE_SHA256:-0}"
 
 while (( $# > 0 )); do
     case "$1" in
@@ -70,15 +74,25 @@ done
 [[ -n "${image}" ]] || { echo "ERROR: --image is required; B0 must use an image built from the current hvat-gfx1201 source" >&2; exit 2; }
 case "${collect}" in 0 | 1) ;; *) echo "ERROR: LTX23_COLLECT must be 0 or 1" >&2; exit 2 ;; esac
 case "${quick_gemm_probe}" in 0 | 1) ;; *) echo "ERROR: LTX23_QUICK_GEMM_PROBE must be 0 or 1" >&2; exit 2 ;; esac
+case "${weight_probe_only}" in 0 | 1) ;; *) echo "ERROR: LTX23_WEIGHT_PROBE_ONLY must be 0 or 1" >&2; exit 2 ;; esac
+case "${weight_probe_sha256}" in 0 | 1) ;; *) echo "ERROR: LTX23_WEIGHT_PROBE_SHA256 must be 0 or 1" >&2; exit 2 ;; esac
 if [[ "${quick_gemm_probe}" == 1 && "${preflight_only}" != 1 ]]; then
     echo "ERROR: LTX23_QUICK_GEMM_PROBE=1 is diagnostic-only and requires --preflight-only" >&2
+    exit 2
+fi
+if [[ "${weight_probe_only}" == 1 && "${preflight_only}" == 1 ]]; then
+    echo "ERROR: weight-probe-only and preflight-only are mutually exclusive" >&2
     exit 2
 fi
 [[ "${gpu_devices}" =~ ^[0-9]+,[0-9]+$ ]] || { echo "ERROR: --gpus requires exactly two comma-separated ids" >&2; exit 2; }
 IFS=',' read -r gpu0 gpu1 <<<"${gpu_devices}"
 [[ "${gpu0}" != "${gpu1}" ]] || { echo "ERROR: --gpus ids must be unique" >&2; exit 2; }
 
-run_tag="ltx23_fp8_b0_704x1280_${fps}fps_$(date +%Y%m%d_%H%M%S)"
+run_kind=ltx23_fp8_b0_704x1280
+if [[ "${weight_probe_only}" == 1 ]]; then
+    run_kind=ltx23_weight_probe
+fi
+run_tag="${run_kind}_${fps}fps_$(date +%Y%m%d_%H%M%S)"
 if [[ -z "${result_dir}" ]]; then
     result_dir="${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}"
 fi
@@ -91,18 +105,21 @@ mkdir -p "${result_dir}"
 preflight="${run_root}/scripts/lib/preflight_ltx23_fp8_gfx1201.py"
 host_collector="${run_root}/scripts/collector/collect_ltx23_host_evidence.py"
 summary_script="${run_root}/scripts/lib/summarize_ltx23_b0.py"
-for script in "${model_run}" "${preflight}" "${host_collector}" "${summary_script}"; do
+weight_probe="${run_root}/scripts/collector/collect_ltx23_weight_probe.py"
+for script in "${model_run}" "${preflight}" "${host_collector}" "${summary_script}" "${weight_probe}"; do
     [[ -f "${script}" ]] || { echo "ERROR: required launcher component not found: ${script}" >&2; exit 1; }
 done
 
 python3 - "${result_dir}/run_manifest.json" "${image}" "${fps}" "${frames}" \
     "${gpu_devices}" "${checkpoint}" "${upscaler}" "${gemma_dir}" \
-    "${prompt}" "${preflight_only}" "${collect}" <<'PY'
+    "${prompt}" "${preflight_only}" "${collect}" "${weight_probe_only}" \
+    "${weight_probe_sha256}" <<'PY'
 import json
 import pathlib
 import sys
 
-(output, image, fps, frames, gpus, checkpoint, upscaler, gemma, prompt, preflight_only, collect) = sys.argv[1:]
+(output, image, fps, frames, gpus, checkpoint, upscaler, gemma, prompt,
+ preflight_only, collect, weight_probe_only, weight_probe_sha256) = sys.argv[1:]
 payload = {
     "schema_name": "lightx2v.ltx23_fp8.b0.manifest",
     "schema_version": 1,
@@ -119,6 +136,8 @@ payload = {
     "gemma_dir": gemma,
     "prompt": prompt,
     "preflight_only": preflight_only == "1",
+    "weight_probe_only": weight_probe_only == "1",
+    "weight_probe_sha256": weight_probe_sha256 == "1",
     "collector": {
         "enabled": collect == "1",
         "default_enabled": True,
@@ -199,7 +218,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ "${DRY_RUN:-0}" != 1 ]]; then
+if [[ "${DRY_RUN:-0}" != 1 && "${weight_probe_only}" != 1 ]]; then
     python3 "${preflight}" \
         --mode host \
         --checkpoint "${checkpoint}" \
@@ -217,12 +236,18 @@ export LTX23_UPSCALER="${upscaler}"
 export LTX23_GEMMA_DIR="${gemma_dir}"
 export LTX23_PREFLIGHT_ONLY="${preflight_only}"
 export LTX23_COLLECT="${collect}"
+export LTX23_WEIGHT_PROBE_ONLY="${weight_probe_only}"
+export LTX23_WEIGHT_PROBE_SHA256="${weight_probe_sha256}"
 export LTX23_EVIDENCE_DIR=/workspace/LightX2V/save_results
 export PROMPT="${prompt}"
 export OUTPUT_DIR="${result_dir}"
 export CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-ltx23-b0}"
 
-memory_monitor="${MEMORY_MONITOR:-${collect}}"
+default_memory_monitor="${collect}"
+if [[ "${weight_probe_only}" == 1 ]]; then
+    default_memory_monitor=0
+fi
+memory_monitor="${MEMORY_MONITOR:-${default_memory_monitor}}"
 case "${memory_monitor}" in 0 | 1) ;; *) echo "ERROR: MEMORY_MONITOR must be 0 or 1" >&2; exit 2 ;; esac
 if [[ "${memory_monitor}" == 1 && "${DRY_RUN:-0}" != 1 ]]; then
     PYTHONDONTWRITEBYTECODE=1 python3 -B "${run_root}/scripts/lib/monitor_run_memory.py" \
@@ -261,6 +286,14 @@ wait_monitor
 if [[ "${DRY_RUN:-0}" == 1 ]]; then
     snapshot_written=1
     echo "Dry run complete: ${result_dir}"
+    exit 0
+fi
+
+if [[ "${weight_probe_only}" == 1 ]]; then
+    snapshot_written=1
+    probe_report="${result_dir}/ltx23_weight_probe.json"
+    [[ -s "${probe_report}" ]] || { echo "ERROR: container did not write ${probe_report}" >&2; exit 1; }
+    echo "LTX-2.3 in-container weight probe complete: ${probe_report}"
     exit 0
 fi
 

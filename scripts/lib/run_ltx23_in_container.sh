@@ -14,10 +14,14 @@ readonly frames=121
 preflight_only="${LTX23_PREFLIGHT_ONLY:-0}"
 collect="${LTX23_COLLECT:-1}"
 quick_gemm_probe="${LTX23_QUICK_GEMM_PROBE:-0}"
+weight_probe_only="${LTX23_WEIGHT_PROBE_ONLY:-0}"
+weight_probe_sha256="${LTX23_WEIGHT_PROBE_SHA256:-0}"
 
 case "${preflight_only}" in 0 | 1) ;; *) echo "ERROR: LTX23_PREFLIGHT_ONLY must be 0 or 1" >&2; exit 2 ;; esac
 case "${collect}" in 0 | 1) ;; *) echo "ERROR: LTX23_COLLECT must be 0 or 1" >&2; exit 2 ;; esac
 case "${quick_gemm_probe}" in 0 | 1) ;; *) echo "ERROR: LTX23_QUICK_GEMM_PROBE must be 0 or 1" >&2; exit 2 ;; esac
+case "${weight_probe_only}" in 0 | 1) ;; *) echo "ERROR: LTX23_WEIGHT_PROBE_ONLY must be 0 or 1" >&2; exit 2 ;; esac
+case "${weight_probe_sha256}" in 0 | 1) ;; *) echo "ERROR: LTX23_WEIGHT_PROBE_SHA256 must be 0 or 1" >&2; exit 2 ;; esac
 if [[ "${quick_gemm_probe}" == 1 && "${preflight_only}" != 1 ]]; then
     echo "ERROR: LTX23_QUICK_GEMM_PROBE=1 is diagnostic-only and requires preflight-only mode" >&2
     exit 2
@@ -33,9 +37,10 @@ IFS=',' read -r gpu0 gpu1 <<<"${visible_devices}"
 
 config_json="${lightx2v_path}/configs/ltx2/ltx2_3_distill_fp8_gfx1201_b0_704x1280_24fps.json"
 preflight="${run_root}/scripts/lib/preflight_ltx23_fp8_gfx1201.py"
+weight_probe="${run_root}/scripts/collector/collect_ltx23_weight_probe.py"
 video_path="${evidence_dir}/ltx23_b0_704x1280_${fps}fps.mp4"
 mkdir -p "${evidence_dir}"
-for required_file in "${checkpoint}" "${upscaler}" "${config_json}" "${preflight}"; do
+for required_file in "${checkpoint}" "${upscaler}" "${config_json}" "${preflight}" "${weight_probe}"; do
     [[ -f "${required_file}" ]] || { echo "ERROR: required file not found: ${required_file}" >&2; exit 1; }
 done
 [[ -d "${gemma_dir}" ]] || { echo "ERROR: Gemma directory not found: ${gemma_dir}" >&2; exit 1; }
@@ -69,6 +74,21 @@ echo "L1: Gemma 3"
 echo "L2: torch._scaled_mm FP8, torch.mm BF16, Torch SDPA/norm/RoPE/modulate + Torch upsampler"
 echo "L3: tiled Torch Video VAE + Torch Audio VAE"
 echo "Collector: ${collect}"
+
+if [[ "${weight_probe_only}" == 1 ]]; then
+    probe_args=(
+        --checkpoint "${checkpoint}"
+        --output "${evidence_dir}/ltx23_weight_probe.json"
+        --expect-key "model.diffusion_model.transformer_blocks.4.attn1.to_gate_logits.weight"
+    )
+    if [[ "${weight_probe_sha256}" == 1 ]]; then
+        probe_args+=(--sha256)
+    fi
+    echo "Action: in-container header-only weight probe"
+    PYTHONDONTWRITEBYTECODE=1 python3 -B "${weight_probe}" "${probe_args[@]}"
+    echo "Weight report: ${evidence_dir}/ltx23_weight_probe.json"
+    exit 0
+fi
 
 python3 "${preflight}" \
     --mode runtime \
