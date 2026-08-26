@@ -174,6 +174,23 @@ def test_minimax_h3_phase_tracker_ignores_future_route_plan(tmp_path):
     assert tracker.update() == "loading"
 
 
+def test_ltx23_phase_tracker_uses_normalized_stage_logs(tmp_path):
+    log = tmp_path / "ltx23.log"
+    log.write_text(
+        "[Runtime] kind=stage model=ltx2 stage=L2-S1 component=dit.denoise "
+        "status=start rank=0/2\n",
+        encoding="utf-8",
+    )
+    tracker = MONITOR.LTX2PhaseTracker(log, expected_ranks=2)
+    assert tracker.update() == "l2_s1"
+    with log.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "[Runtime] kind=stage model=ltx2 stage=L2-S2 component=dit.denoise "
+            "status=start rank=0/2\n"
+        )
+    assert tracker.update() == "l2_s2"
+
+
 def test_status_output_is_phase_immediate_and_periodically_rate_limited():
     assert MONITOR.should_emit_status(
         phase="loading",

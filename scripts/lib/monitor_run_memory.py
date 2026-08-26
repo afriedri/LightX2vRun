@@ -70,6 +70,9 @@ RUNTIME_ENV_KEYS = {
     "AITER_JIT_DIR", "AITER_ROCM_ARCH", "CUDA_VISIBLE_DEVICES",
     "GPU_ARCHS", "HIP_VISIBLE_DEVICES", "HSA_FORCE_FINE_GRAIN_PCIE",
     "LIGHTX2V_H3_RUN_COLLECTOR", "LOCAL_RANK", "MASTER_ADDR",
+    "LIGHTX2V_WAN_RUNTUNE", "LIGHTX2V_WAN_RUNTUNE_BACKEND",
+    "LIGHTX2V_WAN_RUNTUNE_OUTPUT", "LTX23_COLLECT",
+    "LTX23_PREFLIGHT_ONLY", "LTX23_QUICK_GEMM_PROBE",
     "MASTER_PORT", "NCCL_P2P_LEVEL", "OMP_NUM_THREADS", "RANK",
     "ROCR_VISIBLE_DEVICES", "TORCH_NCCL_ASYNC_ERROR_HANDLING",
     "TORCH_NCCL_BLOCKING_WAIT", "WORLD_SIZE", "PYTORCH_TUNABLEOP_ENABLED",
@@ -683,6 +686,57 @@ class MiniMaxH3PhaseTracker:
         return self.phase
 
 
+class LTX2PhaseTracker:
+    """Track the normalized L1/L2/L3 lifecycle for LTX-2.3 B0."""
+
+    _ORDER = {
+        "loading": 0,
+        "l1": 1,
+        "l2_s1": 2,
+        "l2_upsample": 3,
+        "l2_s2": 4,
+        "l3": 5,
+        "complete": 6,
+    }
+
+    def __init__(self, log_path: Path | None, expected_ranks: int):
+        self.log_path = log_path
+        self.expected_ranks = expected_ranks
+        self.offset = 0
+        self.phase = "loading"
+
+    def _advance(self, candidate: str) -> None:
+        if self._ORDER[candidate] > self._ORDER[self.phase]:
+            self.phase = candidate
+
+    def update(self) -> str:
+        if self.log_path is None:
+            return "unknown"
+        try:
+            with self.log_path.open("r", encoding="utf-8", errors="replace") as stream:
+                stream.seek(self.offset)
+                text = stream.read()
+                self.offset = stream.tell()
+        except (FileNotFoundError, PermissionError, OSError):
+            return self.phase
+        if re.search(r"RUN pipeline cost|LTX-2\.3 FP8 B0 complete", text, re.IGNORECASE):
+            self._advance("complete")
+        for stage, name in (
+            ("L3", "l3"),
+            ("L2-S2", "l2_s2"),
+            ("L2-Upsample", "l2_upsample"),
+            ("L2-S1", "l2_s1"),
+            ("L1", "l1"),
+        ):
+            if re.search(
+                rf"\[Runtime\]\s+kind=stage\s+model=ltx2\s+stage={re.escape(stage)}\b",
+                text,
+            ):
+                self._advance(name)
+                break
+        return self.phase
+
+
 def add_rank_totals(sample: dict[str, Any]) -> None:
     ranks = sample.get("container", {}).get("ranks", [])
     totals: dict[str, int] = {field + "_bytes": 0 for field in SMAPS_FIELDS}
@@ -927,9 +981,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--once", action="store_true", help="Take one sample and exit")
     parser.add_argument(
         "--phase-schema",
-        choices=("wan", "minimax_h3"),
+        choices=("wan", "minimax_h3", "ltx2"),
         default="wan",
-        help="Log phase labels: wan keeps the existing Wan regex; minimax_h3 uses normalized [Runtime] stage events",
+        help="Log phase labels: wan keeps legacy regex; minimax_h3 and ltx2 use normalized [Runtime] stage events",
     )
     return parser
 
@@ -962,7 +1016,11 @@ def main() -> int:
             return 2
         time.sleep(min(args.interval, 2.0))
 
-    tracker_cls = MiniMaxH3PhaseTracker if args.phase_schema == "minimax_h3" else PhaseTracker
+    tracker_cls = {
+        "wan": PhaseTracker,
+        "minimax_h3": MiniMaxH3PhaseTracker,
+        "ltx2": LTX2PhaseTracker,
+    }[args.phase_schema]
     tracker = tracker_cls(args.log, args.expected_ranks)
     summary = Summary()
     previous_phase = None

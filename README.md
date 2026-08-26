@@ -1,8 +1,8 @@
 # LightX2VRun — GFX1201 timing entries
 
-The active interface is intentionally limited to seven numbered timing tasks.
-Every task uses the same host sweep implementation, the same model-specific
-container entry, and the same rank-critical timing summarizer.
+The active interface contains the numbered timing tasks below plus explicit
+model production entries for MiniMax-H3 and LTX-2.3. Every entry freezes its
+workload in a model-specific launcher and emits rank-critical evidence.
 
 | No. | Entry | Workload | Default GPU counts |
 |---:|---|---|---|
@@ -13,6 +13,42 @@ container entry, and the same rank-critical timing summarizer.
 | 06 | `scripts/run_06_wan22_720p_81f_16fps_scale.sh` | Wan2.2, 720P, 81f, 16 FPS | 2/4/8/16 |
 | 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
 | 08 | `scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh` | MiniMax-H3, 1344x768, 124f, 24 FPS | 2/4/8/16 |
+
+## LTX-2.3 Distilled FP8 B0
+
+The LTX-2.3 B0 entry is fixed at two gfx1201 GPUs, 704x1280 final output,
+352x640 Stage 1, 121 frames at 24 FPS, and the official 8+3-step two-stage
+schedule. It uses Torch Ulysses SP2, `torch._scaled_mm` for static-scalar FP8,
+Torch SDPA, and Torch norm/RoPE/modulate. There is no FPS selector.
+
+Expected host assets:
+
+```text
+/disk/ssd/difumodels-Dis/LTX-2.3-fp8/
+├── ltx-2.3-22b-distilled-fp8.safetensors
+├── ltx-2.3-spatial-upscaler-x2-1.1.safetensors
+└── gemma-3-12b-it-qat-q4_0-unquantized/
+    ├── model-00001-of-00005.safetensors ... model-00005-of-00005.safetensors
+    ├── model.safetensors.index.json
+    ├── config.json
+    ├── tokenizer.model
+    └── preprocessor_config.json
+```
+
+Run the strict host/image/RCCL/exact-shape preflight first:
+
+```bash
+bash scripts/run_ltx23_fp8_b0_704x1280_5s.sh \
+  --image IMAGE \
+  --gpus 0,1 \
+  --preflight-only
+```
+
+Remove `--preflight-only` for the full T2AV run. Collector is enabled by
+default and writes both rank-local schema-2 reports, host before/after
+snapshots, memory JSONL, ffprobe data, and a strict `summary.json`.
+`--no-collect` disables observers but never disables the safety preflight.
+The output must be 1280x704, 121 frames at 24 FPS, with video and audio streams.
 
 MiniMax-H3 gfx1201 is a production entry. Its default FL2V first and last
 frames are read-only host inputs at

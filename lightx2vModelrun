@@ -17,6 +17,9 @@ WAN22_BASE_DIR="${WAN22_BASE_DIR:-${MODEL_STORE}/Wan2.2-I2V-A14B}"
 WAN21_DISTILL_DIR="${WAN21_DISTILL_DIR:-${MODEL_STORE}/Wan2.1-I2V-14B-720P-StepDistill-CfgDistill-Lightx2v/distill_fp8}"
 H3_MODEL_DIR="${H3_MODEL_DIR:-/disk/ssd1/difumodels/MiniMax-h3}"
 H3_TURBO_DIR="${H3_TURBO_DIR:-/disk/ssd/difumodels-Dis/Minimax-h3-Turbo}"
+LTX23_CHECKPOINT="${LTX23_CHECKPOINT:-${MODEL_STORE}/LTX-2.3-fp8/ltx-2.3-22b-distilled-fp8.safetensors}"
+LTX23_UPSCALER="${LTX23_UPSCALER:-${MODEL_STORE}/LTX-2.3-fp8/ltx-2.3-spatial-upscaler-x2-1.1.safetensors}"
+LTX23_GEMMA_DIR="${LTX23_GEMMA_DIR:-${MODEL_STORE}/LTX-2.3-fp8/gemma-3-12b-it-qat-q4_0-unquantized}"
 
 RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd/lightx2v-runtime}"
 INPUT_DIR="${INPUT_DIR:-${RUNTIME_ROOT}/inputs}"
@@ -32,6 +35,10 @@ readonly CONTAINER_H3_FIRST_FRAME=/inputs/minimax_h3_first_frame
 readonly CONTAINER_H3_LAST_FRAME=/inputs/minimax_h3_last_frame
 readonly CONTAINER_H3_IMAGE_FIRST_FRAME=/workspace/LightX2V/assets/inputs/imgs/flf2v_input_first_frame-fs8.png
 readonly CONTAINER_H3_IMAGE_LAST_FRAME=/workspace/LightX2V/assets/inputs/imgs/flf2v_input_last_frame-fs8.png
+readonly CONTAINER_LTX23_ROOT=/models/ltx23
+readonly CONTAINER_LTX23_CHECKPOINT=/models/ltx23/checkpoints/ltx-2.3-22b-distilled-fp8.safetensors
+readonly CONTAINER_LTX23_UPSCALER=/models/ltx23/upscaler/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
+readonly CONTAINER_LTX23_GEMMA=/models/ltx23/gemma
 readonly CONTAINER_RUN_ROOT=/workspace/LightX2VRun
 readonly FP8_RUN_SCRIPT_DIR=${CONTAINER_RUN_ROOT}/scripts
 readonly T5_FP8_FILENAME=models_t5_umt5-xxl-enc-fp8.pth
@@ -45,6 +52,7 @@ Usage:
   ./lightx2vModelrun --run-minimax-h3-gfx1201
                                             Run MiniMax-H3 FL2V on 1 GPU, Ulysses SP2/SP4/SP8, or Ring SP16
                                             (H3 launcher only; TP stays disabled)
+  ./lightx2vModelrun --run-ltx23-gfx1201   Run LTX-2.3 Distilled FP8 B0 on exactly 2 GPUs
   ./lightx2vModelrun COMMAND [ARG...]        Run a command in the container
 
 Ordinary timing runs should use the seven numbered scripts:
@@ -59,6 +67,7 @@ Ordinary timing runs should use the seven numbered scripts:
 Important overrides:
   GPU_DEVICES, IMAGE, MODEL_STORE, OUTPUT_DIR, INPUT_DIR, CACHE_DIR
   H3_MODEL_DIR, H3_TURBO_DIR
+  LTX23_CHECKPOINT, LTX23_UPSCALER, LTX23_GEMMA_DIR
   TARGET_HEIGHT, TARGET_WIDTH, TARGET_VIDEO_LENGTH, TARGET_FPS
   LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE=auto|baseline|b1
   DRY_RUN=1, SKIP_MODEL_CHECKS=1
@@ -204,6 +213,7 @@ case "${1:-}" in
     --run-wan21-gfx1201) inference_mode=wan21_unified ;;
     --run-wan22-gfx1201) inference_mode=wan22_unified ;;
     --run-minimax-h3-gfx1201) inference_mode=minimax_h3 ;;
+    --run-ltx23-gfx1201) inference_mode=ltx23 ;;
 esac
 
 if [[ ! "${GPU_DEVICES}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
@@ -240,15 +250,25 @@ if [[ "${inference_mode}" == "minimax_h3" ]]; then
         die "MiniMax-H3 requires scripts/run_minimax_h3_fl2av_4step_768p.sh --image IMAGE; the Wan default image is not an H3 source tree"
     h3_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_minimax_h3_in_container.sh"
 fi
+if [[ "${inference_mode}" == "ltx23" ]]; then
+    [[ "${gpu_count}" == 2 ]] || die "LTX-2.3 FP8 B0 requires exactly two GPU_DEVICES"
+    [[ "${LIGHTX2V_LTX23_EXPLICIT_IMAGE:-0}" == 1 ]] || \
+        die "LTX-2.3 requires scripts/run_ltx23_fp8_b0_704x1280_5s.sh --image IMAGE"
+    ltx23_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_ltx23_in_container.sh"
+fi
 
 is_wan21_mode=0
 is_minimax_h3_mode=0
+is_ltx23_mode=0
 uses_fp8_run_script=0
 if [[ "${inference_mode}" == wan21_unified ]]; then
     is_wan21_mode=1
 fi
 if [[ "${inference_mode}" == minimax_h3 ]]; then
     is_minimax_h3_mode=1
+fi
+if [[ "${inference_mode}" == ltx23 ]]; then
+    is_ltx23_mode=1
 fi
 if [[ "${inference_mode}" == wan21_unified || "${inference_mode}" == wan22_unified ]]; then
     uses_fp8_run_script=1
@@ -275,6 +295,11 @@ if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     esac
     readonly h3_source_mode=image
 fi
+if [[ "${is_ltx23_mode}" == 1 ]]; then
+    [[ "${LTX23_CHECKPOINT}" == /* ]] || die "LTX23_CHECKPOINT must be an absolute host path"
+    [[ "${LTX23_UPSCALER}" == /* ]] || die "LTX23_UPSCALER must be an absolute host path"
+    [[ "${LTX23_GEMMA_DIR}" == /* ]] || die "LTX23_GEMMA_DIR must be an absolute host path"
+fi
 
 require_dir "${RUN_REPO_DIR}"
 if [[ "${uses_fp8_run_script}" == 1 ]]; then
@@ -285,6 +310,10 @@ if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     require_file "${RUN_REPO_DIR}/${h3_run_script#${CONTAINER_RUN_ROOT}/}"
     require_file "${RUN_REPO_DIR}/scripts/lib/build_minimax_h3_runtime_config.py"
     require_file "${RUN_REPO_DIR}/scripts/lib/preflight_minimax_h3_gfx1201.py"
+fi
+if [[ "${is_ltx23_mode}" == 1 ]]; then
+    require_file "${RUN_REPO_DIR}/${ltx23_run_script#${CONTAINER_RUN_ROOT}/}"
+    require_file "${RUN_REPO_DIR}/scripts/lib/preflight_ltx23_fp8_gfx1201.py"
 fi
 encoder_mount_source="${ENCODERS_DIR}"
 encoder_mount_target="${CONTAINER_MODELS_ROOT}/encoders/t5"
@@ -300,7 +329,11 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     [[ -c /dev/kfd ]] || die "ROCm device /dev/kfd is unavailable"
     [[ -d /dev/dri ]] || die "DRM device directory /dev/dri is unavailable"
 
-    if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+    if [[ "${is_ltx23_mode}" == 1 ]]; then
+        require_file "${LTX23_CHECKPOINT}"
+        require_file "${LTX23_UPSCALER}"
+        require_dir "${LTX23_GEMMA_DIR}"
+    elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
         require_dir "${H3_MODEL_DIR:?H3_MODEL_DIR is required}"
         require_dir "${H3_TURBO_DIR:?H3_TURBO_DIR is required}"
         if [[ "${h3_frame_source}" == host ]]; then
@@ -315,7 +348,9 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         require_dir "${WAN22_BASE_DIR}"
     fi
     if [[ "${SKIP_MODEL_CHECKS:-0}" != "1" ]]; then
-        if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+        if [[ "${is_ltx23_mode}" == 1 ]]; then
+            : # Strict LTX checkpoint/Gemma contents are validated by preflight.
+        elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
             require_file "${H3_TURBO_DIR}/minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
         elif [[ "${is_wan21_mode}" == 1 ]]; then
             require_dir "${WAN21_DISTILL_DIR}/google/umt5-xxl"
@@ -361,7 +396,9 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
 fi
 
 container_model_path="${CONTAINER_BASE_MODEL}"
-if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+if [[ "${is_ltx23_mode}" == 1 ]]; then
+    container_model_path="${CONTAINER_LTX23_ROOT}"
+elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
     container_model_path="${CONTAINER_H3_MODEL}"
 elif [[ "${is_wan21_mode}" == 1 ]]; then
     container_model_path="${CONTAINER_WAN21_DISTILL_MODEL}"
@@ -419,7 +456,17 @@ if [[ -n "${CK_CONV3D_TUNED_CSV:-}" ]]; then
     )
 fi
 
-if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+if [[ "${is_ltx23_mode}" == 1 ]]; then
+    docker_args+=(
+        --mount "type=bind,source=${LTX23_CHECKPOINT},target=${CONTAINER_LTX23_CHECKPOINT},readonly"
+        --mount "type=bind,source=${LTX23_UPSCALER},target=${CONTAINER_LTX23_UPSCALER},readonly"
+        --mount "type=bind,source=${LTX23_GEMMA_DIR},target=${CONTAINER_LTX23_GEMMA},readonly"
+        --env "LTX23_CHECKPOINT_CONTAINER=${CONTAINER_LTX23_CHECKPOINT}"
+        --env "LTX23_UPSCALER_CONTAINER=${CONTAINER_LTX23_UPSCALER}"
+        --env "LTX23_GEMMA_CONTAINER=${CONTAINER_LTX23_GEMMA}"
+        --env PYTORCH_TUNABLEOP_ENABLED=0
+    )
+elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${H3_MODEL_DIR},target=${CONTAINER_H3_MODEL},readonly"
         --mount "type=bind,source=${H3_TURBO_DIR},target=${CONTAINER_H3_TURBO},readonly"
@@ -486,12 +533,24 @@ for inference_env in \
     H3_EVIDENCE_DIR H3_PROMPT_PRESET H3_PROMPT_FILE H3_MEGADISCOVERY \
     H3_MEGADISCOVERY_TIMEOUT_SECONDS \
     NCCL_DEBUG NCCL_DEBUG_SUBSYS NCCL_DEBUG_FILE \
-    LIGHTX2V_H3_RUN_COLLECTOR LIGHTX2V_H3_RUN_COLLECTOR_OUTPUT; do
+    LIGHTX2V_H3_RUN_COLLECTOR LIGHTX2V_H3_RUN_COLLECTOR_OUTPUT \
+    LTX23_PREFLIGHT_ONLY LTX23_COLLECT LTX23_EVIDENCE_DIR \
+    LTX23_QUICK_GEMM_PROBE LTX23_EXPECTED_ROCM_PREFIX \
+    LIGHTX2V_SOURCE_REVISION AITER_SOURCE_REVISION AITER_COMMIT; do
     # H3 resolves these paths from H3_FRAME_SOURCE and mounts the selected host
     # files above. Re-appending inherited values here would create duplicate
     # Docker environment entries whose final (stale) value wins.
     if [[ "${is_minimax_h3_mode}" == 1 && ( "${inference_env}" == IMAGE_PATH || "${inference_env}" == LAST_FRAME_PATH ) ]]; then
         continue
+    fi
+    # LTX-2.3 B0 is a frozen workload. Do not let stale Wan/H3 overrides from
+    # the host leak into the container and create a second effective profile.
+    if [[ "${is_ltx23_mode}" == 1 ]]; then
+        case "${inference_env}" in
+            TARGET_VIDEO_LENGTH | TARGET_HEIGHT | TARGET_WIDTH | TARGET_FPS | INFER_STEPS | BASE_CONFIG_JSON)
+                continue
+                ;;
+        esac
     fi
     if [[ -n "${!inference_env:-}" ]]; then
         docker_args+=(--env "${inference_env}=${!inference_env}")
@@ -503,7 +562,9 @@ if [[ -e /etc/localtime ]]; then
 fi
 
 container_command=(/bin/bash)
-if [[ "${uses_fp8_run_script}" == 1 ]]; then
+if [[ "${is_ltx23_mode}" == 1 ]]; then
+    container_command=(/bin/bash "${ltx23_run_script}")
+elif [[ "${uses_fp8_run_script}" == 1 ]]; then
     container_command=(/bin/bash "${fp8_run_script}")
 elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
     container_command=(/bin/bash "${h3_run_script}")
@@ -518,7 +579,14 @@ fi
 printf 'Container:      %s\n' "${CONTAINER_NAME}"
 printf 'GPU devices:    %s\n' "${GPU_DEVICES}"
 printf 'Mode:           %s\n' "${inference_mode}"
-if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+if [[ "${is_ltx23_mode}" == 1 ]]; then
+    printf 'LTX checkpoint:  %s -> %s\n' "${LTX23_CHECKPOINT}" "${CONTAINER_LTX23_CHECKPOINT}"
+    printf 'LTX upscaler:   %s -> %s\n' "${LTX23_UPSCALER}" "${CONTAINER_LTX23_UPSCALER}"
+    printf 'LTX Gemma:      %s -> %s\n' "${LTX23_GEMMA_DIR}" "${CONTAINER_LTX23_GEMMA}"
+    printf 'LTX LightX2V:   /workspace/LightX2V (from image)\n'
+    printf 'LTX workload:   704x1280 final, 352x640 Stage 1, 121f@24fps, SP2, 8+3 steps\n'
+    printf 'LTX L2 route:   torch._scaled_mm + Torch SDPA/norm/RoPE/modulate\n'
+elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
     printf 'H3 model:       %s -> %s\n' "${H3_MODEL_DIR}" "${CONTAINER_H3_MODEL}"
     printf 'H3 source mode: %s\n' "${h3_source_mode}"
     printf 'H3 LightX2V:    /workspace/LightX2V (from image)\n'
@@ -555,6 +623,9 @@ if [[ "${uses_fp8_run_script}" == 1 ]]; then
 fi
 if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     printf 'H3 launcher:    %s\n' "${h3_run_script}"
+fi
+if [[ "${is_ltx23_mode}" == 1 ]]; then
+    printf 'LTX launcher:   %s\n' "${ltx23_run_script}"
 fi
 
 docker_command=(docker "${docker_args[@]}" "${IMAGE}" "${container_command[@]}")
