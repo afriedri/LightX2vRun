@@ -7,7 +7,6 @@ model_run="${MODEL_RUN:-${run_root}/lightx2vModelrun}"
 
 output_dir="${LTX25_CONTRACT_OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/ltx25-contract-$(date +%Y%m%d_%H%M%S)}"
 model_root="${LTX25_MODEL_ROOT:-/disk/ssd/difumodels-Dis/LTX-2.5}"
-census="${LTX25_CENSUS:-/disk/ssd/lightx2v-runtime/ltx25-day0/ltx25_weight_census.json}"
 gpu_devices="${GPU_DEVICES:-${HIP_VISIBLE_DEVICES:-0,1}}"
 image="${LTX25_IMAGE:-${IMAGE:-}}"
 run_id="${LIGHTX2V_LTX25_CONTRACT_RUN_ID:-}"
@@ -19,15 +18,14 @@ Usage:
   bash scripts/collector/run_ltx25_contract_collector.sh [OPTIONS]
 
 Run this with no arguments on the Docker host. It launches the standard
-LightX2V ROCm image and performs Day-0 census (when missing), L1 prompt
-collection, the L1-to-L2 handoff, SP2 L2/L3 collection, and bundle validation
+LightX2V ROCm image and performs L1 prompt collection, SP2 L2/L3 collection,
+and bundle validation
 inside that image. The default image comes from lightx2vModelrun.
 
 Options override defaults only:
   --image IMAGE        Runtime image override
   --output-dir DIR     Host evidence directory
   --model-root DIR     Host LTX-2.5 model root
-  --census FILE        Host Day-0 census JSON/cache location
   --gpus IDS           Exactly two physical GPU ids (default: 0,1)
   --run-id ID          Stable collector run id
   --no-require-upsample
@@ -45,7 +43,6 @@ while (( $# > 0 )); do
         --image) image="$2"; shift 2 ;;
         --output-dir) output_dir="$2"; shift 2 ;;
         --model-root) model_root="$2"; shift 2 ;;
-        --census) census="$2"; shift 2 ;;
         --gpus|--gpu) gpu_devices="$2"; shift 2 ;;
         --run-id) run_id="$2"; shift 2 ;;
         --no-require-upsample) require_upsample=0; shift ;;
@@ -67,12 +64,10 @@ fi
 [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "ERROR: --run-id contains unsafe characters" >&2; exit 2; }
 [[ "${output_dir}" == /* ]] || { echo "ERROR: --output-dir must be an absolute host path" >&2; exit 2; }
 [[ "${model_root}" == /* ]] || { echo "ERROR: --model-root must be an absolute host path" >&2; exit 2; }
-[[ "${census}" == /* ]] || { echo "ERROR: --census must be an absolute host path" >&2; exit 2; }
 
-mkdir -p -- "${output_dir}" "$(dirname -- "${census}")"
+mkdir -p -- "${output_dir}"
 output_dir="$(cd -- "${output_dir}" && pwd -P)"
 model_root="$(cd -- "$(dirname -- "${model_root}")" && pwd -P)/$(basename -- "${model_root}")"
-census="$(cd -- "$(dirname -- "${census}")" && pwd -P)/$(basename -- "${census}")"
 
 shopt -s nullglob
 existing=(
@@ -87,7 +82,6 @@ export RUN_REPO_DIR="${run_root}"
 export OUTPUT_DIR="${output_dir}"
 export GPU_DEVICES="${gpu_devices}"
 export LTX25_MODEL_ROOT="${model_root}"
-export LTX25_CENSUS="${census}"
 export LIGHTX2V_LTX25_EXPLICIT_COLLECTOR=1
 export LIGHTX2V_LTX25_CONTRACT_RUN_ID="${run_id}"
 export LTX25_REQUIRE_UPSAMPLE="${require_upsample}"

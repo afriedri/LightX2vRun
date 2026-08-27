@@ -49,23 +49,25 @@ def test_ltx25_contract_wrapper_has_zero_argument_automatic_entry():
         subprocess.run(["bash", "-n", str(script)], check=True)
 
 
-def test_ltx25_zero_argument_dry_run_starts_container_with_exact_mounts(tmp_path):
+def test_ltx25_image_dry_run_starts_container_with_exact_mounts(tmp_path):
     model_root = tmp_path / "models" / "LTX-2.5"
     model_root.mkdir(parents=True)
     output_dir = tmp_path / "evidence"
-    census = tmp_path / "runtime" / "ltx25-day0" / "ltx25_weight_census.json"
     env = {
         **os.environ,
         "DRY_RUN": "1",
-        "IMAGE": "example.invalid/ltx25:collector",
         "MODEL_RUN": str(REPO_ROOT / "lightx2vModelrun"),
         "LTX25_MODEL_ROOT": str(model_root),
         "LTX25_CONTRACT_OUTPUT_DIR": str(output_dir),
-        "LTX25_CENSUS": str(census),
     }
 
     completed = subprocess.run(
-        ["bash", str(WRAPPER)],
+        [
+            "bash",
+            str(WRAPPER),
+            "--image",
+            "example.invalid/ltx25:collector",
+        ],
         cwd=REPO_ROOT,
         env=env,
         text=True,
@@ -75,15 +77,11 @@ def test_ltx25_zero_argument_dry_run_starts_container_with_exact_mounts(tmp_path
 
     assert completed.returncode == 0, completed.stderr
     stdout = completed.stdout.replace("\\,", ",")
+    assert "Image:          example.invalid/ltx25:collector" in stdout
     assert "Mode:           ltx25_contract" in stdout
     assert "GPU devices:    0,1" in stdout
     assert f"source={model_root},target={model_root},readonly" in stdout
     assert f"source={output_dir},target=/workspace/LightX2V/save_results" in stdout
-    assert (
-        f"source={census.parent},target={census.parent}"
-        in stdout
-    )
-    assert f"LTX25_CENSUS={census}" in stdout
     assert "LIGHTX2V_LTX25_IN_CONTAINER=1" in stdout
     assert "/workspace/LightX2VRun/scripts/lib/run_ltx25_in_container.sh" in stdout
 
@@ -103,8 +101,7 @@ def test_ltx25_inner_helper_rejects_direct_host_execution():
 def test_ltx25_runtime_config_freezes_b0ref_and_labels_conv_diagnostic(tmp_path):
     builder = _load_builder()
     model_root = tmp_path / "LTX-2.5"
-    census = tmp_path / "ltx25_weight_census.json"
-    config = builder.build_config(model_root, census, "a" * 64)
+    config = builder.build_config(model_root)
 
     assert config["target_height"] == 704
     assert config["target_width"] == 1280
@@ -131,15 +128,12 @@ def test_ltx25_runtime_config_cli_writes_json(tmp_path):
             str(BUILDER_PATH),
             "--model-root",
             str(tmp_path / "model"),
-            "--census",
-            str(tmp_path / "census.json"),
-            "--census-sha256",
-            "b" * 64,
             "--output",
             str(output),
         ],
         check=True,
     )
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert payload["ltx25_census_sha256"] == "b" * 64
+    assert "ltx25_census_path" not in payload
+    assert "ltx25_census_sha256" not in payload
     assert payload["ltx25_b0_gfx1201"] is True

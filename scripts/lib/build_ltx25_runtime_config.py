@@ -10,11 +10,7 @@ import tempfile
 from pathlib import Path
 
 
-def build_config(model_root: Path, census: Path, census_sha256: str) -> dict:
-    if len(census_sha256) != 64 or any(
-        ch not in "0123456789abcdef" for ch in census_sha256
-    ):
-        raise ValueError("census_sha256 must be 64 lowercase hex characters")
+def build_config(model_root: Path) -> dict:
     transformer = (
         model_root
         / "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors"
@@ -95,8 +91,6 @@ def build_config(model_root: Path, census: Path, census_sha256: str) -> dict:
         "ltx25_split_contract_required": True,
         "ltx25_process_isolated_prompt_required": True,
         "ltx25_b0_gfx1201": True,
-        "ltx25_census_path": os.fspath(census),
-        "ltx25_census_sha256": census_sha256,
         # LightX2V's current executable L3 is the released Conv VAE. Keep the
         # official DiffVAE in the five-asset identity above, but label the
         # runtime override diagnostic-only so it can never qualify as B0.
@@ -125,13 +119,11 @@ def write_json(path: Path, payload: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-root", type=Path, required=True)
-    parser.add_argument("--census", type=Path, required=True)
-    parser.add_argument("--census-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     write_json(
         args.output,
-        build_config(args.model_root, args.census, args.census_sha256),
+        build_config(args.model_root),
     )
     print(f"LTX-2.5 runtime config: {args.output}")
     return 0

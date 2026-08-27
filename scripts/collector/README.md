@@ -4,14 +4,14 @@ This directory contains diagnostic launchers and their analysis helpers. They
 observe the frozen production workload and must not silently change model
 precision, offload policy, buffer counts, tuned kernels, or parallel topology.
 
-## LTX-2.5 Day-0
+## LTX-2.5 Optional Weight Audit
 
-- `run_ltx25_weight_census.sh` runs the no-GPU E0/E1 hard gates for the five
+- `run_ltx25_weight_census.sh` is an optional no-GPU audit for the five
   BF16 split assets. It validates frozen size/SHA identities, Safetensors
   boundaries, the 48 x 84 Transformer schema, Gemma4 packed assets and
   cross-file version, component metadata, and the conservative two-slot memory
   account. It does not import Torch or initialize HIP.
-- A full release-gate run is:
+- Run it only when an explicit artifact audit is needed:
 
   ```bash
   bash scripts/collector/run_ltx25_weight_census.sh \
@@ -22,7 +22,8 @@ precision, offload policy, buffer counts, tuned kernels, or parallel topology.
 
   The output directory receives `ltx25_weight_census.json`,
   `ltx25_weight_census.md`, and `ltx25_mock_memory.json`. A failed E0 retains
-  both census reports and stops before E1.
+  both census reports and stops before E1. The runtime contract collector does
+  not invoke or require this audit.
 
 - `run_ltx25_contract_collector.sh` is the zero-argument Docker-host entry.
   It launches the standard LightX2V ROCm image and runs the LTX-2.5
@@ -40,13 +41,14 @@ precision, offload policy, buffer counts, tuned kernels, or parallel topology.
   Defaults are model root `/disk/ssd/difumodels-Dis/LTX-2.5`, GPUs `0,1`,
   the image configured by `lightx2vModelrun`, two denoise ranks and a
   timestamped directory under `/disk/ssd/lightx2v-runtime/`. The host entry
-  mounts the model read-only, the evidence directory writable, the Day-0 cache
-  writable, and LightX2VRun read-only. Missing Day-0 evidence is generated
-  with full SHA verification inside the image before any GPU model process.
-  L1, handoff, SP2 L2/L3 and validation also run inside the image; the inner
-  helper refuses direct host execution. `DRY_RUN=1` prints the complete
-  Docker contract. The current executable video path is explicitly recorded
-  as `conv_diagnostic`; it cannot qualify as official DiffVAE B0 acceptance.
+  mounts the model read-only, the evidence directory writable, and LightX2VRun
+  read-only. L1, SP2 L2/L3 and bundle validation run inside the image; no SHA,
+  weight-schema census, VRAM handoff gate, or extra preflight is part of this
+  collector path. The inner helper refuses direct host execution.
+  `--image IMAGE` and `IMAGE=...` remain supported, and `DRY_RUN=1`
+  prints the complete Docker contract. The current executable video path is
+  explicitly recorded as `conv_diagnostic`; it cannot qualify as official
+  DiffVAE B0 acceptance.
 
 ## LTX-2.3 B0
 

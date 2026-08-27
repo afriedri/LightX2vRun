@@ -21,7 +21,6 @@ LTX23_CHECKPOINT="${LTX23_CHECKPOINT:-${MODEL_STORE}/LTX-2.3-fp8/ltx-2.3-22b-dis
 LTX23_UPSCALER="${LTX23_UPSCALER:-${MODEL_STORE}/LTX-2.3-fp8/ltx-2.3-spatial-upscaler-x2-1.1.safetensors}"
 LTX23_GEMMA_DIR="${LTX23_GEMMA_DIR:-${MODEL_STORE}/LTX-2.3-fp8/gemma-3-12b-it-qat-q4_0-unquantized}"
 LTX25_MODEL_ROOT="${LTX25_MODEL_ROOT:-${MODEL_STORE}/LTX-2.5}"
-LTX25_CENSUS="${LTX25_CENSUS:-/disk/ssd/lightx2v-runtime/ltx25-day0/ltx25_weight_census.json}"
 
 RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd/lightx2v-runtime}"
 INPUT_DIR="${INPUT_DIR:-${RUNTIME_ROOT}/inputs}"
@@ -72,7 +71,7 @@ Important overrides:
   GPU_DEVICES, IMAGE, MODEL_STORE, OUTPUT_DIR, INPUT_DIR, CACHE_DIR
   H3_MODEL_DIR, H3_TURBO_DIR
   LTX23_CHECKPOINT, LTX23_UPSCALER, LTX23_GEMMA_DIR
-  LTX25_MODEL_ROOT, LTX25_CENSUS
+  LTX25_MODEL_ROOT
   TARGET_HEIGHT, TARGET_WIDTH, TARGET_VIDEO_LENGTH, TARGET_FPS
   LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE=auto|baseline|b1
   DRY_RUN=1, SKIP_MODEL_CHECKS=1
@@ -318,13 +317,8 @@ if [[ "${is_ltx23_mode}" == 1 ]]; then
 fi
 if [[ "${is_ltx25_mode}" == 1 ]]; then
     [[ "${LTX25_MODEL_ROOT}" == /* ]] || die "LTX25_MODEL_ROOT must be an absolute host path"
-    [[ "${LTX25_CENSUS}" == /* ]] || die "LTX25_CENSUS must be an absolute host path"
-    ltx25_census_dir="$(dirname -- "${LTX25_CENSUS}")"
-    # Preserve the host absolute paths in the mount namespace. The E0 census
-    # deliberately freezes realpath plus stat identity, not only size/SHA.
+    # Preserve the host absolute model path in the mount namespace.
     container_ltx25_root="${LTX25_MODEL_ROOT}"
-    container_ltx25_census_dir="${ltx25_census_dir}"
-    container_ltx25_census="${LTX25_CENSUS}"
 fi
 
 require_dir "${RUN_REPO_DIR}"
@@ -346,9 +340,6 @@ fi
 if [[ "${is_ltx25_mode}" == 1 ]]; then
     require_file "${RUN_REPO_DIR}/${ltx25_run_script#${CONTAINER_RUN_ROOT}/}"
     require_file "${RUN_REPO_DIR}/scripts/lib/build_ltx25_runtime_config.py"
-    require_file "${RUN_REPO_DIR}/scripts/lib/check_ltx23_phase_handoff.py"
-    require_file "${RUN_REPO_DIR}/scripts/collector/run_ltx25_weight_census.sh"
-    require_file "${RUN_REPO_DIR}/scripts/collector/collect_ltx25_weight_census.py"
     require_file "${RUN_REPO_DIR}/scripts/collector/validate_ltx25_contract_bundle.py"
 fi
 encoder_mount_source="${ENCODERS_DIR}"
@@ -367,7 +358,6 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
 
     if [[ "${is_ltx25_mode}" == 1 ]]; then
         require_dir "${LTX25_MODEL_ROOT}"
-        require_dir "${ltx25_census_dir}"
     elif [[ "${is_ltx23_mode}" == 1 ]]; then
         require_file "${LTX23_CHECKPOINT}"
         require_file "${LTX23_UPSCALER}"
@@ -388,7 +378,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     fi
     if [[ "${SKIP_MODEL_CHECKS:-0}" != "1" ]]; then
         if [[ "${is_ltx25_mode}" == 1 ]]; then
-            : # Exact split assets and census identity are validated in-container.
+            : # The in-container entry resolves the explicit split asset paths.
         elif [[ "${is_ltx23_mode}" == 1 ]]; then
             : # Strict LTX checkpoint/Gemma contents are validated by preflight.
         elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
@@ -502,10 +492,8 @@ fi
 if [[ "${is_ltx25_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${LTX25_MODEL_ROOT},target=${container_ltx25_root},readonly"
-        --mount "type=bind,source=${ltx25_census_dir},target=${container_ltx25_census_dir}"
         --env LIGHTX2V_LTX25_IN_CONTAINER=1
         --env "LTX25_MODEL_ROOT=${container_ltx25_root}"
-        --env "LTX25_CENSUS=${container_ltx25_census}"
         --env LTX25_EVIDENCE_DIR=/workspace/LightX2V/save_results
         --env LTX25_WORLD_SIZE=2
         --env PYTORCH_TUNABLEOP_ENABLED=0
@@ -593,7 +581,6 @@ for inference_env in \
     LTX23_WEIGHT_PROBE_ONLY LTX23_WEIGHT_PROBE_SHA256 \
     LTX23_HANDOFF_VRAM_LIMIT_MIB LTX23_HANDOFF_TIMEOUT_SECONDS \
     LIGHTX2V_LTX25_CONTRACT_RUN_ID LTX25_REQUIRE_UPSAMPLE \
-    LTX25_CENSUS_SHA256 LTX25_HANDOFF_VRAM_LIMIT_MIB LTX25_HANDOFF_TIMEOUT_SECONDS \
     LIGHTX2V_SOURCE_REVISION AITER_SOURCE_REVISION AITER_COMMIT; do
     # H3 resolves these paths from H3_FRAME_SOURCE and mounts the selected host
     # files above. Re-appending inherited values here would create duplicate
@@ -641,7 +628,6 @@ printf 'GPU devices:    %s\n' "${GPU_DEVICES}"
 printf 'Mode:           %s\n' "${inference_mode}"
 if [[ "${is_ltx25_mode}" == 1 ]]; then
     printf 'LTX-2.5 model:  %s -> %s\n' "${LTX25_MODEL_ROOT}" "${container_ltx25_root}"
-    printf 'LTX-2.5 census: %s -> %s\n' "${LTX25_CENSUS}" "${container_ltx25_census}"
     printf 'LTX-2.5 source: /workspace/LightX2V (from image)\n'
     printf 'LTX-2.5 route:  B0-reference contract collection; C1 probe disabled\n'
 elif [[ "${is_ltx23_mode}" == 1 ]]; then
