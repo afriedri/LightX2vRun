@@ -44,7 +44,9 @@ precision, offload policy, buffer counts, tuned kernels, or parallel topology.
   `conv_diagnostic`; it cannot qualify as official DiffVAE B0 acceptance.
   The in-container entry discovers LightX2V next to LightX2VRun first, then
   checks `/home/LightX2V` and `/workspace/LightX2V`; no path argument is
-  required for either supported image layout.
+  required for either supported image layout. It also binds the discovered
+  model root to the legacy `model_path` shell contract before sourcing
+  LightX2V's `scripts/base/base.sh` under `set -u`.
 
 ## LTX-2.3 B0
 

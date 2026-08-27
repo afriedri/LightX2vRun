@@ -79,6 +79,10 @@ export PYTHONPATH="${lightx2v_path}${PYTHONPATH:+:${PYTHONPATH}}"
 export AITER_JIT_DIR="${AITER_JIT_DIR:-${run_root}/.cache/aiter}/gfx1201-cu24-ltx25-b0ref"
 mkdir -p -- "${AITER_JIT_DIR}"
 
+# scripts/base/base.sh consumes these legacy shell variable names directly.
+# Define both before sourcing it because this launcher intentionally uses
+# set -u and the base script checks model_path without a default expansion.
+model_path="${model_root}"
 source "${lightx2v_path}/scripts/base/base.sh"
 
 echo "LTX-2.5 B0-reference contract discovery"

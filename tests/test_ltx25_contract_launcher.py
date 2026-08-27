@@ -36,6 +36,11 @@ def test_ltx25_contract_wrapper_has_zero_argument_automatic_entry():
     assert '"/workspace/LightX2V"' in in_container_text
     assert "cannot locate LightX2V source" in in_container_text
     assert "${run_root}/.cache/aiter" in in_container_text
+    model_path_assignment = in_container_text.index('model_path="${model_root}"')
+    base_source = in_container_text.index(
+        'source "${lightx2v_path}/scripts/base/base.sh"'
+    )
+    assert model_path_assignment < base_source
 
     for script in (WRAPPER, IN_CONTAINER):
         subprocess.run(["bash", "-n", str(script)], check=True)
