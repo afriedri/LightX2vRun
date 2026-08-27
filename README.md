@@ -79,7 +79,8 @@ cache, checks out the resolved commit, records its SHA, and mounts that exact
 tree read-only for direct execution. This avoids an image rebuild and does not
 require a source-path argument. `LTX25_LIGHTX2V_GIT_URL`,
 `LTX25_LIGHTX2V_REF`, and `LTX25_LIGHTX2V_GIT_DIR` override the managed source
-only when needed.
+only when needed. Git submodules are deliberately left uninitialized because
+the LTX-2.5 runtime does not use the ROS simulator dependencies.
 
 The collector observes metadata only, does not synchronize the accelerator,
 does not retain tensor payloads, does not select a C1 backend, and does not

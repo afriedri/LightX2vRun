@@ -52,6 +52,9 @@ def test_ltx25_contract_wrapper_has_zero_argument_automatic_entry():
     assert "Official DiffVAE remains an explicitly unexecuted" in ultra_text
     assert "git clone --no-checkout" in ultra_text
     assert "FETCH_HEAD^{commit}" in ultra_text
+    assert "submodule update" not in ultra_text
+    assert "submodule sync" not in ultra_text
+    assert "--ignore-submodules=all" in ultra_text
 
     for script in (WRAPPER, ULTRA_WRAPPER, IN_CONTAINER):
         subprocess.run(["bash", "-n", str(script)], check=True)

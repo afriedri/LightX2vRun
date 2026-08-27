@@ -66,7 +66,7 @@ else
             echo "ERROR: managed LightX2V origin mismatch: ${actual_url}" >&2
             exit 1
         }
-        [[ -z "$(git -C "${git_dir}" status --porcelain)" ]] || {
+        [[ -z "$(git -C "${git_dir}" status --porcelain --ignore-submodules=all)" ]] || {
             echo "ERROR: managed LightX2V checkout is dirty: ${git_dir}" >&2
             exit 1
         }
@@ -74,8 +74,6 @@ else
     git -C "${git_dir}" fetch --no-tags origin "${git_ref}"
     resolved_ref="$(git -C "${git_dir}" rev-parse --verify 'FETCH_HEAD^{commit}')"
     git -C "${git_dir}" checkout --detach "${resolved_ref}"
-    git -C "${git_dir}" submodule sync --recursive
-    git -C "${git_dir}" submodule update --init --recursive
     [[ -f "${git_dir}/lightx2v/utils/ltx2_contract_collector.py" ]] || {
         echo "ERROR: fetched revision is not a CollectorUltra LightX2V tree" >&2
         exit 1
