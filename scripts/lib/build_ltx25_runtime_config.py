@@ -54,7 +54,9 @@ def build_config(model_root: Path) -> dict:
         "audio_hop_length": 160,
         "audio_scale_factor": 4,
         "audio_fps": 24000,
-        "audio_mel_bins": 64,
+        # Transformer latent frequency bins. The Audio VAE decodes these 16
+        # latent bins back to its 64-bin mel-spectrogram output.
+        "audio_mel_bins": 16,
         "double_precision_rope": True,
         "dit_quantized": False,
         "dit_original_ckpt": os.fspath(transformer),

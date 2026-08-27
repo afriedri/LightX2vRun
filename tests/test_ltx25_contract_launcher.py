@@ -117,7 +117,10 @@ def test_ltx25_runtime_config_freezes_b0ref_and_labels_conv_diagnostic(tmp_path)
     assert config["ltx25_video_vae_runtime_ckpt"].endswith(
         "ltx-2.5-video-vae-conv-bf16.safetensors"
     )
-    assert config["audio_mel_bins"] == 64
+    assert config["audio_mel_bins"] == 16
+    # The transformer flattens 8 audio latent channels x 16 latent mel bins.
+    # Its audio_patchify_proj checkpoint therefore accepts 128 features.
+    assert 8 * config["audio_mel_bins"] == 128
 
 
 def test_ltx25_runtime_config_cli_writes_json(tmp_path):
