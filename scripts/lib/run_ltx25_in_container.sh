@@ -3,7 +3,28 @@ set -Eeuo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 run_root="$(cd -- "${script_dir}/../.." && pwd)"
-lightx2v_path="${LIGHTX2V_PATH:-/workspace/LightX2V}"
+lightx2v_path="${LIGHTX2V_PATH:-}"
+if [[ -z "${lightx2v_path}" ]]; then
+    sibling_root="$(cd -- "${run_root}/.." && pwd -P)"
+    candidates=(
+        "${sibling_root}/LightX2V"
+        "/home/LightX2V"
+        "/workspace/LightX2V"
+    )
+    shopt -s nullglob
+    candidates+=(/home/LightX2V* /workspace/LightX2V*)
+    shopt -u nullglob
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "${candidate}/scripts/base/base.sh" ]]; then
+            lightx2v_path="$(cd -- "${candidate}" && pwd -P)"
+            break
+        fi
+    done
+fi
+[[ -n "${lightx2v_path}" ]] || {
+    echo "ERROR: cannot locate LightX2V source; set LIGHTX2V_PATH only for a non-standard image layout" >&2
+    exit 1
+}
 model_root="${LTX25_MODEL_ROOT:-/disk/ssd/difumodels-Dis/LTX-2.5}"
 evidence_dir="${LTX25_EVIDENCE_DIR:-/disk/ssd/lightx2v-runtime/ltx25-contract}"
 census="${LTX25_CENSUS:-/disk/ssd/lightx2v-runtime/ltx25-day0/ltx25_weight_census.json}"
@@ -55,12 +76,13 @@ export TOKENIZERS_PARALLELISM=false
 export PYTORCH_TUNABLEOP_ENABLED=0
 export HIP_VISIBLE_DEVICES="${visible_devices}"
 export PYTHONPATH="${lightx2v_path}${PYTHONPATH:+:${PYTHONPATH}}"
-export AITER_JIT_DIR="${AITER_JIT_DIR:-/workspace/.cache/aiter}/gfx1201-cu24-ltx25-b0ref"
+export AITER_JIT_DIR="${AITER_JIT_DIR:-${run_root}/.cache/aiter}/gfx1201-cu24-ltx25-b0ref"
 mkdir -p -- "${AITER_JIT_DIR}"
 
 source "${lightx2v_path}/scripts/base/base.sh"
 
 echo "LTX-2.5 B0-reference contract discovery"
+echo "LightX2V source: ${lightx2v_path}"
 echo "Assets: ${model_root}"
 echo "GPUs: ${visible_devices}; SP2; BF16 two-slot disk stream"
 echo "Workload: 704x1280, 121 frames @ 24 FPS, Stage 1=8 eval, Stage 2=3 eval"

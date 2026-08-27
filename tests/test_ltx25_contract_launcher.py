@@ -30,6 +30,12 @@ def test_ltx25_contract_wrapper_has_zero_argument_automatic_entry():
     assert "run_ltx25_in_container.sh" in text
     assert "/disk/ssd/difumodels-Dis/LTX-2.5" in text
     assert "HIP_VISIBLE_DEVICES:-0,1" in text
+    in_container_text = IN_CONTAINER.read_text(encoding="utf-8")
+    assert '"${sibling_root}/LightX2V"' in in_container_text
+    assert '"/home/LightX2V"' in in_container_text
+    assert '"/workspace/LightX2V"' in in_container_text
+    assert "cannot locate LightX2V source" in in_container_text
+    assert "${run_root}/.cache/aiter" in in_container_text
 
     for script in (WRAPPER, IN_CONTAINER):
         subprocess.run(["bash", "-n", str(script)], check=True)

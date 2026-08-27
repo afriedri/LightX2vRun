@@ -42,6 +42,9 @@ precision, offload policy, buffer counts, tuned kernels, or parallel topology.
   automatically with full SHA verification. Options remain available only as
   overrides. The current executable video path is explicitly recorded as
   `conv_diagnostic`; it cannot qualify as official DiffVAE B0 acceptance.
+  The in-container entry discovers LightX2V next to LightX2VRun first, then
+  checks `/home/LightX2V` and `/workspace/LightX2V`; no path argument is
+  required for either supported image layout.
 
 ## LTX-2.3 B0
 
