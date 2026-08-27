@@ -35,6 +35,7 @@ Environment:
 
 Collection does not select or probe a C1 backend. A complete bundle remains
 B0-reference evidence and keeps b0_accepted=false and c1_pass=false.
+Use LTX25-CollectorUltra.sh when the C1 MegaOlympics input contract is needed.
 EOF
 }
 

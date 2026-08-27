@@ -15,6 +15,7 @@ visible_devices="${HIP_VISIBLE_DEVICES:-0,1}"
 world_size="${LTX25_WORLD_SIZE:-2}"
 run_id="${LIGHTX2V_LTX25_CONTRACT_RUN_ID:-ltx25-contract-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 require_upsample="${LTX25_REQUIRE_UPSAMPLE:-1}"
+ultra="${LIGHTX2V_LTX25_CONTRACT_ULTRA:-0}"
 prompt="${PROMPT:-A cinematic wide shot of a red fox walking through fresh snow at sunrise, with natural synchronized forest ambience.}"
 negative_prompt="${NEGATIVE_PROMPT:-}"
 
@@ -23,6 +24,7 @@ negative_prompt="${NEGATIVE_PROMPT:-}"
 IFS=',' read -r gpu0 gpu1 <<<"${visible_devices}"
 [[ "${gpu0}" != "${gpu1}" ]] || { echo "ERROR: GPU ids must be unique" >&2; exit 2; }
 case "${require_upsample}" in 0|1) ;; *) echo "ERROR: LTX25_REQUIRE_UPSAMPLE must be 0 or 1" >&2; exit 2 ;; esac
+case "${ultra}" in 0|1) ;; *) echo "ERROR: LIGHTX2V_LTX25_CONTRACT_ULTRA must be 0 or 1" >&2; exit 2 ;; esac
 [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "ERROR: collector run id contains unsafe characters" >&2; exit 2; }
 
 transformer="${model_root}/diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors"
@@ -81,6 +83,7 @@ model_path="${model_root}"
 source "${lightx2v_path}/scripts/base/base.sh"
 
 echo "LTX-2.5 B0-reference contract discovery (inside ROCm image)"
+echo "Contract detail: $([[ "${ultra}" == 1 ]] && echo ultra || echo standard)"
 echo "LightX2V source: ${lightx2v_path}"
 echo "Assets: ${model_root}"
 echo "Evidence: ${evidence_dir}"
@@ -118,5 +121,8 @@ validator_args=(
 )
 if [[ "${require_upsample}" == 0 ]]; then
     validator_args+=(--no-require-upsample)
+fi
+if [[ "${ultra}" == 1 ]]; then
+    validator_args+=(--require-ultra)
 fi
 PYTHONDONTWRITEBYTECODE=1 python3 -B "${validator}" "${validator_args[@]}"

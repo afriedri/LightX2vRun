@@ -92,7 +92,98 @@ def _has_attention_contract(rows: list[Mapping[str, Any]]) -> bool:
     )
 
 
-def validate_bundle(output_dir: Path, expected_ranks: int, require_upsample: bool = True) -> dict[str, Any]:
+def _is_tensor_contract(value: Any) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and isinstance(value.get("shape"), list)
+        and isinstance(value.get("stride"), list)
+        and isinstance(value.get("dtype"), str)
+        and isinstance(value.get("layout"), str)
+    )
+
+
+def _projected_qkv_contracts(rows: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    return [
+        row
+        for row in rows
+        if row.get("family") == "attention"
+        and str(row.get("operator", "")).startswith("ltx25.l1.functional.")
+        and all(
+            _is_tensor_contract((row.get("inputs") or {}).get(name))
+            for name in ("q", "k", "v")
+        )
+        and (row.get("parameters") or {}).get("qkv_layout") in {"BHSD", "BSHD"}
+    ]
+
+
+def _rope_frequency_contracts(rows: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    return [
+        row
+        for row in rows
+        if row.get("family") == "rope"
+        and _is_tensor_contract((row.get("inputs") or {}).get("freqs.0"))
+        and _is_tensor_contract((row.get("inputs") or {}).get("freqs.1"))
+    ]
+
+
+def _groupnorm_contracts(rows: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    return [
+        row
+        for row in rows
+        if row.get("family") == "normalization"
+        and "GroupNorm" in str(row.get("backend_class", ""))
+        and isinstance((row.get("parameters") or {}).get("num_groups"), int)
+        and int((row.get("parameters") or {}).get("num_groups", 0)) > 0
+    ]
+
+
+def _ulysses_collective_contracts(
+    rows: list[Mapping[str, Any]], expected_ranks: int
+) -> list[Mapping[str, Any]]:
+    return [
+        row
+        for row in rows
+        if row.get("family") == "collective"
+        and row.get("method") == "all_to_all"
+        and str(row.get("operator", "")).startswith("ltx25.l2.ulysses.")
+        and _is_tensor_contract((row.get("inputs") or {}).get("input"))
+        and _is_tensor_contract((row.get("parameters") or {}).get("output"))
+        and (row.get("parameters") or {}).get("world_size") == expected_ranks
+    ]
+
+
+def _require_ultra_report(
+    path: Path,
+    payload: Mapping[str, Any],
+    rows: list[Mapping[str, Any]],
+) -> None:
+    validation = payload.get("validation") or {}
+    _require(
+        validation.get("collector_ultra_enabled") is True,
+        f"{path}: CollectorUltra was not enabled",
+    )
+    _require(
+        (payload.get("policy") or {}).get("contract_detail") == "ultra",
+        f"{path}: contract_detail must be ultra",
+    )
+    collective_count = sum(row.get("family") == "collective" for row in rows)
+    communication = payload.get("communication") or {}
+    _require(
+        int(communication.get("contract_count", 0)) == collective_count,
+        f"{path}: communication summary disagrees with collective contracts",
+    )
+    _require(
+        communication.get("payload_metadata_only") is True,
+        f"{path}: communication payload policy must be metadata-only",
+    )
+
+
+def validate_bundle(
+    output_dir: Path,
+    expected_ranks: int,
+    require_upsample: bool = True,
+    require_ultra: bool = False,
+) -> dict[str, Any]:
     _require(expected_ranks > 0, "expected_ranks must be positive")
     l1_path = output_dir / "ltx25_collector.l1.json"
     _require(l1_path.is_file(), f"missing L1 collector: {l1_path}")
@@ -104,6 +195,13 @@ def validate_bundle(output_dir: Path, expected_ranks: int, require_upsample: boo
     l1_rows = _contracts(l1_path, l1)
     _require(_has_gemm_contract(l1_rows), f"{l1_path}: no exact GEMM contract")
     _require(_has_attention_contract(l1_rows), f"{l1_path}: no exact attention contract")
+    projected_qkv = _projected_qkv_contracts(l1_rows)
+    if require_ultra:
+        _require_ultra_report(l1_path, l1, l1_rows)
+        _require(
+            bool(projected_qkv),
+            f"{l1_path}: projected L1 Q/K/V contracts were not collected",
+        )
 
     rank_paths = sorted(output_dir.glob("ltx25_collector.rank*.json"))
     _require(len(rank_paths) == expected_ranks, f"expected {expected_ranks} rank collectors, found {len(rank_paths)}")
@@ -114,6 +212,9 @@ def validate_bundle(output_dir: Path, expected_ranks: int, require_upsample: boo
     run_id = str(l1_identity.get("run_id", ""))
     _require(bool(run_id), "L1 collector is missing run_id")
     video_vae_routes: set[str] = set()
+    rope_frequency: list[Mapping[str, Any]] = []
+    groupnorm: list[Mapping[str, Any]] = []
+    ulysses_collectives: list[Mapping[str, Any]] = []
 
     for path in rank_paths:
         payload = _load(path)
@@ -129,6 +230,22 @@ def validate_bundle(output_dir: Path, expected_ranks: int, require_upsample: boo
         rows = _contracts(path, payload)
         _require(_has_gemm_contract(rows), f"{path}: no exact GEMM contract")
         _require(_has_attention_contract(rows), f"{path}: no exact attention contract")
+        rank_rope = _rope_frequency_contracts(rows)
+        rank_groupnorm = _groupnorm_contracts(rows)
+        rank_collectives = _ulysses_collective_contracts(rows, expected_ranks)
+        if require_ultra:
+            _require_ultra_report(path, payload, rows)
+            _require(
+                bool(rank_rope),
+                f"{path}: RoPE cos/sin frequency contracts were not collected",
+            )
+            _require(
+                bool(rank_collectives),
+                f"{path}: Ulysses all-to-all payload contracts were not collected",
+            )
+        rope_frequency.extend(rank_rope)
+        groupnorm.extend(rank_groupnorm)
+        ulysses_collectives.extend(rank_collectives)
         video_vae_route = str(
             (payload.get("policy") or {}).get("video_vae_route", "unspecified")
         )
@@ -140,6 +257,9 @@ def validate_bundle(output_dir: Path, expected_ranks: int, require_upsample: boo
             "families": sorted({str(row.get("family")) for row in rows}),
             "attention_semantics": sorted({str(row.get("semantic")) for row in rows if row.get("family") == "attention" and row.get("semantic")}),
             "video_vae_route": video_vae_route,
+            "rope_frequency_contracts": len(rank_rope),
+            "groupnorm_contracts": len(rank_groupnorm),
+            "ulysses_collective_contracts": len(rank_collectives),
         }
 
     _require(set(ranks) == set(range(expected_ranks)), f"collector ranks must be 0..{expected_ranks - 1}, got {sorted(ranks)}")
@@ -148,16 +268,28 @@ def validate_bundle(output_dir: Path, expected_ranks: int, require_upsample: boo
         f"denoise ranks disagree on video VAE route: {sorted(video_vae_routes)}",
     )
     video_vae_route = next(iter(video_vae_routes))
+    if require_ultra:
+        _require(
+            bool(groupnorm),
+            "CollectorUltra found no GroupNorm contract with num_groups",
+        )
+    status = "CONTRACT_ULTRA_COMPLETE" if require_ultra else "CONTRACT_BUNDLE_COMPLETE"
+    meaning = (
+        "Ultra operator contracts collected; strict input for isolated C1 MegaOlympics probes"
+        if require_ultra
+        else "B0 reference contracts collected; input for C1 probes only"
+    )
+    official_diffvae_collected = video_vae_route == "official_diffvae"
     return {
         "schema_name": SUMMARY_SCHEMA,
         "schema_version": SUMMARY_VERSION,
-        "status": "CONTRACT_BUNDLE_COMPLETE",
-        "meaning": "B0 reference contracts collected; input for C1 probes only",
+        "status": status,
+        "meaning": meaning,
+        "contract_detail": "ultra" if require_ultra else "standard",
         "b0_accepted": False,
         "c1_pass": False,
         "video_vae_route": video_vae_route,
-        "official_diffvae_contracts_collected": video_vae_route
-        == "official_diffvae",
+        "official_diffvae_contracts_collected": official_diffvae_collected,
         "numerical_path_changed": False,
         "run_id": run_id,
         "expected_ranks": expected_ranks,
@@ -165,8 +297,43 @@ def validate_bundle(output_dir: Path, expected_ranks: int, require_upsample: boo
             "path": str(l1_path),
             "operator_contracts": len(l1_rows),
             "families": sorted({str(row.get("family")) for row in l1_rows}),
+            "projected_qkv_contracts": len(projected_qkv),
         },
         "ranks": {str(rank): ranks[rank] for rank in sorted(ranks)},
+        "capabilities": {
+            "projected_l1_qkv": {
+                "status": "collected" if projected_qkv else "not_collected",
+                "contracts": len(projected_qkv),
+            },
+            "rope_frequency_tensors": {
+                "status": "collected" if rope_frequency else "not_collected",
+                "contracts": len(rope_frequency),
+            },
+            "groupnorm_parameters": {
+                "status": "collected" if groupnorm else "not_collected",
+                "contracts": len(groupnorm),
+            },
+            "ulysses_collective_payloads": {
+                "status": "collected" if ulysses_collectives else "not_collected",
+                "contracts": len(ulysses_collectives),
+                "payload_metadata_only": True,
+            },
+            "official_diffvae": {
+                "status": "collected" if official_diffvae_collected else "not_executed",
+                "contracts": 0,
+                "promotion_eligible": official_diffvae_collected,
+                "reason": None
+                if official_diffvae_collected
+                else "current executable route is conv_diagnostic",
+            },
+        },
+        "gates": {
+            "c1_isolated_probe_input_complete": require_ultra,
+            "selector_promotion_allowed": official_diffvae_collected,
+            "promotion_blockers": []
+            if official_diffvae_collected
+            else ["official_diffvae_not_executed", "video_quality_baseline_invalid"],
+        },
     }
 
 
@@ -190,16 +357,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--expected-ranks", type=int, default=2)
     parser.add_argument("--no-require-upsample", action="store_true")
+    parser.add_argument("--require-ultra", action="store_true")
     parser.add_argument("--summary", type=Path)
     args = parser.parse_args(argv)
     summary = validate_bundle(
         args.output_dir,
         args.expected_ranks,
         require_upsample=not args.no_require_upsample,
+        require_ultra=args.require_ultra,
     )
     summary_path = args.summary or args.output_dir / "ltx25_contract_bundle.json"
     _atomic_write(summary_path, summary)
-    print(f"LTX25_CONTRACT_BUNDLE_COMPLETE summary={summary_path}")
+    print(f"LTX25_{summary['status']} summary={summary_path}")
     return 0
 
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = REPO_ROOT / "scripts/collector/run_ltx25_contract_collector.sh"
+ULTRA_WRAPPER = REPO_ROOT / "scripts/collector/LTX25-CollectorUltra.sh"
 IN_CONTAINER = REPO_ROOT / "scripts/lib/run_ltx25_in_container.sh"
 BUILDER_PATH = REPO_ROOT / "scripts/lib/build_ltx25_runtime_config.py"
 
@@ -45,7 +46,14 @@ def test_ltx25_contract_wrapper_has_zero_argument_automatic_entry():
     )
     assert model_path_assignment < base_source
 
-    for script in (WRAPPER, IN_CONTAINER):
+    ultra_text = ULTRA_WRAPPER.read_text(encoding="utf-8")
+    assert "LIGHTX2V_LTX25_CONTRACT_ULTRA=1" in ultra_text
+    assert "run_ltx25_contract_collector.sh" in ultra_text
+    assert "Official DiffVAE remains an explicitly unexecuted" in ultra_text
+    assert "git clone --no-checkout" in ultra_text
+    assert "FETCH_HEAD^{commit}" in ultra_text
+
+    for script in (WRAPPER, ULTRA_WRAPPER, IN_CONTAINER):
         subprocess.run(["bash", "-n", str(script)], check=True)
 
 
@@ -96,6 +104,43 @@ def test_ltx25_inner_helper_rejects_direct_host_execution():
     )
     assert completed.returncode == 2
     assert "inside the ROCm image" in completed.stderr
+
+
+def test_ltx25_collector_ultra_dry_run_reaches_the_container(tmp_path):
+    model_root = tmp_path / "models" / "LTX-2.5"
+    model_root.mkdir(parents=True)
+    output_dir = tmp_path / "ultra-evidence"
+    lightx2v_source = tmp_path / "source-cache" / "LightX2V"
+    env = {
+        **os.environ,
+        "DRY_RUN": "1",
+        "MODEL_RUN": str(REPO_ROOT / "lightx2vModelrun"),
+        "LTX25_MODEL_ROOT": str(model_root),
+        "LTX25_CONTRACT_OUTPUT_DIR": str(output_dir),
+        "LTX25_LIGHTX2V_GIT_DIR": str(lightx2v_source),
+    }
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(ULTRA_WRAPPER),
+            "--image",
+            "example.invalid/ltx25:ultra",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    stdout = completed.stdout.replace("\\,", ",")
+    assert "Image:          example.invalid/ltx25:ultra" in stdout
+    assert "LTX-2.5 route:  CollectorUltra evidence; C1 probe disabled" in stdout
+    assert "LIGHTX2V_LTX25_CONTRACT_ULTRA=1" in stdout
+    assert f"source={lightx2v_source},target=/workspace/LightX2V,readonly" in stdout
+    assert "CollectorUltra source plan: fetch hvat-gfx1201" in stdout
 
 
 def test_ltx25_runtime_config_freezes_b0ref_and_labels_conv_diagnostic(tmp_path):

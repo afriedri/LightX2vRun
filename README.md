@@ -52,6 +52,42 @@ snapshots, memory JSONL, ffprobe data, and a strict `summary.json`.
 `--no-collect` disables observers but never disables the safety preflight.
 The output must be 1280x704, 121 frames at 24 FPS, with video and audio streams.
 
+## LTX-2.5 CollectorUltra
+
+`LTX25-CollectorUltra.sh` is the single host entry that prepares exact input
+contracts for the isolated C1 MegaOlympics. It runs the frozen two-GPU
+704x1280, 121-frame, 24 FPS, 8+3-step reference route in the standard ROCm
+container and additionally requires all of the following before it emits
+`CONTRACT_ULTRA_COMPLETE`:
+
+- projected L1 Q/K/V tensor contracts at the functional attention boundary;
+- RoPE cos/sin frequency tensor contracts;
+- GroupNorm `num_groups` and channel parameters;
+- Ulysses all-to-all input/output payload metadata and group size.
+
+Run it on the Docker host:
+
+```bash
+bash scripts/collector/LTX25-CollectorUltra.sh \
+  --image IMAGE \
+  --gpus 0,1
+```
+
+The launcher follows the same source-direct pattern as the Aiter tuning
+entries: it fetches `hvat-gfx1201` from the LightX2V origin into a managed
+cache, checks out the resolved commit, records its SHA, and mounts that exact
+tree read-only for direct execution. This avoids an image rebuild and does not
+require a source-path argument. `LTX25_LIGHTX2V_GIT_URL`,
+`LTX25_LIGHTX2V_REF`, and `LTX25_LIGHTX2V_GIT_DIR` override the managed source
+only when needed.
+
+The collector observes metadata only, does not synchronize the accelerator,
+does not retain tensor payloads, does not select a C1 backend, and does not
+change the numerical route. The current executable Video VAE is still
+`conv_diagnostic`; official DiffVAE is recorded as `not_executed`, and the
+known black video is never accepted as a quality baseline or selector
+promotion gate.
+
 MiniMax-H3 gfx1201 is a production entry. Its default FL2V first and last
 frames are read-only host inputs at
 `/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png` and

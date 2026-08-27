@@ -319,6 +319,15 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
     [[ "${LTX25_MODEL_ROOT}" == /* ]] || die "LTX25_MODEL_ROOT must be an absolute host path"
     # Preserve the host absolute model path in the mount namespace.
     container_ltx25_root="${LTX25_MODEL_ROOT}"
+    if [[ -n "${LTX25_LIGHTX2V_SOURCE:-}" ]]; then
+        [[ "${LTX25_LIGHTX2V_SOURCE}" == /* ]] || die "LTX25_LIGHTX2V_SOURCE must be an absolute host path"
+        if [[ "${DRY_RUN:-0}" == 1 ]]; then
+            ltx25_lightx2v_source="$(realpath -m "${LTX25_LIGHTX2V_SOURCE}")"
+        else
+            require_dir "${LTX25_LIGHTX2V_SOURCE}/lightx2v"
+            ltx25_lightx2v_source="$(realpath "${LTX25_LIGHTX2V_SOURCE}")"
+        fi
+    fi
 fi
 
 require_dir "${RUN_REPO_DIR}"
@@ -498,6 +507,11 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
         --env LTX25_WORLD_SIZE=2
         --env PYTORCH_TUNABLEOP_ENABLED=0
     )
+    if [[ -n "${ltx25_lightx2v_source:-}" ]]; then
+        docker_args+=(
+            --mount "type=bind,source=${ltx25_lightx2v_source},target=/workspace/LightX2V,readonly"
+        )
+    fi
 elif [[ "${is_ltx23_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${LTX23_CHECKPOINT},target=${CONTAINER_LTX23_CHECKPOINT},readonly"
@@ -580,7 +594,7 @@ for inference_env in \
     LTX23_QUICK_GEMM_PROBE LTX23_EXPECTED_ROCM_PREFIX \
     LTX23_WEIGHT_PROBE_ONLY LTX23_WEIGHT_PROBE_SHA256 \
     LTX23_HANDOFF_VRAM_LIMIT_MIB LTX23_HANDOFF_TIMEOUT_SECONDS \
-    LIGHTX2V_LTX25_CONTRACT_RUN_ID LTX25_REQUIRE_UPSAMPLE \
+    LIGHTX2V_LTX25_CONTRACT_RUN_ID LIGHTX2V_LTX25_CONTRACT_ULTRA LTX25_REQUIRE_UPSAMPLE \
     LIGHTX2V_SOURCE_REVISION AITER_SOURCE_REVISION AITER_COMMIT; do
     # H3 resolves these paths from H3_FRAME_SOURCE and mounts the selected host
     # files above. Re-appending inherited values here would create duplicate
@@ -628,8 +642,16 @@ printf 'GPU devices:    %s\n' "${GPU_DEVICES}"
 printf 'Mode:           %s\n' "${inference_mode}"
 if [[ "${is_ltx25_mode}" == 1 ]]; then
     printf 'LTX-2.5 model:  %s -> %s\n' "${LTX25_MODEL_ROOT}" "${container_ltx25_root}"
-    printf 'LTX-2.5 source: /workspace/LightX2V (from image)\n'
-    printf 'LTX-2.5 route:  B0-reference contract collection; C1 probe disabled\n'
+    if [[ -n "${ltx25_lightx2v_source:-}" ]]; then
+        printf 'LTX-2.5 source: %s -> /workspace/LightX2V (host checkout)\n' "${ltx25_lightx2v_source}"
+    else
+        printf 'LTX-2.5 source: /workspace/LightX2V (from image)\n'
+    fi
+    if [[ "${LIGHTX2V_LTX25_CONTRACT_ULTRA:-0}" == 1 ]]; then
+        printf 'LTX-2.5 route:  CollectorUltra evidence; C1 probe disabled\n'
+    else
+        printf 'LTX-2.5 route:  B0-reference contract collection; C1 probe disabled\n'
+    fi
 elif [[ "${is_ltx23_mode}" == 1 ]]; then
     printf 'LTX checkpoint:  %s -> %s\n' "${LTX23_CHECKPOINT}" "${CONTAINER_LTX23_CHECKPOINT}"
     printf 'LTX upscaler:   %s -> %s\n' "${LTX23_UPSCALER}" "${CONTAINER_LTX23_UPSCALER}"
