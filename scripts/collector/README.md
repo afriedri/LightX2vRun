@@ -24,8 +24,9 @@ precision, offload policy, buffer counts, tuned kernels, or parallel topology.
   `ltx25_weight_census.md`, and `ltx25_mock_memory.json`. A failed E0 retains
   both census reports and stops before E1.
 
-- `run_ltx25_contract_collector.sh` automatically launches the in-image
-  LTX-2.5 B0-reference route in discovery-only contract observation. It
+- `run_ltx25_contract_collector.sh` is the zero-argument Docker-host entry.
+  It launches the standard LightX2V ROCm image and runs the LTX-2.5
+  B0-reference route there in discovery-only contract observation. It
   preserves the reference numerical/backend path, writes
   `ltx25_collector.l1.json` plus one
   `ltx25_collector.rankNNN.json` per denoise rank, and validates them with
@@ -37,16 +38,15 @@ precision, offload policy, buffer counts, tuned kernels, or parallel topology.
   ```
 
   Defaults are model root `/disk/ssd/difumodels-Dis/LTX-2.5`, GPUs `0,1`,
-  two denoise ranks and a timestamped directory under
-  `/disk/ssd/lightx2v-runtime/`. Missing Day-0 census evidence is generated
-  automatically with full SHA verification. Options remain available only as
-  overrides. The current executable video path is explicitly recorded as
-  `conv_diagnostic`; it cannot qualify as official DiffVAE B0 acceptance.
-  The in-container entry discovers LightX2V next to LightX2VRun first, then
-  checks `/home/LightX2V` and `/workspace/LightX2V`; no path argument is
-  required for either supported image layout. It also binds the discovered
-  model root to the legacy `model_path` shell contract before sourcing
-  LightX2V's `scripts/base/base.sh` under `set -u`.
+  the image configured by `lightx2vModelrun`, two denoise ranks and a
+  timestamped directory under `/disk/ssd/lightx2v-runtime/`. The host entry
+  mounts the model read-only, the evidence directory writable, the Day-0 cache
+  writable, and LightX2VRun read-only. Missing Day-0 evidence is generated
+  with full SHA verification inside the image before any GPU model process.
+  L1, handoff, SP2 L2/L3 and validation also run inside the image; the inner
+  helper refuses direct host execution. `DRY_RUN=1` prints the complete
+  Docker contract. The current executable video path is explicitly recorded
+  as `conv_diagnostic`; it cannot qualify as official DiffVAE B0 acceptance.
 
 ## LTX-2.3 B0
 

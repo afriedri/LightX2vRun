@@ -20,6 +20,8 @@ H3_TURBO_DIR="${H3_TURBO_DIR:-/disk/ssd/difumodels-Dis/Minimax-h3-Turbo}"
 LTX23_CHECKPOINT="${LTX23_CHECKPOINT:-${MODEL_STORE}/LTX-2.3-fp8/ltx-2.3-22b-distilled-fp8.safetensors}"
 LTX23_UPSCALER="${LTX23_UPSCALER:-${MODEL_STORE}/LTX-2.3-fp8/ltx-2.3-spatial-upscaler-x2-1.1.safetensors}"
 LTX23_GEMMA_DIR="${LTX23_GEMMA_DIR:-${MODEL_STORE}/LTX-2.3-fp8/gemma-3-12b-it-qat-q4_0-unquantized}"
+LTX25_MODEL_ROOT="${LTX25_MODEL_ROOT:-${MODEL_STORE}/LTX-2.5}"
+LTX25_CENSUS="${LTX25_CENSUS:-/disk/ssd/lightx2v-runtime/ltx25-day0/ltx25_weight_census.json}"
 
 RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd/lightx2v-runtime}"
 INPUT_DIR="${INPUT_DIR:-${RUNTIME_ROOT}/inputs}"
@@ -53,6 +55,8 @@ Usage:
                                             Run MiniMax-H3 FL2V on 1 GPU, Ulysses SP2/SP4/SP8, or Ring SP16
                                             (H3 launcher only; TP stays disabled)
   ./lightx2vModelrun --run-ltx23-gfx1201   Run LTX-2.3 Distilled FP8 B0 on exactly 2 GPUs
+  ./lightx2vModelrun --run-ltx25-contract-collector
+                                            Collect LTX-2.5 B0-reference contracts on 2 GPUs
   ./lightx2vModelrun COMMAND [ARG...]        Run a command in the container
 
 Ordinary timing runs should use the seven numbered scripts:
@@ -68,6 +72,7 @@ Important overrides:
   GPU_DEVICES, IMAGE, MODEL_STORE, OUTPUT_DIR, INPUT_DIR, CACHE_DIR
   H3_MODEL_DIR, H3_TURBO_DIR
   LTX23_CHECKPOINT, LTX23_UPSCALER, LTX23_GEMMA_DIR
+  LTX25_MODEL_ROOT, LTX25_CENSUS
   TARGET_HEIGHT, TARGET_WIDTH, TARGET_VIDEO_LENGTH, TARGET_FPS
   LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE=auto|baseline|b1
   DRY_RUN=1, SKIP_MODEL_CHECKS=1
@@ -214,6 +219,7 @@ case "${1:-}" in
     --run-wan22-gfx1201) inference_mode=wan22_unified ;;
     --run-minimax-h3-gfx1201) inference_mode=minimax_h3 ;;
     --run-ltx23-gfx1201) inference_mode=ltx23 ;;
+    --run-ltx25-contract-collector) inference_mode=ltx25_contract ;;
 esac
 
 if [[ ! "${GPU_DEVICES}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
@@ -256,10 +262,17 @@ if [[ "${inference_mode}" == "ltx23" ]]; then
         die "LTX-2.3 requires scripts/run_ltx23_fp8_b0_704x1280_5s.sh --image IMAGE"
     ltx23_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_ltx23_in_container.sh"
 fi
+if [[ "${inference_mode}" == "ltx25_contract" ]]; then
+    [[ "${gpu_count}" == 2 ]] || die "LTX-2.5 contract collection requires exactly two GPU_DEVICES"
+    [[ "${LIGHTX2V_LTX25_EXPLICIT_COLLECTOR:-0}" == 1 ]] || \
+        die "LTX-2.5 contract mode requires scripts/collector/run_ltx25_contract_collector.sh"
+    ltx25_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_ltx25_in_container.sh"
+fi
 
 is_wan21_mode=0
 is_minimax_h3_mode=0
 is_ltx23_mode=0
+is_ltx25_mode=0
 uses_fp8_run_script=0
 if [[ "${inference_mode}" == wan21_unified ]]; then
     is_wan21_mode=1
@@ -269,6 +282,9 @@ if [[ "${inference_mode}" == minimax_h3 ]]; then
 fi
 if [[ "${inference_mode}" == ltx23 ]]; then
     is_ltx23_mode=1
+fi
+if [[ "${inference_mode}" == ltx25_contract ]]; then
+    is_ltx25_mode=1
 fi
 if [[ "${inference_mode}" == wan21_unified || "${inference_mode}" == wan22_unified ]]; then
     uses_fp8_run_script=1
@@ -300,6 +316,16 @@ if [[ "${is_ltx23_mode}" == 1 ]]; then
     [[ "${LTX23_UPSCALER}" == /* ]] || die "LTX23_UPSCALER must be an absolute host path"
     [[ "${LTX23_GEMMA_DIR}" == /* ]] || die "LTX23_GEMMA_DIR must be an absolute host path"
 fi
+if [[ "${is_ltx25_mode}" == 1 ]]; then
+    [[ "${LTX25_MODEL_ROOT}" == /* ]] || die "LTX25_MODEL_ROOT must be an absolute host path"
+    [[ "${LTX25_CENSUS}" == /* ]] || die "LTX25_CENSUS must be an absolute host path"
+    ltx25_census_dir="$(dirname -- "${LTX25_CENSUS}")"
+    # Preserve the host absolute paths in the mount namespace. The E0 census
+    # deliberately freezes realpath plus stat identity, not only size/SHA.
+    container_ltx25_root="${LTX25_MODEL_ROOT}"
+    container_ltx25_census_dir="${ltx25_census_dir}"
+    container_ltx25_census="${LTX25_CENSUS}"
+fi
 
 require_dir "${RUN_REPO_DIR}"
 if [[ "${uses_fp8_run_script}" == 1 ]]; then
@@ -317,6 +343,14 @@ if [[ "${is_ltx23_mode}" == 1 ]]; then
     require_file "${RUN_REPO_DIR}/scripts/lib/check_ltx23_phase_handoff.py"
     require_file "${RUN_REPO_DIR}/scripts/collector/collect_ltx23_weight_probe.py"
 fi
+if [[ "${is_ltx25_mode}" == 1 ]]; then
+    require_file "${RUN_REPO_DIR}/${ltx25_run_script#${CONTAINER_RUN_ROOT}/}"
+    require_file "${RUN_REPO_DIR}/scripts/lib/build_ltx25_runtime_config.py"
+    require_file "${RUN_REPO_DIR}/scripts/lib/check_ltx23_phase_handoff.py"
+    require_file "${RUN_REPO_DIR}/scripts/collector/run_ltx25_weight_census.sh"
+    require_file "${RUN_REPO_DIR}/scripts/collector/collect_ltx25_weight_census.py"
+    require_file "${RUN_REPO_DIR}/scripts/collector/validate_ltx25_contract_bundle.py"
+fi
 encoder_mount_source="${ENCODERS_DIR}"
 encoder_mount_target="${CONTAINER_MODELS_ROOT}/encoders/t5"
 t5_fp8_path="${ENCODERS_DIR}/${T5_FP8_FILENAME}"
@@ -331,7 +365,10 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     [[ -c /dev/kfd ]] || die "ROCm device /dev/kfd is unavailable"
     [[ -d /dev/dri ]] || die "DRM device directory /dev/dri is unavailable"
 
-    if [[ "${is_ltx23_mode}" == 1 ]]; then
+    if [[ "${is_ltx25_mode}" == 1 ]]; then
+        require_dir "${LTX25_MODEL_ROOT}"
+        require_dir "${ltx25_census_dir}"
+    elif [[ "${is_ltx23_mode}" == 1 ]]; then
         require_file "${LTX23_CHECKPOINT}"
         require_file "${LTX23_UPSCALER}"
         require_dir "${LTX23_GEMMA_DIR}"
@@ -350,7 +387,9 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         require_dir "${WAN22_BASE_DIR}"
     fi
     if [[ "${SKIP_MODEL_CHECKS:-0}" != "1" ]]; then
-        if [[ "${is_ltx23_mode}" == 1 ]]; then
+        if [[ "${is_ltx25_mode}" == 1 ]]; then
+            : # Exact split assets and census identity are validated in-container.
+        elif [[ "${is_ltx23_mode}" == 1 ]]; then
             : # Strict LTX checkpoint/Gemma contents are validated by preflight.
         elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
             require_file "${H3_TURBO_DIR}/minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
@@ -398,7 +437,9 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
 fi
 
 container_model_path="${CONTAINER_BASE_MODEL}"
-if [[ "${is_ltx23_mode}" == 1 ]]; then
+if [[ "${is_ltx25_mode}" == 1 ]]; then
+    container_model_path="${container_ltx25_root}"
+elif [[ "${is_ltx23_mode}" == 1 ]]; then
     container_model_path="${CONTAINER_LTX23_ROOT}"
 elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
     container_model_path="${CONTAINER_H3_MODEL}"
@@ -458,7 +499,18 @@ if [[ -n "${CK_CONV3D_TUNED_CSV:-}" ]]; then
     )
 fi
 
-if [[ "${is_ltx23_mode}" == 1 ]]; then
+if [[ "${is_ltx25_mode}" == 1 ]]; then
+    docker_args+=(
+        --mount "type=bind,source=${LTX25_MODEL_ROOT},target=${container_ltx25_root},readonly"
+        --mount "type=bind,source=${ltx25_census_dir},target=${container_ltx25_census_dir}"
+        --env LIGHTX2V_LTX25_IN_CONTAINER=1
+        --env "LTX25_MODEL_ROOT=${container_ltx25_root}"
+        --env "LTX25_CENSUS=${container_ltx25_census}"
+        --env LTX25_EVIDENCE_DIR=/workspace/LightX2V/save_results
+        --env LTX25_WORLD_SIZE=2
+        --env PYTORCH_TUNABLEOP_ENABLED=0
+    )
+elif [[ "${is_ltx23_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${LTX23_CHECKPOINT},target=${CONTAINER_LTX23_CHECKPOINT},readonly"
         --mount "type=bind,source=${LTX23_UPSCALER},target=${CONTAINER_LTX23_UPSCALER},readonly"
@@ -540,6 +592,8 @@ for inference_env in \
     LTX23_QUICK_GEMM_PROBE LTX23_EXPECTED_ROCM_PREFIX \
     LTX23_WEIGHT_PROBE_ONLY LTX23_WEIGHT_PROBE_SHA256 \
     LTX23_HANDOFF_VRAM_LIMIT_MIB LTX23_HANDOFF_TIMEOUT_SECONDS \
+    LIGHTX2V_LTX25_CONTRACT_RUN_ID LTX25_REQUIRE_UPSAMPLE \
+    LTX25_CENSUS_SHA256 LTX25_HANDOFF_VRAM_LIMIT_MIB LTX25_HANDOFF_TIMEOUT_SECONDS \
     LIGHTX2V_SOURCE_REVISION AITER_SOURCE_REVISION AITER_COMMIT; do
     # H3 resolves these paths from H3_FRAME_SOURCE and mounts the selected host
     # files above. Re-appending inherited values here would create duplicate
@@ -566,7 +620,9 @@ if [[ -e /etc/localtime ]]; then
 fi
 
 container_command=(/bin/bash)
-if [[ "${is_ltx23_mode}" == 1 ]]; then
+if [[ "${is_ltx25_mode}" == 1 ]]; then
+    container_command=(/bin/bash "${ltx25_run_script}")
+elif [[ "${is_ltx23_mode}" == 1 ]]; then
     container_command=(/bin/bash "${ltx23_run_script}")
 elif [[ "${uses_fp8_run_script}" == 1 ]]; then
     container_command=(/bin/bash "${fp8_run_script}")
@@ -583,7 +639,12 @@ fi
 printf 'Container:      %s\n' "${CONTAINER_NAME}"
 printf 'GPU devices:    %s\n' "${GPU_DEVICES}"
 printf 'Mode:           %s\n' "${inference_mode}"
-if [[ "${is_ltx23_mode}" == 1 ]]; then
+if [[ "${is_ltx25_mode}" == 1 ]]; then
+    printf 'LTX-2.5 model:  %s -> %s\n' "${LTX25_MODEL_ROOT}" "${container_ltx25_root}"
+    printf 'LTX-2.5 census: %s -> %s\n' "${LTX25_CENSUS}" "${container_ltx25_census}"
+    printf 'LTX-2.5 source: /workspace/LightX2V (from image)\n'
+    printf 'LTX-2.5 route:  B0-reference contract collection; C1 probe disabled\n'
+elif [[ "${is_ltx23_mode}" == 1 ]]; then
     printf 'LTX checkpoint:  %s -> %s\n' "${LTX23_CHECKPOINT}" "${CONTAINER_LTX23_CHECKPOINT}"
     printf 'LTX upscaler:   %s -> %s\n' "${LTX23_UPSCALER}" "${CONTAINER_LTX23_UPSCALER}"
     printf 'LTX Gemma:      %s -> %s\n' "${LTX23_GEMMA_DIR}" "${CONTAINER_LTX23_GEMMA}"
@@ -633,6 +694,9 @@ if [[ "${is_ltx23_mode}" == 1 ]]; then
     if [[ "${LTX23_WEIGHT_PROBE_ONLY:-0}" == 1 ]]; then
         printf 'LTX action:     in-container weight probe only\n'
     fi
+fi
+if [[ "${is_ltx25_mode}" == 1 ]]; then
+    printf 'LTX-2.5 collector: %s\n' "${ltx25_run_script}"
 fi
 
 docker_command=(docker "${docker_args[@]}" "${IMAGE}" "${container_command[@]}")

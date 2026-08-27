@@ -3,60 +3,77 @@ set -Eeuo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 run_root="$(cd -- "${script_dir}/../.." && pwd)"
+model_run="${MODEL_RUN:-${run_root}/lightx2vModelrun}"
 
 output_dir="${LTX25_CONTRACT_OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/ltx25-contract-$(date +%Y%m%d_%H%M%S)}"
 model_root="${LTX25_MODEL_ROOT:-/disk/ssd/difumodels-Dis/LTX-2.5}"
 census="${LTX25_CENSUS:-/disk/ssd/lightx2v-runtime/ltx25-day0/ltx25_weight_census.json}"
-world_size=2
-run_id=""
-require_upsample=1
+gpu_devices="${GPU_DEVICES:-${HIP_VISIBLE_DEVICES:-0,1}}"
+image="${LTX25_IMAGE:-${IMAGE:-}}"
+run_id="${LIGHTX2V_LTX25_CONTRACT_RUN_ID:-}"
+require_upsample="${LTX25_REQUIRE_UPSAMPLE:-1}"
 
 usage() {
     cat <<'EOF'
 Usage:
   bash scripts/collector/run_ltx25_contract_collector.sh [OPTIONS]
 
-Run this with no arguments inside the LightX2V image. It automatically uses
-/disk/ssd/difumodels-Dis/LTX-2.5, GPUs 0,1, a timestamped evidence directory,
-and the in-image LTX-2.5 B0-reference entry. If the Day-0 census is absent it
-is generated once with full SHA verification before any GPU model process.
+Run this with no arguments on the Docker host. It launches the standard
+LightX2V ROCm image and performs Day-0 census (when missing), L1 prompt
+collection, the L1-to-L2 handoff, SP2 L2/L3 collection, and bundle validation
+inside that image. The default image comes from lightx2vModelrun.
 
 Options override defaults only:
-  --output-dir DIR    Evidence directory
-  --model-root DIR    LTX-2.5 model root
-  --census FILE       Existing successful Day-0 census JSON
-  --world-size N      Expected denoise ranks (automatic route requires 2)
-  --run-id ID         Stable collector run id
+  --image IMAGE        Runtime image override
+  --output-dir DIR     Host evidence directory
+  --model-root DIR     Host LTX-2.5 model root
+  --census FILE        Host Day-0 census JSON/cache location
+  --gpus IDS           Exactly two physical GPU ids (default: 0,1)
+  --run-id ID          Stable collector run id
   --no-require-upsample
 
-Advanced diagnostic use may still provide a command after --. The automatic
-route is used when no command is supplied. Collection does not select or
-probe a C1 backend.
+Environment:
+  DRY_RUN=1            Print the complete Docker command without starting it
+
+Collection does not select or probe a C1 backend. A complete bundle remains
+B0-reference evidence and keeps b0_accepted=false and c1_pass=false.
 EOF
 }
 
 while (( $# > 0 )); do
     case "$1" in
+        --image) image="$2"; shift 2 ;;
         --output-dir) output_dir="$2"; shift 2 ;;
         --model-root) model_root="$2"; shift 2 ;;
         --census) census="$2"; shift 2 ;;
-        --world-size) world_size="$2"; shift 2 ;;
+        --gpus|--gpu) gpu_devices="$2"; shift 2 ;;
         --run-id) run_id="$2"; shift 2 ;;
         --no-require-upsample) require_upsample=0; shift ;;
         --help|-h) usage; exit 0 ;;
-        --) shift; break ;;
-        *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+        *) echo "ERROR: unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
 
-[[ "${world_size}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: --world-size must be positive" >&2; exit 2; }
+[[ "${gpu_devices}" =~ ^[0-9]+,[0-9]+$ ]] || {
+    echo "ERROR: --gpus requires exactly two comma-separated ids" >&2
+    exit 2
+}
+IFS=',' read -r gpu0 gpu1 <<<"${gpu_devices}"
+[[ "${gpu0}" != "${gpu1}" ]] || { echo "ERROR: --gpus ids must be unique" >&2; exit 2; }
+case "${require_upsample}" in 0|1) ;; *) echo "ERROR: LTX25_REQUIRE_UPSAMPLE must be 0 or 1" >&2; exit 2 ;; esac
 if [[ -z "${run_id}" ]]; then
     run_id="ltx25-contract-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 fi
 [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "ERROR: --run-id contains unsafe characters" >&2; exit 2; }
+[[ "${output_dir}" == /* ]] || { echo "ERROR: --output-dir must be an absolute host path" >&2; exit 2; }
+[[ "${model_root}" == /* ]] || { echo "ERROR: --model-root must be an absolute host path" >&2; exit 2; }
+[[ "${census}" == /* ]] || { echo "ERROR: --census must be an absolute host path" >&2; exit 2; }
 
-mkdir -p -- "${output_dir}"
+mkdir -p -- "${output_dir}" "$(dirname -- "${census}")"
 output_dir="$(cd -- "${output_dir}" && pwd -P)"
+model_root="$(cd -- "$(dirname -- "${model_root}")" && pwd -P)/$(basename -- "${model_root}")"
+census="$(cd -- "$(dirname -- "${census}")" && pwd -P)/$(basename -- "${census}")"
+
 shopt -s nullglob
 existing=(
     "${output_dir}"/ltx25_collector*.json
@@ -64,42 +81,40 @@ existing=(
 )
 shopt -u nullglob
 (( ${#existing[@]} == 0 )) || { echo "ERROR: collector outputs already exist in ${output_dir}" >&2; exit 1; }
+[[ -f "${model_run}" ]] || { echo "ERROR: container launcher not found: ${model_run}" >&2; exit 1; }
 
-export LIGHTX2V_LTX25_CONTRACT_COLLECTOR=1
+export RUN_REPO_DIR="${run_root}"
+export OUTPUT_DIR="${output_dir}"
+export GPU_DEVICES="${gpu_devices}"
+export LTX25_MODEL_ROOT="${model_root}"
+export LTX25_CENSUS="${census}"
+export LIGHTX2V_LTX25_EXPLICIT_COLLECTOR=1
 export LIGHTX2V_LTX25_CONTRACT_RUN_ID="${run_id}"
-export LIGHTX2V_LTX25_CONTRACT_COLLECTOR_L1_OUTPUT="${output_dir}/ltx25_collector.l1.json"
-export LIGHTX2V_LTX25_CONTRACT_COLLECTOR_OUTPUT="${output_dir}/ltx25_collector.rank{rank}.json"
+export LTX25_REQUIRE_UPSAMPLE="${require_upsample}"
+export CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-ltx25-contract}"
+if [[ -n "${image}" ]]; then
+    export IMAGE="${image}"
+fi
 
 echo "LTX-2.5 contract discovery: run_id=${run_id} output_dir=${output_dir}"
-if (( $# == 0 )); then
-    [[ "${world_size}" == 2 ]] || {
-        echo "ERROR: the automatic LTX-2.5 B0-reference route requires --world-size 2" >&2
-        exit 2
-    }
-    if [[ ! -f "${census}" ]]; then
-        echo "LTX-2.5 Day-0 census missing; running automatic full-SHA E0/E1"
-        bash "${run_root}/scripts/collector/run_ltx25_weight_census.sh" \
-            --model-root "${model_root}" \
-            --output-dir "$(dirname -- "${census}")" \
-            --sha256
-    fi
-    export LTX25_MODEL_ROOT="${model_root}"
-    export LTX25_CENSUS="${census}"
-    export LTX25_EVIDENCE_DIR="${output_dir}"
-    export LTX25_WORLD_SIZE="${world_size}"
-    export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0,1}"
-    bash "${run_root}/scripts/lib/run_ltx25_in_container.sh"
-else
-    "$@"
+echo "LTX-2.5 container launch: GPUs=${gpu_devices} model=${model_root}"
+set +e
+"${model_run}" --run-ltx25-contract-collector 2>&1 | tee "${output_dir}/run.log"
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+if (( pipeline_status[0] != 0 )); then
+    echo "ERROR: LTX-2.5 contract collection failed; evidence remains in ${output_dir}" >&2
+    exit "${pipeline_status[0]}"
+fi
+if (( pipeline_status[1] != 0 )); then
+    echo "ERROR: could not write ${output_dir}/run.log" >&2
+    exit "${pipeline_status[1]}"
+fi
+if [[ "${DRY_RUN:-0}" == 1 ]]; then
+    echo "LTX-2.5 contract collector dry run complete: ${output_dir}"
+    exit 0
 fi
 
-validator_args=(
-    --output-dir "${output_dir}"
-    --expected-ranks "${world_size}"
-)
-if [[ "${require_upsample}" == 0 ]]; then
-    validator_args+=(--no-require-upsample)
-fi
-PYTHONDONTWRITEBYTECODE=1 python3 -B \
-    "${run_root}/scripts/collector/validate_ltx25_contract_bundle.py" \
-    "${validator_args[@]}"
+bundle="${output_dir}/ltx25_contract_bundle.json"
+[[ -s "${bundle}" ]] || { echo "ERROR: container did not write ${bundle}" >&2; exit 1; }
+echo "LTX-2.5 contract bundle: ${bundle}"
