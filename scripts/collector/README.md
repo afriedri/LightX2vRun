@@ -4,6 +4,26 @@ This directory contains diagnostic launchers and their analysis helpers. They
 observe the frozen production workload and must not silently change model
 precision, offload policy, buffer counts, tuned kernels, or parallel topology.
 
+## LTX-2.5 Day-0
+
+- `run_ltx25_weight_census.sh` runs the no-GPU E0/E1 hard gates for the five
+  BF16 split assets. It validates frozen size/SHA identities, Safetensors
+  boundaries, the 48 x 84 Transformer schema, Gemma4 packed assets and
+  cross-file version, component metadata, and the conservative two-slot memory
+  account. It does not import Torch or initialize HIP.
+- A full release-gate run is:
+
+  ```bash
+  bash scripts/collector/run_ltx25_weight_census.sh \
+    --model-root /disk/ssd/difumodels-Dis/LTX-2.5 \
+    --output-dir /disk/ssd/lightx2v-runtime/ltx25-day0 \
+    --sha256
+  ```
+
+  The output directory receives `ltx25_weight_census.json`,
+  `ltx25_weight_census.md`, and `ltx25_mock_memory.json`. A failed E0 retains
+  both census reports and stops before E1.
+
 ## LTX-2.3 B0
 
 - `run_ltx23_weight_probe.sh`: runs the header-only collector through the exact
