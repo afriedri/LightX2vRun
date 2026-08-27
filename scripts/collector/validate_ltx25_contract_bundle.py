@@ -113,6 +113,7 @@ def validate_bundle(output_dir: Path, expected_ranks: int, require_upsample: boo
         required_stages.update({"L2-Upsample", "L2-S2"})
     run_id = str(l1_identity.get("run_id", ""))
     _require(bool(run_id), "L1 collector is missing run_id")
+    video_vae_routes: set[str] = set()
 
     for path in rank_paths:
         payload = _load(path)
@@ -128,15 +129,25 @@ def validate_bundle(output_dir: Path, expected_ranks: int, require_upsample: boo
         rows = _contracts(path, payload)
         _require(_has_gemm_contract(rows), f"{path}: no exact GEMM contract")
         _require(_has_attention_contract(rows), f"{path}: no exact attention contract")
+        video_vae_route = str(
+            (payload.get("policy") or {}).get("video_vae_route", "unspecified")
+        )
+        video_vae_routes.add(video_vae_route)
         ranks[rank] = {
             "path": str(path),
             "operator_contracts": len(rows),
             "observed_stages": sorted(observed),
             "families": sorted({str(row.get("family")) for row in rows}),
             "attention_semantics": sorted({str(row.get("semantic")) for row in rows if row.get("family") == "attention" and row.get("semantic")}),
+            "video_vae_route": video_vae_route,
         }
 
     _require(set(ranks) == set(range(expected_ranks)), f"collector ranks must be 0..{expected_ranks - 1}, got {sorted(ranks)}")
+    _require(
+        len(video_vae_routes) == 1,
+        f"denoise ranks disagree on video VAE route: {sorted(video_vae_routes)}",
+    )
+    video_vae_route = next(iter(video_vae_routes))
     return {
         "schema_name": SUMMARY_SCHEMA,
         "schema_version": SUMMARY_VERSION,
@@ -144,6 +155,9 @@ def validate_bundle(output_dir: Path, expected_ranks: int, require_upsample: boo
         "meaning": "B0 reference contracts collected; input for C1 probes only",
         "b0_accepted": False,
         "c1_pass": False,
+        "video_vae_route": video_vae_route,
+        "official_diffvae_contracts_collected": video_vae_route
+        == "official_diffvae",
         "numerical_path_changed": False,
         "run_id": run_id,
         "expected_ranks": expected_ranks,

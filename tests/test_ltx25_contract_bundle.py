@@ -45,6 +45,7 @@ def _document(run_id: str, role: str, rank: int, world_size: int, stages: list[s
             "reference_route_only": True,
             "kernel_probe_executed": False,
             "accelerator_synchronize": False,
+            "video_vae_route": "conv_diagnostic",
         },
         "contracts": {
             "operator_contracts": [
@@ -75,6 +76,8 @@ def test_validate_ltx25_contract_bundle_accepts_complete_reference_discovery(tmp
     assert summary["status"] == "CONTRACT_BUNDLE_COMPLETE"
     assert summary["b0_accepted"] is False
     assert summary["c1_pass"] is False
+    assert summary["video_vae_route"] == "conv_diagnostic"
+    assert summary["official_diffvae_contracts_collected"] is False
     assert set(summary["ranks"]) == {"0", "1"}
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate LTX-2.3 DiT startup on Gemma-process exit and physical VRAM release."""
+"""Gate LTX DiT startup on Gemma-process exit and physical VRAM release."""
 
 from __future__ import annotations
 
@@ -16,7 +16,12 @@ from typing import Any
 
 
 SCHEMA_NAME = "lightx2v.ltx23.phase_handoff"
+LTX25_SCHEMA_NAME = "lightx2v.ltx25.phase_handoff"
 SCHEMA_VERSION = 1
+PROMPT_CACHE_SCHEMAS = {
+    "lightx2v.ltx23.prompt_embeddings": ("1", SCHEMA_NAME, "2.3"),
+    "lightx2v.ltx2.prompt_embeddings": ("2", LTX25_SCHEMA_NAME, "2.5"),
+}
 
 
 def parse_indices(value: str) -> tuple[int, ...]:
@@ -76,8 +81,12 @@ def prompt_cache_metadata(path: Path) -> dict[str, str]:
     metadata = header.get("__metadata__")
     if not isinstance(metadata, dict):
         raise RuntimeError("prompt cache has no safetensors metadata")
-    if metadata.get("schema_name") != "lightx2v.ltx23.prompt_embeddings":
+    schema_name = metadata.get("schema_name")
+    if schema_name not in PROMPT_CACHE_SCHEMAS:
         raise RuntimeError("prompt cache has the wrong schema")
+    expected_version, _, _ = PROMPT_CACHE_SCHEMAS[schema_name]
+    if metadata.get("schema_version") != expected_version:
+        raise RuntimeError("prompt cache has the wrong schema version")
     if metadata.get("process_isolated") != "true":
         raise RuntimeError("prompt cache does not declare process isolation")
     return metadata
@@ -97,6 +106,9 @@ def wait_for_handoff(
     sysfs_root: Path = Path("/sys/class/drm"),
 ) -> dict[str, Any]:
     metadata = prompt_cache_metadata(prompt_cache)
+    _, handoff_schema, model_generation = PROMPT_CACHE_SCHEMAS[
+        metadata["schema_name"]
+    ]
     try:
         producer_pid = int(metadata["producer_pid"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -125,8 +137,9 @@ def wait_for_handoff(
             break
         time.sleep(min(interval_seconds, max(0.0, deadline - now)))
     return {
-        "schema_name": SCHEMA_NAME,
+        "schema_name": handoff_schema,
         "schema_version": SCHEMA_VERSION,
+        "model_generation": model_generation,
         "status": "ok" if released else "failed",
         "producer_pid": producer_pid,
         "producer_pid_alive": producer_alive,
@@ -183,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     write_json(args.output, report)
     for gpu in report["gpus"]:
         print(
-            "LTX-2.3 handoff GPU "
+            f"LTX-{report['model_generation']} handoff GPU "
             f"{gpu['rocm_index']}: {gpu['used_bytes'] / 1024**2:.1f} MiB used "
             f"(limit {report['vram_release_limit_bytes'] / 1024**2:.1f} MiB)"
         )
@@ -194,7 +207,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     print(
-        f"LTX-2.3 handoff PASS: producer PID {report['producer_pid']} exited "
+        f"LTX-{report['model_generation']} handoff PASS: producer PID "
+        f"{report['producer_pid']} exited "
         "and physical VRAM is available for fresh SP2 ranks"
     )
     return 0

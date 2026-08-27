@@ -24,19 +24,24 @@ precision, offload policy, buffer counts, tuned kernels, or parallel topology.
   `ltx25_weight_census.md`, and `ltx25_mock_memory.json`. A failed E0 retains
   both census reports and stops before E1.
 
-- `run_ltx25_contract_collector.sh` wraps an existing in-image LTX-2.5 B0
-  command in discovery-only contract observation. It preserves the reference
-  numerical/backend path, writes `ltx25_collector.l1.json` plus one
+- `run_ltx25_contract_collector.sh` automatically launches the in-image
+  LTX-2.5 B0-reference route in discovery-only contract observation. It
+  preserves the reference numerical/backend path, writes
+  `ltx25_collector.l1.json` plus one
   `ltx25_collector.rankNNN.json` per denoise rank, and validates them with
   `validate_ltx25_contract_bundle.py`. A complete bundle is input for C1
   probes only; it is not a B0 acceptance or C1 PASS claim.
 
   ```bash
-  bash scripts/collector/run_ltx25_contract_collector.sh \
-    --output-dir /disk/ssd/lightx2v-runtime/ltx25-contract-001 \
-    --world-size 2 \
-    -- bash /path/to/existing_ltx25_b0_command.sh
+  bash scripts/collector/run_ltx25_contract_collector.sh
   ```
+
+  Defaults are model root `/disk/ssd/difumodels-Dis/LTX-2.5`, GPUs `0,1`,
+  two denoise ranks and a timestamped directory under
+  `/disk/ssd/lightx2v-runtime/`. Missing Day-0 census evidence is generated
+  automatically with full SHA verification. Options remain available only as
+  overrides. The current executable video path is explicitly recorded as
+  `conv_diagnostic`; it cannot qualify as official DiffVAE B0 acceptance.
 
 ## LTX-2.3 B0
 

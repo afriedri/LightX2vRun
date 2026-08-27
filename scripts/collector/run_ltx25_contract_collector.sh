@@ -4,7 +4,9 @@ set -Eeuo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 run_root="$(cd -- "${script_dir}/../.." && pwd)"
 
-output_dir="${PWD}/ltx25-contract-$(date -u +%Y%m%dT%H%M%SZ)"
+output_dir="${LTX25_CONTRACT_OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/ltx25-contract-$(date +%Y%m%d_%H%M%S)}"
+model_root="${LTX25_MODEL_ROOT:-/disk/ssd/difumodels-Dis/LTX-2.5}"
+census="${LTX25_CENSUS:-/disk/ssd/lightx2v-runtime/ltx25-day0/ltx25_weight_census.json}"
 world_size=2
 run_id=""
 require_upsample=1
@@ -12,25 +14,32 @@ require_upsample=1
 usage() {
     cat <<'EOF'
 Usage:
-  bash scripts/collector/run_ltx25_contract_collector.sh \
-    --output-dir /path/to/evidence \
-    --world-size 2 \
-    -- EXISTING_LTX25_B0_COMMAND [ARG...]
+  bash scripts/collector/run_ltx25_contract_collector.sh [OPTIONS]
 
-Run this inside the new LightX2V image. It enables discovery-only observation
-of the existing LTX-2.5 B0 reference path, assigns one run-id to L1 and all
-denoise ranks, and validates the emitted JSON files. It does not select or
+Run this with no arguments inside the LightX2V image. It automatically uses
+/disk/ssd/difumodels-Dis/LTX-2.5, GPUs 0,1, a timestamped evidence directory,
+and the in-image LTX-2.5 B0-reference entry. If the Day-0 census is absent it
+is generated once with full SHA verification before any GPU model process.
+
+Options override defaults only:
+  --output-dir DIR    Evidence directory
+  --model-root DIR    LTX-2.5 model root
+  --census FILE       Existing successful Day-0 census JSON
+  --world-size N      Expected denoise ranks (automatic route requires 2)
+  --run-id ID         Stable collector run id
+  --no-require-upsample
+
+Advanced diagnostic use may still provide a command after --. The automatic
+route is used when no command is supplied. Collection does not select or
 probe a C1 backend.
-
-The wrapped B0 command must execute both the L1 prompt producer and L2/L3. The
-L1 CLI may omit --collector-output; the wrapper supplies it through the
-collector environment.
 EOF
 }
 
 while (( $# > 0 )); do
     case "$1" in
         --output-dir) output_dir="$2"; shift 2 ;;
+        --model-root) model_root="$2"; shift 2 ;;
+        --census) census="$2"; shift 2 ;;
         --world-size) world_size="$2"; shift 2 ;;
         --run-id) run_id="$2"; shift 2 ;;
         --no-require-upsample) require_upsample=0; shift ;;
@@ -40,7 +49,6 @@ while (( $# > 0 )); do
     esac
 done
 
-(( $# > 0 )) || { echo "ERROR: an existing LTX-2.5 B0 command is required after --" >&2; exit 2; }
 [[ "${world_size}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: --world-size must be positive" >&2; exit 2; }
 if [[ -z "${run_id}" ]]; then
     run_id="ltx25-contract-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -63,7 +71,27 @@ export LIGHTX2V_LTX25_CONTRACT_COLLECTOR_L1_OUTPUT="${output_dir}/ltx25_collecto
 export LIGHTX2V_LTX25_CONTRACT_COLLECTOR_OUTPUT="${output_dir}/ltx25_collector.rank{rank}.json"
 
 echo "LTX-2.5 contract discovery: run_id=${run_id} output_dir=${output_dir}"
-"$@"
+if (( $# == 0 )); then
+    [[ "${world_size}" == 2 ]] || {
+        echo "ERROR: the automatic LTX-2.5 B0-reference route requires --world-size 2" >&2
+        exit 2
+    }
+    if [[ ! -f "${census}" ]]; then
+        echo "LTX-2.5 Day-0 census missing; running automatic full-SHA E0/E1"
+        bash "${run_root}/scripts/collector/run_ltx25_weight_census.sh" \
+            --model-root "${model_root}" \
+            --output-dir "$(dirname -- "${census}")" \
+            --sha256
+    fi
+    export LTX25_MODEL_ROOT="${model_root}"
+    export LTX25_CENSUS="${census}"
+    export LTX25_EVIDENCE_DIR="${output_dir}"
+    export LTX25_WORLD_SIZE="${world_size}"
+    export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0,1}"
+    bash "${run_root}/scripts/lib/run_ltx25_in_container.sh"
+else
+    "$@"
+fi
 
 validator_args=(
     --output-dir "${output_dir}"

@@ -14,11 +14,17 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(HANDOFF)
 
 
-def write_prompt_cache(path: Path, producer_pid: int = 99_999_999) -> None:
+def write_prompt_cache(
+    path: Path,
+    producer_pid: int = 99_999_999,
+    *,
+    schema_name: str = "lightx2v.ltx23.prompt_embeddings",
+    schema_version: str = "1",
+) -> None:
     header = {
         "__metadata__": {
-            "schema_name": "lightx2v.ltx23.prompt_embeddings",
-            "schema_version": "1",
+            "schema_name": schema_name,
+            "schema_version": schema_version,
             "process_isolated": "true",
             "producer_pid": str(producer_pid),
         }
@@ -74,3 +80,28 @@ def test_handoff_fails_when_physical_vram_is_still_charged(tmp_path):
 
     assert report["status"] == "failed"
     assert report["gpus"][1]["used_bytes"] == 30 * 1024**3
+
+
+def test_handoff_accepts_generation_neutral_ltx25_prompt_cache(tmp_path):
+    sysfs = tmp_path / "drm"
+    write_gpu(sysfs, 0, used=64 * 1024**2)
+    write_gpu(sysfs, 1, used=96 * 1024**2)
+    cache = tmp_path / "prompt.safetensors"
+    write_prompt_cache(
+        cache,
+        schema_name="lightx2v.ltx2.prompt_embeddings",
+        schema_version="2",
+    )
+
+    report = HANDOFF.wait_for_handoff(
+        gpu_indices=(0, 1),
+        prompt_cache=cache,
+        limit_bytes=1024**3,
+        timeout_seconds=0,
+        interval_seconds=0.01,
+        sysfs_root=sysfs,
+    )
+
+    assert report["status"] == "ok"
+    assert report["schema_name"] == "lightx2v.ltx25.phase_handoff"
+    assert report["model_generation"] == "2.5"
