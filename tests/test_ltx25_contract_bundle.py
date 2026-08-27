@@ -86,6 +86,7 @@ def _ultra_document(
 ) -> dict:
     payload = _document(run_id, role, rank, world_size, stages)
     payload["policy"]["contract_detail"] = "ultra"
+    payload["provenance"] = {"lightx2v_source_revision": "1" * 40}
     payload["validation"]["collector_ultra_enabled"] = True
     rows = payload["contracts"]["operator_contracts"]
     collective_count = 0
@@ -219,6 +220,7 @@ def test_validate_ltx25_collector_ultra_requires_all_exact_capabilities(tmp_path
 
     assert summary["status"] == "CONTRACT_ULTRA_COMPLETE"
     assert summary["contract_detail"] == "ultra"
+    assert summary["lightx2v_source_revision"] == "1" * 40
     assert summary["gates"]["c1_isolated_probe_input_complete"] is True
     assert summary["gates"]["selector_promotion_allowed"] is False
     assert summary["capabilities"]["projected_l1_qkv"]["status"] == "collected"

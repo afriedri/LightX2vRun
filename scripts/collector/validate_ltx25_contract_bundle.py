@@ -196,12 +196,18 @@ def validate_bundle(
     _require(_has_gemm_contract(l1_rows), f"{l1_path}: no exact GEMM contract")
     _require(_has_attention_contract(l1_rows), f"{l1_path}: no exact attention contract")
     projected_qkv = _projected_qkv_contracts(l1_rows)
+    source_revisions: set[str] = set()
     if require_ultra:
         _require_ultra_report(l1_path, l1, l1_rows)
         _require(
             bool(projected_qkv),
             f"{l1_path}: projected L1 Q/K/V contracts were not collected",
         )
+        l1_revision = str(
+            (l1.get("provenance") or {}).get("lightx2v_source_revision", "")
+        )
+        _require(bool(l1_revision), f"{l1_path}: LightX2V source revision is missing")
+        source_revisions.add(l1_revision)
 
     rank_paths = sorted(output_dir.glob("ltx25_collector.rank*.json"))
     _require(len(rank_paths) == expected_ranks, f"expected {expected_ranks} rank collectors, found {len(rank_paths)}")
@@ -243,6 +249,13 @@ def validate_bundle(
                 bool(rank_collectives),
                 f"{path}: Ulysses all-to-all payload contracts were not collected",
             )
+            rank_revision = str(
+                (payload.get("provenance") or {}).get(
+                    "lightx2v_source_revision", ""
+                )
+            )
+            _require(bool(rank_revision), f"{path}: LightX2V source revision is missing")
+            source_revisions.add(rank_revision)
         rope_frequency.extend(rank_rope)
         groupnorm.extend(rank_groupnorm)
         ulysses_collectives.extend(rank_collectives)
@@ -273,6 +286,10 @@ def validate_bundle(
             bool(groupnorm),
             "CollectorUltra found no GroupNorm contract with num_groups",
         )
+        _require(
+            len(source_revisions) == 1,
+            f"CollectorUltra source revisions disagree: {sorted(source_revisions)}",
+        )
     status = "CONTRACT_ULTRA_COMPLETE" if require_ultra else "CONTRACT_BUNDLE_COMPLETE"
     meaning = (
         "Ultra operator contracts collected; strict input for isolated C1 MegaOlympics probes"
@@ -292,6 +309,7 @@ def validate_bundle(
         "official_diffvae_contracts_collected": official_diffvae_collected,
         "numerical_path_changed": False,
         "run_id": run_id,
+        "lightx2v_source_revision": next(iter(source_revisions), None),
         "expected_ranks": expected_ranks,
         "l1": {
             "path": str(l1_path),
