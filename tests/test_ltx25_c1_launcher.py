@@ -38,7 +38,7 @@ def test_ltx25_c1_config_promotes_only_evidenced_semantic_roles(tmp_path):
     assert config["ltx25_audio_self_attn_type"] == "torch_sdpa"
     assert config["ltx25_audio_text_attn_type"] == "torch_sdpa"
     assert config["ltx25_audio_to_video_attn_type"] == "torch_sdpa"
-    assert config["rope_type"] == "torch_real_rope"
+    assert config["rope_type"] == "ltx25_triton_strict_rope"
 
 
 def test_ltx25_c1_host_entry_builds_read_only_two_rank_docker_command(tmp_path):
@@ -86,6 +86,7 @@ def test_ltx25_c1_host_entry_builds_read_only_two_rank_docker_command(tmp_path):
     stdout = completed.stdout.replace("\\,", ",")
     assert "Mode:           ltx25_c1" in stdout
     assert "GPU devices:    2,3" in stdout
+    assert "strict RoPE" in stdout
     assert "PYTORCH_TUNABLEOP_ENABLED=1" in stdout
     assert "PYTORCH_TUNABLEOP_TUNING=0" in stdout
     assert stdout.count(f"source={cache}") == 2

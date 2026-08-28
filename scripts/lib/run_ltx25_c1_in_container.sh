@@ -79,6 +79,7 @@ echo "GPUs: ${visible_devices}; SP2"
 echo "GEMM: TunableOp read-only rank cache pattern ${tunableop_cache_pattern}"
 echo "Attention: video_to_audio=Aiter Triton dense; other roles=Torch SDPA"
 echo "Q/K RMSNorm: Aiter CK; block RMSNorm=Torch"
+echo "RoPE: LTX-2.5 strict/no-FMA Triton; structural miss falls back to Torch"
 echo "Conv3D: shared Aiter CK adapter; untuned contracts explicitly fall back to Torch"
 
 python3 -m lightx2v.utils.ltx2_prompt_cache \

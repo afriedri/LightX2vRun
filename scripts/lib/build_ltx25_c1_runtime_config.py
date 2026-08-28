@@ -31,7 +31,10 @@ def build_config(model_root: Path) -> dict:
             "ltx25_qk_rms_norm_type": "sgl-kernel",
             # Block residual RMSNorm and the unpromoted families stay Torch.
             "rms_norm_type": "torch_native",
-            "rope_type": "torch_real_rope",
+            # Structural LTX-2.5 BF16 D64/D128 contracts use the strict
+            # split-half Triton route. Unsupported layouts fall back to the
+            # bitwise reference inside the backend.
+            "rope_type": "ltx25_triton_strict_rope",
             "layer_norm_type": "torch",
             "modulate_type": "torch",
         }
