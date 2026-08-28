@@ -40,6 +40,7 @@ readonly CONTAINER_LTX23_ROOT=/models/ltx23
 readonly CONTAINER_LTX23_CHECKPOINT=/models/ltx23/checkpoints/ltx-2.3-22b-distilled-fp8.safetensors
 readonly CONTAINER_LTX23_UPSCALER=/models/ltx23/upscaler/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
 readonly CONTAINER_LTX23_GEMMA=/models/ltx23/gemma
+readonly CONTAINER_LTX25_TUNABLEOP_ROOT=/workspace/LightX2V/configs/ltx25/gfx1201
 readonly CONTAINER_RUN_ROOT=/workspace/LightX2VRun
 readonly FP8_RUN_SCRIPT_DIR=${CONTAINER_RUN_ROOT}/scripts
 readonly T5_FP8_FILENAME=models_t5_umt5-xxl-enc-fp8.pth
@@ -343,13 +344,15 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
         fi
     fi
     if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
-        [[ -n "${LTX25_TUNABLEOP_CACHE:-}" ]] || die "LTX25_TUNABLEOP_CACHE is required for C1"
-        [[ "${LTX25_TUNABLEOP_CACHE}" == /* ]] || die "LTX25_TUNABLEOP_CACHE must be an absolute host path"
-        if [[ "${DRY_RUN:-0}" == 1 ]]; then
-            ltx25_tunableop_cache="$(realpath -m "${LTX25_TUNABLEOP_CACHE}")"
-        else
-            require_file "${LTX25_TUNABLEOP_CACHE}"
-            ltx25_tunableop_cache="$(realpath "${LTX25_TUNABLEOP_CACHE}")"
+        ltx25_tunableop_cache=""
+        if [[ -n "${LTX25_TUNABLEOP_CACHE:-}" ]]; then
+            [[ "${LTX25_TUNABLEOP_CACHE}" == /* ]] || die "LTX25_TUNABLEOP_CACHE must be an absolute host path"
+            if [[ "${DRY_RUN:-0}" == 1 ]]; then
+                ltx25_tunableop_cache="$(realpath -m "${LTX25_TUNABLEOP_CACHE}")"
+            else
+                require_file "${LTX25_TUNABLEOP_CACHE}"
+                ltx25_tunableop_cache="$(realpath "${LTX25_TUNABLEOP_CACHE}")"
+            fi
         fi
     fi
 fi
@@ -539,17 +542,27 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
         --env LTX25_WORLD_SIZE=2
     )
     if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
+        ltx25_tunableop_cache_pattern="${CONTAINER_LTX25_TUNABLEOP_ROOT}/tunableop_results_full%d.csv"
+        ltx25_tunableop_cache_rank0="${CONTAINER_LTX25_TUNABLEOP_ROOT}/tunableop_results_full0.csv"
+        ltx25_tunableop_cache_rank1="${CONTAINER_LTX25_TUNABLEOP_ROOT}/tunableop_results_full1.csv"
+        if [[ -n "${ltx25_tunableop_cache}" ]]; then
+            ltx25_tunableop_cache_pattern=/workspace/ltx25-c1/tunableop_results_full%d.csv
+            ltx25_tunableop_cache_rank0=/workspace/ltx25-c1/tunableop_results_full0.csv
+            ltx25_tunableop_cache_rank1=/workspace/ltx25-c1/tunableop_results_full1.csv
+            docker_args+=(
+                --mount "type=bind,source=${ltx25_tunableop_cache},target=${ltx25_tunableop_cache_rank0},readonly"
+                --mount "type=bind,source=${ltx25_tunableop_cache},target=${ltx25_tunableop_cache_rank1},readonly"
+            )
+        fi
         docker_args+=(
-            --mount "type=bind,source=${ltx25_tunableop_cache},target=/workspace/ltx25-c1/tunableop_results_full0.csv,readonly"
-            --mount "type=bind,source=${ltx25_tunableop_cache},target=/workspace/ltx25-c1/tunableop_results_full1.csv,readonly"
             --env LIGHTX2V_LTX25_C1_IN_CONTAINER=1
             --env LTX25_C1_RESULT_DIR=/workspace/LightX2V/save_results
             --env PYTORCH_TUNABLEOP_ENABLED=1
             --env PYTORCH_TUNABLEOP_TUNING=0
             --env PYTORCH_TUNABLEOP_RECORD_UNTUNED=0
-            --env 'PYTORCH_TUNABLEOP_FILENAME=/workspace/ltx25-c1/tunableop_results_full%d.csv'
-            --env LTX25_TUNABLEOP_CACHE_RANK0=/workspace/ltx25-c1/tunableop_results_full0.csv
-            --env LTX25_TUNABLEOP_CACHE_RANK1=/workspace/ltx25-c1/tunableop_results_full1.csv
+            --env "PYTORCH_TUNABLEOP_FILENAME=${ltx25_tunableop_cache_pattern}"
+            --env "LTX25_TUNABLEOP_CACHE_RANK0=${ltx25_tunableop_cache_rank0}"
+            --env "LTX25_TUNABLEOP_CACHE_RANK1=${ltx25_tunableop_cache_rank1}"
             --env LIGHTX2V_AMD_RMSNORM_BACKEND=ck
             --env LIGHTX2V_VAE_CONV3D_BACKEND=Aiter_CK_Conv3d_v1
             --env LIGHTX2V_CK_CONV3D_PROFILE_DIR=/workspace/LightX2V/save_results/ck_conv3d_routes
@@ -707,7 +720,11 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
     fi
     if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
         printf 'LTX-2.5 route:  C1; TunableOp replay + role attention/QK RMS + shared CK Conv3D adapter\n'
-        printf 'LTX-2.5 GEMM:   %s -> rank-local full0/full1 cache paths (read-only)\n' "${ltx25_tunableop_cache}"
+        if [[ -n "${ltx25_tunableop_cache}" ]]; then
+            printf 'LTX-2.5 GEMM:   %s -> rank-local cache paths (host override, read-only)\n' "${ltx25_tunableop_cache}"
+        else
+            printf 'LTX-2.5 GEMM:   %s (image cache, read-only)\n' "${ltx25_tunableop_cache_pattern}"
+        fi
         printf 'LTX-2.5 Conv3D: exact tuned hit required; rank route report enabled\n'
     elif [[ "${LIGHTX2V_LTX25_CONTRACT_ULTRA:-0}" == 1 ]]; then
         printf 'LTX-2.5 route:  CollectorUltra evidence; C1 probe disabled\n'

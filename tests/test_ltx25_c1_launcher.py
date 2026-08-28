@@ -99,6 +99,47 @@ def test_ltx25_c1_host_entry_builds_read_only_two_rank_docker_command(tmp_path):
     assert f"source={source},target=/workspace/LightX2V,readonly" in stdout
 
 
+def test_ltx25_c1_host_entry_defaults_to_image_replay_cache(tmp_path):
+    model_root = tmp_path / "models" / "LTX-2.5"
+    model_root.mkdir(parents=True)
+    result_dir = tmp_path / "results"
+    env = {
+        **os.environ,
+        "DRY_RUN": "1",
+        "MODEL_RUN": str(REPO_ROOT / "lightx2vModelrun"),
+    }
+    env.pop("LTX25_TUNABLEOP_CACHE", None)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(LAUNCHER),
+            "--image",
+            "example.invalid/ltx25:c1-integrated",
+            "--model-root",
+            str(model_root),
+            "--result-dir",
+            str(result_dir),
+            "--gpus",
+            "0,1",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    stdout = completed.stdout.replace("\\,", ",")
+    cache_root = "/workspace/LightX2V/configs/ltx25/gfx1201"
+    assert f"PYTORCH_TUNABLEOP_FILENAME={cache_root}/tunableop_results_full%d.csv" in stdout
+    assert f"LTX25_TUNABLEOP_CACHE_RANK0={cache_root}/tunableop_results_full0.csv" in stdout
+    assert f"LTX25_TUNABLEOP_CACHE_RANK1={cache_root}/tunableop_results_full1.csv" in stdout
+    assert "target=/workspace/ltx25-c1/tunableop_results_full0.csv" not in stdout
+    assert "image cache, read-only" in stdout
+
+
 def test_ltx25_c1_inner_helper_rejects_direct_host_execution():
     completed = subprocess.run(
         ["bash", str(IN_CONTAINER)],

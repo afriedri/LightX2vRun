@@ -98,19 +98,17 @@ Docker host with exactly two physical GPUs:
 ```bash
 bash scripts/run_ltx25_c1_704x1280_5s.sh \
   --image IMAGE \
-  --gpus 0,1 \
-  --tunableop-cache /path/to/tunableop_results_full0.csv \
-  --lightx2v-source /home/LightX2V
+  --gpus 0,1
 ```
 
-`--lightx2v-source` mounts the current LightX2V checkout read-only and is the
-normal choice while C1 source is being integrated. It can be omitted after the
-same revision is baked into the image. The launcher mounts one unified GEMM
-cache read-only at both rank-local TunableOp filenames; runtime tuning and
-untuned recording stay disabled.
+The integrated image contains the verified unified GEMM cache at both
+rank-local TunableOp filenames; runtime tuning and untuned recording stay
+disabled. `--tunableop-cache FILE` remains available as a read-only host
+override. `--lightx2v-source DIR` likewise remains available for source
+iteration, but is not part of the normal image run.
 
-After Conv3D HotCraft has produced a merged CSV and its AOT additions have
-been built into the selected Aiter image, add:
+The normal image contains the merged Conv3D CSV and Hot29--Hot31 AOT aliases.
+For a later experimental selector artifact, override it with:
 
 ```bash
   --conv3d-csv /path/to/conv3d_v1_tuned.csv
