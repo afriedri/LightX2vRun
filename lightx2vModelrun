@@ -719,7 +719,7 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
         printf 'LTX-2.5 source: /workspace/LightX2V (from image)\n'
     fi
     if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
-        printf 'LTX-2.5 route:  C1; TunableOp replay + public-varlen video-self + role attention/QK RMS + strict RoPE + CK Conv3D\n'
+        printf 'LTX-2.5 route:  C1; TunableOp replay + native-Sage video-self + role attention/QK RMS + strict RoPE + CK Conv3D\n'
         if [[ -n "${ltx25_tunableop_cache}" ]]; then
             printf 'LTX-2.5 GEMM:   %s -> rank-local cache paths (host override, read-only)\n' "${ltx25_tunableop_cache}"
         else

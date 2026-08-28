@@ -18,10 +18,11 @@ def build_config(model_root: Path) -> dict:
             # the isolated operator routes selected below.
             "ltx25_c1_gfx1201": True,
             "attn_type": "torch_sdpa",
-            # All six collected video-self contracts selected Aiter's public
-            # varlen API on gfx1201. The model adapter remains structural and
-            # does not enumerate their S1/S2 sequence lengths.
-            "ltx25_video_self_attn_type": "aiter_public_varlen_bf16_attn",
+            # The focused race accounted for all six video-self probes: four
+            # are SP2 Ulysses boundaries and the two real post-A2A cores both
+            # selected native Sage v2. Keep dispatch role-level; Aiter owns
+            # the aligned/tail schedule selection for their dynamic lengths.
+            "ltx25_video_self_attn_type": "aiter_fav3_sage_bf16_attn",
             # Direct dense MHA won both collected video-to-text stages while
             # preserving one role-level route across their different lengths.
             "ltx25_video_text_attn_type": "aiter_triton_dense_bf16_attn",

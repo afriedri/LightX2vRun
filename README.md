@@ -107,6 +107,16 @@ disabled. `--tunableop-cache FILE` remains available as a read-only host
 override. `--lightx2v-source DIR` likewise remains available for source
 iteration, but is not part of the normal image run.
 
+The `video_self` role uses the shared native gfx1201 SageAttention2 adapter.
+The focused race accounted for all six collected probes: four are Ulysses
+boundary observations and the only two post-A2A kernels are
+`[1,3520,16,128]` and `[1,14080,16,128]`. Both passed every replica and both
+select Aiter's aligned `r32_kv` schedule because their sequence lengths are
+divisible by 32. LightX2V selects Sage by semantic role and does not carry an
+exact-shape table; Aiter remains the sole schedule selector. A fresh image E2E
+run is still required before treating this approximate INT8-QK/FP8-PV route as
+model-quality evidence.
+
 The normal image contains the merged Conv3D CSV and Hot29--Hot31 AOT aliases.
 For a later experimental selector artifact, override it with:
 
