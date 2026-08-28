@@ -33,8 +33,8 @@ def test_ltx25_c1_config_promotes_only_evidenced_semantic_roles(tmp_path):
     assert config["ltx25_video_to_audio_attn_type"] == "aiter_triton_dense_bf16_attn"
     assert config["ltx25_qk_rms_norm_type"] == "sgl-kernel"
     assert config["rms_norm_type"] == "torch_native"
-    assert config["ltx25_video_self_attn_type"] == "torch_sdpa"
-    assert config["ltx25_video_text_attn_type"] == "torch_sdpa"
+    assert config["ltx25_video_self_attn_type"] == "aiter_public_varlen_bf16_attn"
+    assert config["ltx25_video_text_attn_type"] == "aiter_triton_dense_bf16_attn"
     assert config["ltx25_audio_self_attn_type"] == "torch_sdpa"
     assert config["ltx25_audio_text_attn_type"] == "torch_sdpa"
     assert config["ltx25_audio_to_video_attn_type"] == "torch_sdpa"
@@ -86,6 +86,7 @@ def test_ltx25_c1_host_entry_builds_read_only_two_rank_docker_command(tmp_path):
     stdout = completed.stdout.replace("\\,", ",")
     assert "Mode:           ltx25_c1" in stdout
     assert "GPU devices:    2,3" in stdout
+    assert "public-varlen video-self" in stdout
     assert "strict RoPE" in stdout
     assert "PYTORCH_TUNABLEOP_ENABLED=1" in stdout
     assert "PYTORCH_TUNABLEOP_TUNING=0" in stdout
@@ -161,13 +162,23 @@ def test_ltx25_c1_prompt_source_supplies_required_runcollector_output():
     assert '"${prompt_collector}" "${video_path}"' in text
 
 
-def test_ltx25_c1_image_source_requires_and_verifies_strict_rope():
+def test_ltx25_c1_image_source_requires_and_verifies_promoted_routes():
     text = IN_CONTAINER.read_text(encoding="utf-8")
 
     assert "lightx2v/models/networks/ltx2/infer/strict_rope.py" in text
-    assert 'expected = "ltx25_triton_strict_rope"' in text
-    assert "LTX-2.5 C1 RoPE route verified" in text
+    assert '"rope_type": "ltx25_triton_strict_rope"' in text
+    assert (
+        '"ltx25_video_self_attn_type": "aiter_public_varlen_bf16_attn"'
+        in text
+    )
+    assert (
+        '"ltx25_video_text_attn_type": "aiter_triton_dense_bf16_attn"'
+        in text
+    )
+    assert "LTX-2.5 C1 routes verified" in text
     assert "runtime config selected" in text
+    assert "video_self=Aiter public varlen (gfx1201 Triton router)" in text
+    assert "video_to_text/video_to_audio=Aiter Triton dense" in text
 
 
 def test_ltx25_c1_scripts_are_valid_bash():

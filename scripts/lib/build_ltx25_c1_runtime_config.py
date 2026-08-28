@@ -18,13 +18,17 @@ def build_config(model_root: Path) -> dict:
             # the isolated operator routes selected below.
             "ltx25_c1_gfx1201": True,
             "attn_type": "torch_sdpa",
-            "ltx25_video_self_attn_type": "torch_sdpa",
-            "ltx25_video_text_attn_type": "torch_sdpa",
+            # All six collected video-self contracts selected Aiter's public
+            # varlen API on gfx1201. The model adapter remains structural and
+            # does not enumerate their S1/S2 sequence lengths.
+            "ltx25_video_self_attn_type": "aiter_public_varlen_bf16_attn",
+            # Direct dense MHA won both collected video-to-text stages while
+            # preserving one role-level route across their different lengths.
+            "ltx25_video_text_attn_type": "aiter_triton_dense_bf16_attn",
             "ltx25_audio_self_attn_type": "torch_sdpa",
             "ltx25_audio_text_attn_type": "torch_sdpa",
             "ltx25_audio_to_video_attn_type": "torch_sdpa",
-            # Both S1 and S2 exact contracts selected the direct Aiter Triton
-            # dense backend for this semantic role.
+            # Both S1 and S2 video-to-audio contracts selected direct dense.
             "ltx25_video_to_audio_attn_type": "aiter_triton_dense_bf16_attn",
             # On AMD this key is backed by the Aiter compatibility layer; the
             # C1 launcher selects its explicit CK public RMSNorm route.

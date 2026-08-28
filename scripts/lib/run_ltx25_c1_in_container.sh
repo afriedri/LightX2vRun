@@ -62,14 +62,24 @@ from pathlib import Path
 
 config_path = Path(sys.argv[1])
 config = json.loads(config_path.read_text(encoding="utf-8"))
-expected = "ltx25_triton_strict_rope"
-actual = config.get("rope_type")
-if actual != expected:
-    raise SystemExit(
-        "ERROR: LTX-2.5 C1 runtime config selected "
-        f"rope_type={actual!r}; expected {expected!r}"
-    )
-print(f"LTX-2.5 C1 RoPE route verified: {actual}")
+expected = {
+    "rope_type": "ltx25_triton_strict_rope",
+    "ltx25_video_self_attn_type": "aiter_public_varlen_bf16_attn",
+    "ltx25_video_text_attn_type": "aiter_triton_dense_bf16_attn",
+}
+for key, expected_value in expected.items():
+    actual = config.get(key)
+    if actual != expected_value:
+        raise SystemExit(
+            "ERROR: LTX-2.5 C1 runtime config selected "
+            f"{key}={actual!r}; expected {expected_value!r}"
+        )
+print(
+    "LTX-2.5 C1 routes verified: "
+    f"RoPE={expected['rope_type']}; "
+    f"video_self={expected['ltx25_video_self_attn_type']}; "
+    f"video_to_text={expected['ltx25_video_text_attn_type']}"
+)
 PY
 
 export PLATFORM=amd_rocm
@@ -96,7 +106,7 @@ echo "Assets: ${model_root}"
 echo "Results: ${result_dir}"
 echo "GPUs: ${visible_devices}; SP2"
 echo "GEMM: TunableOp read-only rank cache pattern ${tunableop_cache_pattern}"
-echo "Attention: video_to_audio=Aiter Triton dense; other roles=Torch SDPA"
+echo "Attention: video_self=Aiter public varlen (gfx1201 Triton router); video_to_text/video_to_audio=Aiter Triton dense; other roles=Torch SDPA"
 echo "Q/K RMSNorm: Aiter CK; block RMSNorm=Torch"
 echo "RoPE: LTX-2.5 strict/no-FMA Triton; structural miss falls back to Torch"
 echo "Conv3D: shared Aiter CK adapter; untuned contracts explicitly fall back to Torch"
