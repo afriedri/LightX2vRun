@@ -161,6 +161,15 @@ def test_ltx25_c1_prompt_source_supplies_required_runcollector_output():
     assert '"${prompt_collector}" "${video_path}"' in text
 
 
+def test_ltx25_c1_image_source_requires_and_verifies_strict_rope():
+    text = IN_CONTAINER.read_text(encoding="utf-8")
+
+    assert "lightx2v/models/networks/ltx2/infer/strict_rope.py" in text
+    assert 'expected = "ltx25_triton_strict_rope"' in text
+    assert "LTX-2.5 C1 RoPE route verified" in text
+    assert "runtime config selected" in text
+
+
 def test_ltx25_c1_scripts_are_valid_bash():
     for path in (LAUNCHER, IN_CONTAINER, REPO_ROOT / "lightx2vModelrun"):
         subprocess.run(["bash", "-n", str(path)], check=True)

@@ -34,10 +34,12 @@ official_video_vae="${model_root}/vae/ltx-2.5-video-vae-bf16.safetensors"
 audio_vae="${model_root}/vae/ltx-2.5-audio-vae-bf16.safetensors"
 upscaler="${model_root}/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
 config_builder="${run_root}/scripts/lib/build_ltx25_c1_runtime_config.py"
+strict_rope_impl="${lightx2v_path}/lightx2v/models/networks/ltx2/infer/strict_rope.py"
 
 mkdir -p -- "${result_dir}"
 for required in "${lightx2v_path}/scripts/base/base.sh" "${transformer}" "${text_encoder}" \
-    "${official_video_vae}" "${audio_vae}" "${upscaler}" "${config_builder}"; do
+    "${official_video_vae}" "${audio_vae}" "${upscaler}" "${config_builder}" \
+    "${strict_rope_impl}"; do
     [[ -e "${required}" ]] || { echo "ERROR: required LTX-2.5 C1 file not found: ${required}" >&2; exit 1; }
 done
 
@@ -52,6 +54,23 @@ done
 PYTHONDONTWRITEBYTECODE=1 python3 -B "${config_builder}" \
     --model-root "${model_root}" \
     --output "${runtime_config}"
+
+PYTHONDONTWRITEBYTECODE=1 python3 -B - "${runtime_config}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+config = json.loads(config_path.read_text(encoding="utf-8"))
+expected = "ltx25_triton_strict_rope"
+actual = config.get("rope_type")
+if actual != expected:
+    raise SystemExit(
+        "ERROR: LTX-2.5 C1 runtime config selected "
+        f"rope_type={actual!r}; expected {expected!r}"
+    )
+print(f"LTX-2.5 C1 RoPE route verified: {actual}")
+PY
 
 export PLATFORM=amd_rocm
 export DTYPE=BF16
