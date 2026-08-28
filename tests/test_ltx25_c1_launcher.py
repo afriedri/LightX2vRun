@@ -152,6 +152,14 @@ def test_ltx25_c1_inner_helper_rejects_direct_host_execution():
     assert "inside the ROCm image" in completed.stderr
 
 
+def test_ltx25_c1_prompt_source_supplies_required_runcollector_output():
+    text = IN_CONTAINER.read_text(encoding="utf-8")
+
+    assert 'prompt_collector="${result_dir}/ltx25_c1_prompt_collector.json"' in text
+    assert '--collector-output "${prompt_collector}"' in text
+    assert '"${prompt_collector}" "${video_path}"' in text
+
+
 def test_ltx25_c1_scripts_are_valid_bash():
     for path in (LAUNCHER, IN_CONTAINER, REPO_ROOT / "lightx2vModelrun"):
         subprocess.run(["bash", "-n", str(path)], check=True)

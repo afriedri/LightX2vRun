@@ -43,8 +43,9 @@ done
 
 runtime_config="${result_dir}/ltx25_c1_runtime_config.json"
 prompt_cache="${result_dir}/ltx25_c1_prompt_embeddings.safetensors"
+prompt_collector="${result_dir}/ltx25_c1_prompt_collector.json"
 video_path="${result_dir}/ltx25_c1_conv_704x1280_24fps.mp4"
-for output in "${runtime_config}" "${prompt_cache}" "${video_path}"; do
+for output in "${runtime_config}" "${prompt_cache}" "${prompt_collector}" "${video_path}"; do
     [[ ! -e "${output}" ]] || { echo "ERROR: C1 output already exists: ${output}" >&2; exit 1; }
 done
 
@@ -89,6 +90,7 @@ python3 -m lightx2v.utils.ltx2_prompt_cache \
     --upscaler "${upscaler}" \
     --gemma-max-memory-json '{"0":"16GiB","1":"16GiB"}' \
     --gemma-attn-implementation sdpa \
+    --collector-output "${prompt_collector}" \
     --output "${prompt_cache}" \
     --prompt "${prompt}" \
     --negative-prompt "${negative_prompt}"
