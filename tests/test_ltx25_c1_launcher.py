@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LAUNCHER = REPO_ROOT / "scripts/run_ltx25_c1_704x1280_5s.sh"
+IN_CONTAINER = REPO_ROOT / "scripts/lib/run_ltx25_c1_in_container.sh"
+BUILDER = REPO_ROOT / "scripts/lib/build_ltx25_c1_runtime_config.py"
+
+
+def test_ltx25_c1_config_promotes_only_evidenced_semantic_roles(tmp_path):
+    model_root = tmp_path / "LTX-2.5"
+    output = tmp_path / "c1.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(BUILDER),
+            "--model-root",
+            str(model_root),
+            "--output",
+            str(output),
+        ],
+        check=True,
+    )
+    config = json.loads(output.read_text(encoding="utf-8"))
+
+    assert config["ltx25_c1_gfx1201"] is True
+    assert config["ltx25_video_to_audio_attn_type"] == "aiter_triton_dense_bf16_attn"
+    assert config["ltx25_qk_rms_norm_type"] == "sgl-kernel"
+    assert config["rms_norm_type"] == "torch_native"
+    assert config["ltx25_video_self_attn_type"] == "torch_sdpa"
+    assert config["ltx25_video_text_attn_type"] == "torch_sdpa"
+    assert config["ltx25_audio_self_attn_type"] == "torch_sdpa"
+    assert config["ltx25_audio_text_attn_type"] == "torch_sdpa"
+    assert config["ltx25_audio_to_video_attn_type"] == "torch_sdpa"
+    assert config["rope_type"] == "torch_real_rope"
+
+
+def test_ltx25_c1_host_entry_builds_read_only_two_rank_docker_command(tmp_path):
+    model_root = tmp_path / "models" / "LTX-2.5"
+    model_root.mkdir(parents=True)
+    source = tmp_path / "LightX2V"
+    (source / "lightx2v").mkdir(parents=True)
+    cache = tmp_path / "tunableop_results_full0.csv"
+    cache.write_text("Validator,PT_VERSION,0\n", encoding="utf-8")
+    conv3d_csv = tmp_path / "future_conv3d_v1_tuned.csv"
+    result_dir = tmp_path / "results"
+    env = {
+        **os.environ,
+        "DRY_RUN": "1",
+        "MODEL_RUN": str(REPO_ROOT / "lightx2vModelrun"),
+    }
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(LAUNCHER),
+            "--image",
+            "example.invalid/ltx25:c1",
+            "--tunableop-cache",
+            str(cache),
+            "--lightx2v-source",
+            str(source),
+            "--conv3d-csv",
+            str(conv3d_csv),
+            "--model-root",
+            str(model_root),
+            "--result-dir",
+            str(result_dir),
+            "--gpus",
+            "2,3",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    stdout = completed.stdout.replace("\\,", ",")
+    assert "Mode:           ltx25_c1" in stdout
+    assert "GPU devices:    2,3" in stdout
+    assert "PYTORCH_TUNABLEOP_ENABLED=1" in stdout
+    assert "PYTORCH_TUNABLEOP_TUNING=0" in stdout
+    assert stdout.count(f"source={cache}") == 2
+    assert "target=/workspace/ltx25-c1/tunableop_results_full0.csv,readonly" in stdout
+    assert "target=/workspace/ltx25-c1/tunableop_results_full1.csv,readonly" in stdout
+    assert "PYTORCH_TUNABLEOP_FILENAME=/workspace/ltx25-c1/tunableop_results_full%d.csv" in stdout
+    assert "LIGHTX2V_LTX25_C1_IN_CONTAINER=1" in stdout
+    assert "LIGHTX2V_CK_CONV3D_PROFILE_DIR=/workspace/LightX2V/save_results/ck_conv3d_routes" in stdout
+    assert f"source={conv3d_csv},target=/workspace/ck-conv3d-config/conv3d_v1_tuned.csv,readonly" in stdout
+    assert "run_ltx25_c1_in_container.sh" in stdout
+    assert f"source={source},target=/workspace/LightX2V,readonly" in stdout
+
+
+def test_ltx25_c1_inner_helper_rejects_direct_host_execution():
+    completed = subprocess.run(
+        ["bash", str(IN_CONTAINER)],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "inside the ROCm image" in completed.stderr
+
+
+def test_ltx25_c1_scripts_are_valid_bash():
+    for path in (LAUNCHER, IN_CONTAINER, REPO_ROOT / "lightx2vModelrun"):
+        subprocess.run(["bash", "-n", str(path)], check=True)

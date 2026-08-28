@@ -56,6 +56,8 @@ Usage:
   ./lightx2vModelrun --run-ltx23-gfx1201   Run LTX-2.3 Distilled FP8 B0 on exactly 2 GPUs
   ./lightx2vModelrun --run-ltx25-contract-collector
                                             Collect LTX-2.5 B0-reference contracts on 2 GPUs
+  ./lightx2vModelrun --run-ltx25-c1-gfx1201
+                                            Run LTX-2.5 C1 on exactly 2 GPUs
   ./lightx2vModelrun COMMAND [ARG...]        Run a command in the container
 
 Ordinary timing runs should use the seven numbered scripts:
@@ -219,6 +221,7 @@ case "${1:-}" in
     --run-minimax-h3-gfx1201) inference_mode=minimax_h3 ;;
     --run-ltx23-gfx1201) inference_mode=ltx23 ;;
     --run-ltx25-contract-collector) inference_mode=ltx25_contract ;;
+    --run-ltx25-c1-gfx1201) inference_mode=ltx25_c1 ;;
 esac
 
 if [[ ! "${GPU_DEVICES}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
@@ -267,11 +270,18 @@ if [[ "${inference_mode}" == "ltx25_contract" ]]; then
         die "LTX-2.5 contract mode requires scripts/collector/run_ltx25_contract_collector.sh"
     ltx25_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_ltx25_in_container.sh"
 fi
+if [[ "${inference_mode}" == "ltx25_c1" ]]; then
+    [[ "${gpu_count}" == 2 ]] || die "LTX-2.5 C1 requires exactly two GPU_DEVICES"
+    [[ "${LIGHTX2V_LTX25_C1_EXPLICIT:-0}" == 1 ]] || \
+        die "LTX-2.5 C1 requires scripts/run_ltx25_c1_704x1280_5s.sh"
+    ltx25_c1_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_ltx25_c1_in_container.sh"
+fi
 
 is_wan21_mode=0
 is_minimax_h3_mode=0
 is_ltx23_mode=0
 is_ltx25_mode=0
+is_ltx25_c1_mode=0
 uses_fp8_run_script=0
 if [[ "${inference_mode}" == wan21_unified ]]; then
     is_wan21_mode=1
@@ -284,6 +294,10 @@ if [[ "${inference_mode}" == ltx23 ]]; then
 fi
 if [[ "${inference_mode}" == ltx25_contract ]]; then
     is_ltx25_mode=1
+fi
+if [[ "${inference_mode}" == ltx25_c1 ]]; then
+    is_ltx25_mode=1
+    is_ltx25_c1_mode=1
 fi
 if [[ "${inference_mode}" == wan21_unified || "${inference_mode}" == wan22_unified ]]; then
     uses_fp8_run_script=1
@@ -328,6 +342,16 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
             ltx25_lightx2v_source="$(realpath "${LTX25_LIGHTX2V_SOURCE}")"
         fi
     fi
+    if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
+        [[ -n "${LTX25_TUNABLEOP_CACHE:-}" ]] || die "LTX25_TUNABLEOP_CACHE is required for C1"
+        [[ "${LTX25_TUNABLEOP_CACHE}" == /* ]] || die "LTX25_TUNABLEOP_CACHE must be an absolute host path"
+        if [[ "${DRY_RUN:-0}" == 1 ]]; then
+            ltx25_tunableop_cache="$(realpath -m "${LTX25_TUNABLEOP_CACHE}")"
+        else
+            require_file "${LTX25_TUNABLEOP_CACHE}"
+            ltx25_tunableop_cache="$(realpath "${LTX25_TUNABLEOP_CACHE}")"
+        fi
+    fi
 fi
 
 require_dir "${RUN_REPO_DIR}"
@@ -347,9 +371,15 @@ if [[ "${is_ltx23_mode}" == 1 ]]; then
     require_file "${RUN_REPO_DIR}/scripts/collector/collect_ltx23_weight_probe.py"
 fi
 if [[ "${is_ltx25_mode}" == 1 ]]; then
-    require_file "${RUN_REPO_DIR}/${ltx25_run_script#${CONTAINER_RUN_ROOT}/}"
-    require_file "${RUN_REPO_DIR}/scripts/lib/build_ltx25_runtime_config.py"
-    require_file "${RUN_REPO_DIR}/scripts/collector/validate_ltx25_contract_bundle.py"
+    if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
+        require_file "${RUN_REPO_DIR}/${ltx25_c1_run_script#${CONTAINER_RUN_ROOT}/}"
+        require_file "${RUN_REPO_DIR}/scripts/lib/build_ltx25_c1_runtime_config.py"
+        require_file "${RUN_REPO_DIR}/scripts/lib/build_ltx25_runtime_config.py"
+    else
+        require_file "${RUN_REPO_DIR}/${ltx25_run_script#${CONTAINER_RUN_ROOT}/}"
+        require_file "${RUN_REPO_DIR}/scripts/lib/build_ltx25_runtime_config.py"
+        require_file "${RUN_REPO_DIR}/scripts/collector/validate_ltx25_contract_bundle.py"
+    fi
 fi
 encoder_mount_source="${ENCODERS_DIR}"
 encoder_mount_target="${CONTAINER_MODELS_ROOT}/encoders/t5"
@@ -490,8 +520,12 @@ docker_args=(
 )
 
 if [[ -n "${CK_CONV3D_TUNED_CSV:-}" ]]; then
-    require_file "${CK_CONV3D_TUNED_CSV}"
-    ck_conv3d_tuned_csv="$(realpath "${CK_CONV3D_TUNED_CSV}")"
+    if [[ "${DRY_RUN:-0}" == 1 ]]; then
+        ck_conv3d_tuned_csv="$(realpath -m "${CK_CONV3D_TUNED_CSV}")"
+    else
+        require_file "${CK_CONV3D_TUNED_CSV}"
+        ck_conv3d_tuned_csv="$(realpath "${CK_CONV3D_TUNED_CSV}")"
+    fi
     docker_args+=(
         --mount "type=bind,source=${ck_conv3d_tuned_csv},target=/workspace/ck-conv3d-config/conv3d_v1_tuned.csv,readonly"
         --env AITER_CONFIG_CONV3D_V1=/workspace/ck-conv3d-config/conv3d_v1_tuned.csv
@@ -501,12 +535,32 @@ fi
 if [[ "${is_ltx25_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${LTX25_MODEL_ROOT},target=${container_ltx25_root},readonly"
-        --env LIGHTX2V_LTX25_IN_CONTAINER=1
         --env "LTX25_MODEL_ROOT=${container_ltx25_root}"
-        --env LTX25_EVIDENCE_DIR=/workspace/LightX2V/save_results
         --env LTX25_WORLD_SIZE=2
-        --env PYTORCH_TUNABLEOP_ENABLED=0
     )
+    if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
+        docker_args+=(
+            --mount "type=bind,source=${ltx25_tunableop_cache},target=/workspace/ltx25-c1/tunableop_results_full0.csv,readonly"
+            --mount "type=bind,source=${ltx25_tunableop_cache},target=/workspace/ltx25-c1/tunableop_results_full1.csv,readonly"
+            --env LIGHTX2V_LTX25_C1_IN_CONTAINER=1
+            --env LTX25_C1_RESULT_DIR=/workspace/LightX2V/save_results
+            --env PYTORCH_TUNABLEOP_ENABLED=1
+            --env PYTORCH_TUNABLEOP_TUNING=0
+            --env PYTORCH_TUNABLEOP_RECORD_UNTUNED=0
+            --env 'PYTORCH_TUNABLEOP_FILENAME=/workspace/ltx25-c1/tunableop_results_full%d.csv'
+            --env LTX25_TUNABLEOP_CACHE_RANK0=/workspace/ltx25-c1/tunableop_results_full0.csv
+            --env LTX25_TUNABLEOP_CACHE_RANK1=/workspace/ltx25-c1/tunableop_results_full1.csv
+            --env LIGHTX2V_AMD_RMSNORM_BACKEND=ck
+            --env LIGHTX2V_VAE_CONV3D_BACKEND=Aiter_CK_Conv3d_v1
+            --env LIGHTX2V_CK_CONV3D_PROFILE_DIR=/workspace/LightX2V/save_results/ck_conv3d_routes
+        )
+    else
+        docker_args+=(
+            --env LIGHTX2V_LTX25_IN_CONTAINER=1
+            --env LTX25_EVIDENCE_DIR=/workspace/LightX2V/save_results
+            --env PYTORCH_TUNABLEOP_ENABLED=0
+        )
+    fi
     if [[ -n "${ltx25_lightx2v_source:-}" ]]; then
         docker_args+=(
             --mount "type=bind,source=${ltx25_lightx2v_source},target=/workspace/LightX2V,readonly"
@@ -622,7 +676,11 @@ fi
 
 container_command=(/bin/bash)
 if [[ "${is_ltx25_mode}" == 1 ]]; then
-    container_command=(/bin/bash "${ltx25_run_script}")
+    if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
+        container_command=(/bin/bash "${ltx25_c1_run_script}")
+    else
+        container_command=(/bin/bash "${ltx25_run_script}")
+    fi
 elif [[ "${is_ltx23_mode}" == 1 ]]; then
     container_command=(/bin/bash "${ltx23_run_script}")
 elif [[ "${uses_fp8_run_script}" == 1 ]]; then
@@ -647,7 +705,11 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
     else
         printf 'LTX-2.5 source: /workspace/LightX2V (from image)\n'
     fi
-    if [[ "${LIGHTX2V_LTX25_CONTRACT_ULTRA:-0}" == 1 ]]; then
+    if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
+        printf 'LTX-2.5 route:  C1; TunableOp replay + role attention/QK RMS + shared CK Conv3D adapter\n'
+        printf 'LTX-2.5 GEMM:   %s -> rank-local full0/full1 cache paths (read-only)\n' "${ltx25_tunableop_cache}"
+        printf 'LTX-2.5 Conv3D: exact tuned hit required; rank route report enabled\n'
+    elif [[ "${LIGHTX2V_LTX25_CONTRACT_ULTRA:-0}" == 1 ]]; then
         printf 'LTX-2.5 route:  CollectorUltra evidence; C1 probe disabled\n'
     else
         printf 'LTX-2.5 route:  B0-reference contract collection; C1 probe disabled\n'
@@ -704,7 +766,11 @@ if [[ "${is_ltx23_mode}" == 1 ]]; then
     fi
 fi
 if [[ "${is_ltx25_mode}" == 1 ]]; then
-    printf 'LTX-2.5 collector: %s\n' "${ltx25_run_script}"
+    if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
+        printf 'LTX-2.5 launcher: %s\n' "${ltx25_c1_run_script}"
+    else
+        printf 'LTX-2.5 collector: %s\n' "${ltx25_run_script}"
+    fi
 fi
 
 docker_command=(docker "${docker_args[@]}" "${IMAGE}" "${container_command[@]}")

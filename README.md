@@ -89,6 +89,38 @@ change the numerical route. The current executable Video VAE is still
 known black video is never accepted as a quality baseline or selector
 promotion gate.
 
+## LTX-2.5 C1 two-GPU runtime
+
+The C1 model entry stays in this run repository; offline GEMM cache crafting
+and Conv3D HotXX selection stay in `aiter-tune-gfx1201/tune`. Run it from the
+Docker host with exactly two physical GPUs:
+
+```bash
+bash scripts/run_ltx25_c1_704x1280_5s.sh \
+  --image IMAGE \
+  --gpus 0,1 \
+  --tunableop-cache /path/to/tunableop_results_full0.csv \
+  --lightx2v-source /home/LightX2V
+```
+
+`--lightx2v-source` mounts the current LightX2V checkout read-only and is the
+normal choice while C1 source is being integrated. It can be omitted after the
+same revision is baked into the image. The launcher mounts one unified GEMM
+cache read-only at both rank-local TunableOp filenames; runtime tuning and
+untuned recording stay disabled.
+
+After Conv3D HotCraft has produced a merged CSV and its AOT additions have
+been built into the selected Aiter image, add:
+
+```bash
+  --conv3d-csv /path/to/conv3d_v1_tuned.csv
+```
+
+LTX Conv3D calls require an exact tuned-CSV hit before dispatching CK. Until
+that artifact exists, or whenever a contract is absent, the original Torch
+Conv3D path remains authoritative. The current `conv_diagnostic` Video VAE and
+known black-output issue remain production-promotion blockers.
+
 MiniMax-H3 gfx1201 is a production entry. Its default FL2V first and last
 frames are read-only host inputs at
 `/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png` and
