@@ -110,7 +110,7 @@ bash scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh \
   --image IMAGE
 ```
 
-在镜像重做前收集分布式 Video VAE 的源码直跑证据，使用 Run collector：
+使用镜像内实现收集分布式 Video VAE scale 证据：
 
 ```bash
 bash scripts/collector/LTX25-ScaleCollector.sh \
@@ -118,10 +118,10 @@ bash scripts/collector/LTX25-ScaleCollector.sh \
   --output-dir /disk/ssd/lightx2v-runtime/ltx25-scale-collector-001
 ```
 
-该入口自动更新 LightX2V 和 Aiter 的 `hvat-gfx1201` 托管 checkout，把两套源码
-只读透传到现有镜像，并复用编号 10 的 4/8/16 卡组、显存监控、视频与 timing
-汇总。Aiter JIT cache 按源码 SHA 隔离。它只收集 E2E 证据，不做 Hot 选拔；后续
-HotPick 仍落在 `aiter-tune-gfx1201/tune`。
+该入口默认直接使用镜像内的 LightX2V 与 Aiter AOT wheel，复用编号 10 的
+4/8/16 卡组、显存监控、视频与 timing 汇总，不再用源码挂载遮蔽镜像中的 CK
+Conv3D 模块。它只收集 E2E 证据，不做 Hot 选拔；后续 HotPick 仍落在
+`aiter-tune-gfx1201/tune`。仅调试源码时显式设置 `SOURCE_OVERLAY=1`。
 
 Use `--counts 4`, `--counts 8`, or `--counts 16` for one arm. `--counts
 2,4,8,16` includes the existing SP2 baseline. Every arm is a separate

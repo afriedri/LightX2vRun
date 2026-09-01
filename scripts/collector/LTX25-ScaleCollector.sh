@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One host entry for source-overlay LTX-2.5 SP4/SP8/SP16 E2E evidence.
+# One host entry for image-based LTX-2.5 SP4/SP8/SP16 E2E evidence.
 set -Eeuo pipefail
 
 G='\033[1;32m'; C='\033[0;36m'; Y='\033[1;33m'; R='\033[0;31m'; N='\033[0m'
@@ -16,6 +16,7 @@ scale_entry="${run_root}/scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh"
 image="${IMAGE:-}"
 result_dir="${RESULT_DIR:-}"
 dry_run="${DRY_RUN:-0}"
+source_overlay="${SOURCE_OVERLAY:-0}"
 
 lightx2v_src="${LIGHTX2V_SRC:-}"
 lightx2v_git_url="${LTX25_LIGHTX2V_GIT_URL:-${LIGHTX2V_GIT_URL:-git@gitcode.com:hvat-ai/LightX2V.git}}"
@@ -36,10 +37,10 @@ usage() {
 Usage:
   bash scripts/collector/LTX25-ScaleCollector.sh --image IMAGE [OPTIONS]
 
-Collects LTX-2.5 SP4/SP8/SP16 E2E scale evidence without rebuilding IMAGE.
-It fetches clean LightX2V and Aiter hvat-gfx1201 checkouts, mounts both
-read-only, and delegates scale grouping, memory observation, video output, and
-timing summaries to the existing numbered task 10 launcher.
+Collects LTX-2.5 SP4/SP8/SP16 E2E scale evidence from IMAGE and delegates
+scale grouping, memory observation, video output, and timing summaries to the
+existing numbered task 10 launcher. The default path uses the image-installed
+LightX2V and Aiter wheel, including its AOT CK Conv3d module.
 
 Options:
   --image IMAGE
@@ -48,6 +49,7 @@ Options:
   --output-dir DIR      Exact host timing/evidence directory
 
 Source controls:
+  SOURCE_OVERLAY=0|1    Default: 0. Set to 1 only for explicit source debugging
   LIGHTX2V_SRC=/path    Use this local Git checkout instead of fetching
   LIGHTX2V_GIT_URL=URL
   LIGHTX2V_GIT_REF=REF  Default: hvat-gfx1201
@@ -67,8 +69,9 @@ Other controls:
   CACHE_DIR=/disk/ssd/lightx2v-runtime/cache
   DRY_RUN=1             Use existing/provided checkouts and print all commands
 
-This collector does not select a new Hot kernel and does not modify either
-managed checkout. Hot selection remains in aiter-tune-gfx1201.
+Source controls are ignored unless SOURCE_OVERLAY=1. This collector does not
+select a new Hot kernel and does not modify either managed checkout. Hot
+selection remains in aiter-tune-gfx1201.
 EOF
 }
 
@@ -143,10 +146,11 @@ run_source_overlay_container() {
     local output_dir="${OUTPUT_DIR:-${runtime_root}/outputs}"
     local cache_dir="${CACHE_DIR:-${runtime_root}/cache}"
     local container_name="${CONTAINER_NAME:-lightx2v-ltx25-scale-collector}"
-    local mounted_lightx2v="${LTX25_SCALE_LIGHTX2V_SOURCE:?missing LightX2V collector source}"
-    local mounted_aiter="${LTX25_SCALE_AITER_SOURCE:?missing Aiter collector source}"
-    local mounted_lightx2v_revision="${LTX25_SCALE_LIGHTX2V_REVISION:?missing LightX2V revision}"
-    local mounted_aiter_revision="${LTX25_SCALE_AITER_REVISION:?missing Aiter revision}"
+    local use_source_overlay="${LTX25_SCALE_SOURCE_OVERLAY:-0}"
+    local mounted_lightx2v="${LTX25_SCALE_LIGHTX2V_SOURCE:-}"
+    local mounted_aiter="${LTX25_SCALE_AITER_SOURCE:-}"
+    local mounted_lightx2v_revision="${LTX25_SCALE_LIGHTX2V_REVISION:-image}"
+    local mounted_aiter_revision="${LTX25_SCALE_AITER_REVISION:-image}"
     local tunableop_root=/workspace/LightX2V/configs/ltx25/gfx1201
     local inner=/workspace/LightX2VRun/scripts/lib/run_ltx25_c1_in_container.sh
     local -a gpu_list docker_args command
@@ -160,10 +164,12 @@ run_source_overlay_container() {
         command -v docker >/dev/null 2>&1 || die "docker is required"
         [[ -d "${model_root}" ]] || die "LTX-2.5 model root not found: ${model_root}"
         [[ -f "${run_root}/scripts/lib/run_ltx25_c1_in_container.sh" ]] || die "LightX2VRun inner entry is missing"
-        for cache_rank in 0 1; do
-            [[ -f "${mounted_lightx2v}/configs/ltx25/gfx1201/tunableop_results_full${cache_rank}.csv" ]] ||
-                die "LightX2V source is missing TunableOp rank cache ${cache_rank}"
-        done
+        if [[ "${use_source_overlay}" == 1 ]]; then
+            for cache_rank in 0 1; do
+                [[ -f "${mounted_lightx2v}/configs/ltx25/gfx1201/tunableop_results_full${cache_rank}.csv" ]] ||
+                    die "LightX2V source is missing TunableOp rank cache ${cache_rank}"
+            done
+        fi
         mkdir -p -- "${input_dir}" "${output_dir}" \
             "${cache_dir}/aiter" "${cache_dir}/huggingface" \
             "${cache_dir}/torch_extensions" "${cache_dir}/triton"
@@ -184,8 +190,6 @@ run_source_overlay_container() {
         --env TOKENIZERS_PARALLELISM=false
         --env "MODEL_PATH=${model_root}"
         --env LIGHTX2V_PATH=/workspace/LightX2V
-        --env PYTHONPATH=/workspace/aiter-source
-        --env "AITER_JIT_DIR=/workspace/.cache/aiter/ltx25-source-${mounted_aiter_revision:0:12}"
         --env TRITON_CACHE_DIR=/workspace/.cache/triton
         --env TORCH_EXTENSIONS_DIR=/workspace/.cache/torch_extensions
         --env HF_HOME=/root/.cache/huggingface
@@ -207,12 +211,7 @@ run_source_overlay_container() {
         --env LIGHTX2V_AMD_RMSNORM_BACKEND=ck
         --env LIGHTX2V_VAE_CONV3D_BACKEND=Aiter_CK_Conv3d_v1
         --env LIGHTX2V_CK_CONV3D_PROFILE_DIR=/workspace/LightX2V/save_results/ck_conv3d_routes
-        --env "LIGHTX2V_SOURCE_REVISION=${mounted_lightx2v_revision}"
-        --env "AITER_SOURCE_REVISION=${mounted_aiter_revision}"
-        --env "AITER_COMMIT=${mounted_aiter_revision}"
         --mount "type=bind,source=${run_root},target=/workspace/LightX2VRun,readonly"
-        --mount "type=bind,source=${mounted_lightx2v},target=/workspace/LightX2V,readonly"
-        --mount "type=bind,source=${mounted_aiter},target=/workspace/aiter-source,readonly"
         --mount "type=bind,source=${model_root},target=${model_root},readonly"
         --mount "type=bind,source=${input_dir},target=/inputs"
         --mount "type=bind,source=${output_dir},target=/workspace/LightX2V/save_results"
@@ -221,6 +220,20 @@ run_source_overlay_container() {
         --mount "type=bind,source=${cache_dir}/torch_extensions,target=/workspace/.cache/torch_extensions"
         --mount "type=bind,source=${cache_dir}/triton,target=/workspace/.cache/triton"
     )
+
+    if [[ "${use_source_overlay}" == 1 ]]; then
+        [[ -n "${mounted_lightx2v}" && -n "${mounted_aiter}" ]] ||
+            die "source overlay requested without prepared LightX2V/Aiter sources"
+        docker_args+=(
+            --env PYTHONPATH=/workspace/aiter-source
+            --env "AITER_JIT_DIR=/workspace/.cache/aiter/ltx25-source-${mounted_aiter_revision:0:12}"
+            --env "LIGHTX2V_SOURCE_REVISION=${mounted_lightx2v_revision}"
+            --env "AITER_SOURCE_REVISION=${mounted_aiter_revision}"
+            --env "AITER_COMMIT=${mounted_aiter_revision}"
+            --mount "type=bind,source=${mounted_lightx2v},target=/workspace/LightX2V,readonly"
+            --mount "type=bind,source=${mounted_aiter},target=/workspace/aiter-source,readonly"
+        )
+    fi
 
     if [[ -n "${CK_CONV3D_TUNED_CSV:-}" ]]; then
         local conv3d_csv
@@ -246,8 +259,12 @@ run_source_overlay_container() {
     fi
 
     command=(docker "${docker_args[@]}" "${runtime_image}" /bin/bash "${inner}")
-    printf 'LTX-2.5 ScaleCollector source: LightX2V=%s Aiter=%s\n' \
-        "${mounted_lightx2v_revision}" "${mounted_aiter_revision}"
+    if [[ "${use_source_overlay}" == 1 ]]; then
+        printf 'LTX-2.5 ScaleCollector source overlay: LightX2V=%s Aiter=%s\n' \
+            "${mounted_lightx2v_revision}" "${mounted_aiter_revision}"
+    else
+        printf 'LTX-2.5 ScaleCollector source: image-installed LightX2V + Aiter AOT wheel\n'
+    fi
     printf 'LTX-2.5 ScaleCollector container: SP%s GPUs=%s\n' "${#gpu_list[@]}" "${gpu_devices}"
     if [[ "${DRY_RUN:-0}" == 1 ]]; then
         printf 'DRY RUN:'
@@ -281,44 +298,51 @@ while (( $# > 0 )); do
     esac
 done
 
-for value in "${dry_run}" "${allow_dirty_lightx2v}" "${allow_dirty_aiter}"; do
+for value in "${dry_run}" "${source_overlay}" "${allow_dirty_lightx2v}" "${allow_dirty_aiter}"; do
     [[ "${value}" == 0 || "${value}" == 1 ]] || die "boolean controls must be 0 or 1"
 done
 [[ -n "${image}" ]] || die "--image or IMAGE is required"
 [[ "${image}" != *[[:space:]]* ]] || die "image reference may not contain whitespace"
 [[ -f "${scale_entry}" ]] || die "numbered LTX-2.5 scale entry not found: ${scale_entry}"
-command -v git >/dev/null 2>&1 || die "git is required"
+if [[ "${source_overlay}" == 1 ]]; then
+    command -v git >/dev/null 2>&1 || die "git is required for SOURCE_OVERLAY=1"
+    if [[ -n "${lightx2v_src}" ]]; then
+        validate_lightx2v_source
+    elif [[ "${dry_run}" == 1 ]]; then
+        [[ -d "${lightx2v_git_dir}/.git" ]] || die "DRY_RUN source overlay requires LIGHTX2V_SRC or an existing managed checkout"
+        lightx2v_src="${lightx2v_git_dir}"
+        validate_lightx2v_source
+        warn "DRY_RUN uses the existing LightX2V checkout without fetching"
+    else
+        prepare_managed_source LightX2V "${lightx2v_git_url}" "${lightx2v_git_ref}" "${lightx2v_git_dir}"
+        lightx2v_src="${prepared_source}"
+        validate_lightx2v_source
+    fi
 
-if [[ -n "${lightx2v_src}" ]]; then
-    validate_lightx2v_source
-elif [[ "${dry_run}" == 1 ]]; then
-    [[ -d "${lightx2v_git_dir}/.git" ]] || die "DRY_RUN requires LIGHTX2V_SRC or an existing managed checkout"
-    lightx2v_src="${lightx2v_git_dir}"
-    validate_lightx2v_source
-    warn "DRY_RUN uses the existing LightX2V checkout without fetching"
+    if [[ -n "${aiter_src}" ]]; then
+        validate_aiter_source
+    elif [[ "${dry_run}" == 1 ]]; then
+        [[ -d "${aiter_git_dir}/.git" ]] || die "DRY_RUN source overlay requires AITER_SRC or an existing managed checkout"
+        aiter_src="${aiter_git_dir}"
+        validate_aiter_source
+        warn "DRY_RUN uses the existing Aiter checkout without fetching"
+    else
+        prepare_managed_source Aiter "${aiter_git_url}" "${aiter_git_ref}" "${aiter_git_dir}"
+        aiter_src="${prepared_source}"
+        git -C "${aiter_src}" submodule sync --recursive
+        git -C "${aiter_src}" submodule update --init --recursive
+        validate_aiter_source
+    fi
+
+    ok "LightX2V source ready: ${lightx2v_revision}"
+    ok "Aiter source ready: ${aiter_revision} (CK ${aiter_ck_revision})"
 else
-    prepare_managed_source LightX2V "${lightx2v_git_url}" "${lightx2v_git_ref}" "${lightx2v_git_dir}"
-    lightx2v_src="${prepared_source}"
-    validate_lightx2v_source
+    lightx2v_src=""
+    aiter_src=""
+    lightx2v_revision=image
+    aiter_revision=image
+    info "Source overlay: disabled; using LightX2V and Aiter AOT wheel from IMAGE"
 fi
-
-if [[ -n "${aiter_src}" ]]; then
-    validate_aiter_source
-elif [[ "${dry_run}" == 1 ]]; then
-    [[ -d "${aiter_git_dir}/.git" ]] || die "DRY_RUN requires AITER_SRC or an existing managed checkout"
-    aiter_src="${aiter_git_dir}"
-    validate_aiter_source
-    warn "DRY_RUN uses the existing Aiter checkout without fetching"
-else
-    prepare_managed_source Aiter "${aiter_git_url}" "${aiter_git_ref}" "${aiter_git_dir}"
-    aiter_src="${prepared_source}"
-    git -C "${aiter_src}" submodule sync --recursive
-    git -C "${aiter_src}" submodule update --init --recursive
-    validate_aiter_source
-fi
-
-ok "LightX2V source ready: ${lightx2v_revision}"
-ok "Aiter source ready: ${aiter_revision} (CK ${aiter_ck_revision})"
 info "Runtime image : ${image}"
 info "Scale entry   : ${scale_entry}"
 info "Collection    : task-10 video/log/memory/timing; no Hot selection"
@@ -327,6 +351,7 @@ export LTX25_SCALE_LIGHTX2V_SOURCE="${lightx2v_src}"
 export LTX25_SCALE_AITER_SOURCE="${aiter_src}"
 export LTX25_SCALE_LIGHTX2V_REVISION="${lightx2v_revision}"
 export LTX25_SCALE_AITER_REVISION="${aiter_revision}"
+export LTX25_SCALE_SOURCE_OVERLAY="${source_overlay}"
 export LTX25_SCALE_COLLECTOR_INNER=1
 export MODEL_RUN="${script_dir}/LTX25-ScaleCollector.sh"
 export CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-ltx25-scale-collector}"

@@ -52,6 +52,7 @@ def test_scale_collector_mounts_lightx2v_and_aiter_for_task10(tmp_path: Path) ->
     env = {
         **os.environ,
         "DRY_RUN": "1",
+        "SOURCE_OVERLAY": "1",
         "MEMORY_MONITOR": "0",
         "LIGHTX2V_SRC": str(lightx2v),
         "AITER_SRC": str(aiter),
@@ -86,15 +87,51 @@ def test_scale_collector_mounts_lightx2v_and_aiter_for_task10(tmp_path: Path) ->
     assert "ScaleCollector container: SP16" in output
 
 
-def test_scale_collector_owns_source_fetch_without_hot_selection() -> None:
+def test_scale_collector_defaults_to_image_installed_sources(tmp_path: Path) -> None:
+    result_dir = tmp_path / "results"
+    env = {
+        **os.environ,
+        "DRY_RUN": "1",
+        "MEMORY_MONITOR": "0",
+        "OUTPUT_DIR": str(tmp_path / "outputs"),
+    }
+    completed = subprocess.run(
+        [
+            "bash",
+            str(COLLECTOR),
+            "--image",
+            "example.invalid/ltx25:scale",
+            "--gpu-count",
+            "4",
+            "--output-dir",
+            str(result_dir),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    output = completed.stdout.replace("\\,", ",")
+    assert "Source overlay: disabled" in output
+    assert "image-installed LightX2V + Aiter AOT wheel" in output
+    assert "target=/workspace/aiter-source" not in output
+    assert "target=/workspace/LightX2V,readonly" not in output
+    assert "PYTHONPATH=/workspace/aiter-source" not in output
+    assert "AITER_JIT_DIR=" not in output
+
+
+def test_scale_collector_keeps_source_fetch_as_explicit_debug_mode() -> None:
     source = COLLECTOR.read_text(encoding="utf-8")
     assert "git@gitcode.com:hvat-ai/LightX2V.git" in source
     assert "git@gitcode.com:hvat-ai/aiter.git" in source
     assert "submodule update --init --recursive" in source
     assert 'export MODEL_RUN="${script_dir}/LTX25-ScaleCollector.sh"' in source
+    assert 'source_overlay="${SOURCE_OVERLAY:-0}"' in source
     assert "HF_TOKEN" not in source
     assert "HTTP_PROXY" not in source
-    assert "Hot selection remains in aiter-tune-gfx1201" in source
+    assert "aiter-tune-gfx1201" in source
 
 
 def test_scale_collector_is_valid_bash() -> None:

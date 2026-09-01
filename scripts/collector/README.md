@@ -6,10 +6,9 @@ precision, offload policy, buffer counts, tuned kernels, or parallel topology.
 
 ## LTX-2.5 Optional Weight Audit
 
-`LTX25-ScaleCollector.sh` 是分布式 Video VAE 的源码直跑 scale collector。它在
-宿主机托管并更新 LightX2V/Aiter 两套 `hvat-gfx1201` checkout，将其只读挂载到
-已有 ROCm 镜像，然后复用编号 10 的 SP4/SP8/SP16 调度、内存监控、视频和 timing
-汇总：
+`LTX25-ScaleCollector.sh` 是分布式 Video VAE 的 scale collector。它默认直接
+使用镜像内的 LightX2V 和 Aiter AOT wheel，然后复用编号 10 的 SP4/SP8/SP16
+调度、内存监控、视频和 timing 汇总：
 
 ```bash
 bash scripts/collector/LTX25-ScaleCollector.sh \
@@ -17,9 +16,10 @@ bash scripts/collector/LTX25-ScaleCollector.sh \
   --output-dir /disk/ssd/lightx2v-runtime/ltx25-scale-collector-001
 ```
 
-默认不需要源码路径；`LIGHTX2V_SRC`/`AITER_SRC` 只用于显式本地 checkout。
-Aiter 包从只读源码导入，JIT cache 按 Aiter commit 隔离。collector 不进行 Hot
-选择，也不自动把结果解释为生产晋级。
+默认不拉取或挂载源码，也不增加 CK 模块 preflight gate。仅调试源码时设置
+`SOURCE_OVERLAY=1`；此时 `LIGHTX2V_SRC`/`AITER_SRC` 可指定显式本地 checkout，
+否则使用托管 checkout。collector 不进行 Hot 选择，也不自动把结果解释为生产
+晋级。
 
 - `run_ltx25_weight_census.sh` is an optional no-GPU audit for the five
   BF16 split assets. It validates frozen size/SHA identities, Safetensors
