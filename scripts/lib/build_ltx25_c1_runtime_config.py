@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the two-rank LTX-2.5 C1 runtime configuration."""
+"""Build an LTX-2.5 C1 Ulysses runtime configuration."""
 
 from __future__ import annotations
 
@@ -10,18 +10,25 @@ from build_ltx25_runtime_config import build_config as build_reference_config
 from build_ltx25_runtime_config import write_json
 
 
-def build_config(model_root: Path) -> dict:
+SUPPORTED_SEQ_PARALLEL_SIZES = (2, 4, 8, 16)
+
+
+def build_config(model_root: Path, seq_parallel_size: int = 2) -> dict:
+    if seq_parallel_size not in SUPPORTED_SEQ_PARALLEL_SIZES:
+        supported = ", ".join(str(size) for size in SUPPORTED_SEQ_PARALLEL_SIZES)
+        raise ValueError(f"LTX-2.5 C1 seq parallel size must be one of {supported}")
     config = build_reference_config(model_root)
+    config["parallel"]["seq_p_size"] = seq_parallel_size
+    config["parallel"]["seq_p_attn_type"] = "ulysses"
     config.update(
         {
             # Keep the executable B0 split/offload lifecycle. C1 changes only
             # the isolated operator routes selected below.
             "ltx25_c1_gfx1201": True,
             "attn_type": "torch_sdpa",
-            # The focused race accounted for all six video-self probes: four
-            # are SP2 Ulysses boundaries and the two real post-A2A cores both
-            # selected native Sage v2. Keep dispatch role-level; Aiter owns
-            # the aligned/tail schedule selection for their dynamic lengths.
+            # SP2 plus the SP4/8/16 scale race covered post-A2A H16/H8/H4/H2;
+            # native Sage v2 won every core. Keep dispatch role-level; Aiter
+            # owns aligned/tail schedule selection for dynamic lengths.
             "ltx25_video_self_attn_type": "aiter_fav3_sage_bf16_attn",
             # Direct dense MHA won both collected video-to-text stages while
             # preserving one role-level route across their different lengths.
@@ -51,8 +58,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--seq-parallel-size",
+        type=int,
+        default=2,
+        choices=SUPPORTED_SEQ_PARALLEL_SIZES,
+    )
     args = parser.parse_args()
-    write_json(args.output, build_config(args.model_root))
+    write_json(
+        args.output,
+        build_config(args.model_root, seq_parallel_size=args.seq_parallel_size),
+    )
     print(f"LTX-2.5 C1 runtime config: {args.output}")
     return 0
 

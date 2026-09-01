@@ -58,10 +58,10 @@ Usage:
   ./lightx2vModelrun --run-ltx25-contract-collector
                                             Collect LTX-2.5 B0-reference contracts on 2 GPUs
   ./lightx2vModelrun --run-ltx25-c1-gfx1201
-                                            Run LTX-2.5 C1 on exactly 2 GPUs
+                                            Run LTX-2.5 C1 with pure Ulysses SP2/SP4/SP8/SP16
   ./lightx2vModelrun COMMAND [ARG...]        Run a command in the container
 
-Ordinary timing runs should use the seven numbered scripts:
+Ordinary timing runs should use the numbered scripts:
   scripts/run_01_wan21_720p_81f_16fps_1gpu.sh
   scripts/run_02_wan21_720p_81f_16fps_scale.sh
   scripts/run_04_wan22_480p_81f_16fps_scale.sh
@@ -69,6 +69,8 @@ Ordinary timing runs should use the seven numbered scripts:
   scripts/run_06_wan22_720p_81f_16fps_scale.sh
   scripts/run_07_wan22_720p_121f_24fps_scale.sh
   scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh --image IMAGE
+  scripts/run_09_minimax_h3_480p_124f_24fps_scale.sh --image IMAGE
+  scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh --image IMAGE
 
 Important overrides:
   GPU_DEVICES, IMAGE, MODEL_STORE, OUTPUT_DIR, INPUT_DIR, CACHE_DIR
@@ -272,7 +274,10 @@ if [[ "${inference_mode}" == "ltx25_contract" ]]; then
     ltx25_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_ltx25_in_container.sh"
 fi
 if [[ "${inference_mode}" == "ltx25_c1" ]]; then
-    [[ "${gpu_count}" == 2 ]] || die "LTX-2.5 C1 requires exactly two GPU_DEVICES"
+    case "${gpu_count}" in
+        2 | 4 | 8 | 16) ;;
+        *) die "LTX-2.5 C1 supports exactly 2, 4, 8, or 16 GPU_DEVICES with pure Ulysses" ;;
+    esac
     [[ "${LIGHTX2V_LTX25_C1_EXPLICIT:-0}" == 1 ]] || \
         die "LTX-2.5 C1 requires scripts/run_ltx25_c1_704x1280_5s.sh"
     ltx25_c1_run_script="${FP8_RUN_SCRIPT_DIR}/lib/run_ltx25_c1_in_container.sh"
@@ -539,7 +544,7 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${LTX25_MODEL_ROOT},target=${container_ltx25_root},readonly"
         --env "LTX25_MODEL_ROOT=${container_ltx25_root}"
-        --env LTX25_WORLD_SIZE=2
+        --env "LTX25_WORLD_SIZE=${gpu_count}"
     )
     if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
         ltx25_tunableop_cache_pattern="${CONTAINER_LTX25_TUNABLEOP_ROOT}/tunableop_results_full%d.csv"
@@ -719,11 +724,11 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
         printf 'LTX-2.5 source: /workspace/LightX2V (from image)\n'
     fi
     if [[ "${is_ltx25_c1_mode}" == 1 ]]; then
-        printf 'LTX-2.5 route:  C1; TunableOp replay + native-Sage video-self + role attention/QK RMS + strict RoPE + CK Conv3D\n'
+        printf 'LTX-2.5 route:  C1; pure Ulysses SP%s + TunableOp replay + native-Sage video-self + role attention/QK RMS + strict RoPE + CK Conv3D\n' "${gpu_count}"
         if [[ -n "${ltx25_tunableop_cache}" ]]; then
-            printf 'LTX-2.5 GEMM:   %s -> rank-local cache paths (host override, read-only)\n' "${ltx25_tunableop_cache}"
+            printf 'LTX-2.5 GEMM:   %s -> SP2/4/8/16 union rank caches (host override, read-only)\n' "${ltx25_tunableop_cache}"
         else
-            printf 'LTX-2.5 GEMM:   %s (image cache, read-only)\n' "${ltx25_tunableop_cache_pattern}"
+            printf 'LTX-2.5 GEMM:   %s (SP2/4/8/16 union image cache, read-only)\n' "${ltx25_tunableop_cache_pattern}"
         fi
         printf 'LTX-2.5 Conv3D: exact tuned hit required; rank route report enabled\n'
     elif [[ "${LIGHTX2V_LTX25_CONTRACT_ULTRA:-0}" == 1 ]]; then

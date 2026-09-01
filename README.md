@@ -13,6 +13,8 @@ workload in a model-specific launcher and emits rank-critical evidence.
 | 06 | `scripts/run_06_wan22_720p_81f_16fps_scale.sh` | Wan2.2, 720P, 81f, 16 FPS | 2/4/8/16 |
 | 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
 | 08 | `scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh` | MiniMax-H3, 1344x768, 124f, 24 FPS | 2/4/8/16 |
+| 09 | `scripts/run_09_minimax_h3_480p_124f_24fps_scale.sh` | MiniMax-H3, 832x480, 124f, 24 FPS | 2/4/8/16 |
+| 10 | `scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh` | LTX-2.5 C1, 1280x704, 121f, 24 FPS | 4/8/16 |
 
 ## LTX-2.3 Distilled FP8 B0
 
@@ -89,11 +91,11 @@ change the numerical route. The current executable Video VAE is still
 known black video is never accepted as a quality baseline or selector
 promotion gate.
 
-## LTX-2.5 C1 two-GPU runtime
+## LTX-2.5 C1 runtime and scale
 
 The C1 model entry stays in this run repository; offline GEMM cache crafting
-and Conv3D HotXX selection stay in `aiter-tune-gfx1201/tune`. Run it from the
-Docker host with exactly two physical GPUs:
+and Conv3D HotXX selection stay in `aiter-tune-gfx1201/tune`. Run the existing
+SP2 model check from the Docker host with:
 
 ```bash
 bash scripts/run_ltx25_c1_704x1280_5s.sh \
@@ -101,18 +103,37 @@ bash scripts/run_ltx25_c1_704x1280_5s.sh \
   --gpus 0,1
 ```
 
-The integrated image contains the verified unified GEMM cache at both
-rank-local TunableOp filenames; runtime tuning and untuned recording stay
-disabled. `--tunableop-cache FILE` remains available as a read-only host
+Run the 4/8/16 scale sweep with one rebuilt image:
+
+```bash
+bash scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh \
+  --image IMAGE
+```
+
+Use `--counts 4`, `--counts 8`, or `--counts 16` for one arm. `--counts
+2,4,8,16` includes the existing SP2 baseline. Every arm is a separate
+container run with its own video, runtime config, prompt cache, Conv3D route
+reports, log, and memory report.
+
+All four supported sizes use pure Ulysses. LTX-2.5 has 32 video heads, so the
+post-A2A native Sage cores have H16/H8/H4/H2 at SP2/SP4/SP8/SP16. LightX2V's
+generic Ulysses path checks head divisibility, pads and shards sequence tokens,
+and gathers the result; Aiter's B1/D128 shape-family selector remains responsible
+for choosing its aligned/tail schedule. Neither repository carries an exact
+LTX scale-shape allowlist.
+
+The integrated image contains one verified SP2/4/8/16 GEMM union cache at both
+rank-local TunableOp filenames: 44 selected workloads produced 34 concrete
+identities and read-only replay had zero misses. SP4/SP8/SP16 materialize the
+same cache into ephemeral rank-local paths; runtime tuning and untuned recording
+stay disabled. `--tunableop-cache FILE` remains available as a read-only host
 override. `--lightx2v-source DIR` likewise remains available for source
 iteration, but is not part of the normal image run.
 
 The `video_self` role uses the shared native gfx1201 SageAttention2 adapter.
-The focused race accounted for all six collected probes: four are Ulysses
-boundary observations and the only two post-A2A kernels are
-`[1,3520,16,128]` and `[1,14080,16,128]`. Both passed every replica and both
-select Aiter's aligned `r32_kv` schedule because their sequence lengths are
-divisible by 32. LightX2V selects Sage by semantic role and does not carry an
+The SP2 focused race and SP4/8/16 scale race cover H16/H8/H4/H2. All six new
+scale contracts passed all 16 numeric replicas; Sage was at least 1.7448x faster
+than public MHA. LightX2V selects Sage by semantic role and does not carry an
 exact-shape table; Aiter remains the sole schedule selector. A fresh image E2E
 run is still required before treating this approximate INT8-QK/FP8-PV route as
 model-quality evidence.

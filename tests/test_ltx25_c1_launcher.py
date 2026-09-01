@@ -39,6 +39,8 @@ def test_ltx25_c1_config_promotes_only_evidenced_semantic_roles(tmp_path):
     assert config["ltx25_audio_text_attn_type"] == "torch_sdpa"
     assert config["ltx25_audio_to_video_attn_type"] == "torch_sdpa"
     assert config["rope_type"] == "ltx25_triton_strict_rope"
+    assert config["parallel"]["seq_p_size"] == 2
+    assert config["parallel"]["seq_p_attn_type"] == "ulysses"
 
 
 def test_ltx25_c1_host_entry_builds_read_only_two_rank_docker_command(tmp_path):
@@ -157,7 +159,7 @@ def test_ltx25_c1_inner_helper_rejects_direct_host_execution():
 def test_ltx25_c1_prompt_source_supplies_required_runcollector_output():
     text = IN_CONTAINER.read_text(encoding="utf-8")
 
-    assert 'prompt_collector="${result_dir}/ltx25_c1_prompt_collector.json"' in text
+    assert 'prompt_collector="${artifact_dir}/ltx25_c1_prompt_collector.json"' in text
     assert '--collector-output "${prompt_collector}"' in text
     assert '"${prompt_collector}" "${video_path}"' in text
 
@@ -180,6 +182,8 @@ def test_ltx25_c1_image_source_requires_and_verifies_promoted_routes():
     assert "video_self=Aiter native Sage v2" in text
     assert "aligned LTX cores use r32_kv" in text
     assert "video_to_text/video_to_audio=Aiter Triton dense" in text
+    assert '--nproc_per_node="${world_size}"' in text
+    assert '--seq-parallel-size "${world_size}"' in text
 
 
 def test_ltx25_c1_scripts_are_valid_bash():

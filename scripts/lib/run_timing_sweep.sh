@@ -57,8 +57,13 @@ case "${RUN_MODEL_VERSION}" in
         summary_model=minimax_h3
         memory_phase_schema=minimax_h3
         ;;
+    ltx25_c1)
+        model_run_mode=--run-ltx25-c1-gfx1201
+        summary_model=ltx25_c1
+        memory_phase_schema=ltx2
+        ;;
     *)
-        echo "ERROR: RUN_MODEL_VERSION must be wan21, wan22, or minimax_h3" >&2
+        echo "ERROR: RUN_MODEL_VERSION must be wan21, wan22, minimax_h3, or ltx25_c1" >&2
         exit 2
         ;;
 esac
@@ -120,6 +125,10 @@ done
 }
 if [[ "${RUN_MODEL_VERSION}" == minimax_h3 && -z "${image_override}" ]]; then
     echo "ERROR: MiniMax-H3 timing requires --image with the rebuilt production image" >&2
+    exit 2
+fi
+if [[ "${RUN_MODEL_VERSION}" == ltx25_c1 && -z "${image_override}" ]]; then
+    echo "ERROR: LTX-2.5 C1 timing requires --image with the rebuilt production image" >&2
     exit 2
 fi
 
@@ -296,10 +305,15 @@ payload = {
     "gpu_groups": {
         str(count): gpu_group_by_count[str(count)] for count in gpu_counts
     },
-    "parallel_topologies": {
-        str(count): ("ulysses_ring_2d" if count == 16 else "ulysses")
-        for count in gpu_counts
-    } if "${RUN_MODEL_VERSION}" == "minimax_h3" else None,
+    "parallel_topologies": (
+        {
+            str(count): ("ulysses_ring_2d" if count == 16 else "ulysses")
+            for count in gpu_counts
+        }
+        if "${RUN_MODEL_VERSION}" == "minimax_h3"
+        else ({str(count): "ulysses" for count in gpu_counts}
+              if "${RUN_MODEL_VERSION}" == "ltx25_c1" else None)
+    ),
     "first_frame": sys.argv[2] or None,
     "last_frame": sys.argv[3] or None,
     "prompt_preset": "${H3_PROMPT_PRESET:-bird-stable}" if "${RUN_MODEL_VERSION}" == "minimax_h3" else None,
@@ -325,6 +339,8 @@ if [[ "${RUN_MODEL_VERSION}" == wan22 ]]; then
     echo "Wan2.2 B1 policy: auto (2/4=baseline, 8/16=b1; explicit override remains available)"
 elif [[ "${RUN_MODEL_VERSION}" == minimax_h3 ]]; then
     echo "MiniMax-H3 topology: SP2/SP4/SP8=Ulysses, SP16=CP2xU8"
+elif [[ "${RUN_MODEL_VERSION}" == ltx25_c1 ]]; then
+    echo "LTX-2.5 topology: SP2/SP4/SP8/SP16=pure Ulysses"
 fi
 
 for count in "${counts[@]}"; do
@@ -353,6 +369,8 @@ for count in "${counts[@]}"; do
             H3_LAST_FRAME="${h3_last_frame}"
             H3_PROMPT_PRESET="${H3_PROMPT_PRESET:-bird-stable}"
         )
+    elif [[ "${RUN_MODEL_VERSION}" == ltx25_c1 ]]; then
+        run_environment+=(LIGHTX2V_LTX25_C1_EXPLICIT=1)
     fi
     start_memory_monitor "${count}" "${selected}" "${log_path}" "${memory_output_path}"
     set +e

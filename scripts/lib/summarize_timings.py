@@ -25,6 +25,7 @@ SCALES = {
     "wan21": (1, 2, 4, 8, 16),
     "wan22": (2, 4, 8, 16),
     "minimax_h3": (2, 4, 8, 16),
+    "ltx25_c1": (2, 4, 8, 16),
 }
 PROFILE_RE = re.compile(
     r"\[Profile\]\s+(?:Rank (?P<rank>\d+)|(?P<single>Single GPU))\s+-\s+"
@@ -146,10 +147,20 @@ def parse_log(path: Path, *, model: str) -> dict[str, float | None]:
 
 def format_value(metric: str, value: float | None, *, model: str, csv_mode=False) -> str:
     if value is None:
-        if model in ("wan22", "minimax_h3") and metric == "Image Encoder":
+        if (
+            model in ("wan22", "minimax_h3") and metric == "Image Encoder"
+        ) or (
+            model == "ltx25_c1" and metric in ("Image Encoder", "VAE Encoder")
+        ):
             return "N/A"
         return "" if csv_mode else "—"
     return f"{value:.6f}" if csv_mode else f"{value:.3f}s"
+
+
+def metric_label(metric: str, *, model: str) -> str:
+    if model == "ltx25_c1" and metric == "DiT 4 steps":
+        return "DiT 11 steps"
+    return metric
 
 
 def write_csv(path: Path, scales, results, *, model: str) -> None:
@@ -159,7 +170,7 @@ def write_csv(path: Path, scales, results, *, model: str) -> None:
         for metric in METRICS:
             writer.writerow(
                 (
-                    metric,
+                    metric_label(metric, model=model),
                     *(
                         format_value(
                             metric,
@@ -193,12 +204,19 @@ def markdown_table(
             format_value(metric, results[scale].get(metric), model=model)
             for scale in scales
         ]
-        lines.append(f"| {metric} | " + " | ".join(cells) + " |")
+        lines.append(
+            f"| {metric_label(metric, model=model)} | " + " | ".join(cells) + " |"
+        )
     lines.append("")
     if model == "minimax_h3":
         lines.append(
             f"> **MiniMax-H3 口径：**{width}x{height}、{frames} 帧、{fps} FPS；"
             "2/4/8 卡使用 Ulysses，16 卡使用 CP2xU8。跨 rank 指标取关键路径上的最慢 rank。"
+        )
+    elif model == "ltx25_c1":
+        lines.append(
+            f"> **LTX-2.5 C1 口径：**{width}x{height}、{frames} 帧、{fps} FPS、"
+            "8+3 步；2/4/8/16 卡均使用纯 Ulysses。跨 rank 指标取关键路径上的最慢 rank。"
         )
     else:
         lines.append(
@@ -227,11 +245,12 @@ def main() -> int:
 
     results = {scale: {} for scale in scales}
     errors = []
-    disabled_metrics = (
-        {"Image Encoder"}
-        if args.model in ("wan22", "minimax_h3")
-        else set()
-    )
+    if args.model == "ltx25_c1":
+        disabled_metrics = {"Image Encoder", "VAE Encoder"}
+    elif args.model in ("wan22", "minimax_h3"):
+        disabled_metrics = {"Image Encoder"}
+    else:
+        disabled_metrics = set()
     for scale in args.counts:
         log_path = args.log_dir / f"{scale}gpu.log"
         if not log_path.is_file():
@@ -264,10 +283,13 @@ def main() -> int:
         print("Image Encoder: N/A (Wan2.2 use_image_encoder=false)")
     elif args.model == "minimax_h3":
         print("Image Encoder: N/A (MiniMax-H3 keyframes are encoded by the VAE path)")
-    if args.model == "minimax_h3":
+    elif args.model == "ltx25_c1":
+        print("Image Encoder: N/A (LTX-2.5 T2AV has no image input)")
+        print("VAE Encoder: N/A (LTX-2.5 T2AV starts from latent noise)")
+    if args.model in ("minimax_h3", "ltx25_c1"):
         print(
             "Total Cost: LightX2V internal init_runner + run_pipeline; "
-            "identical boundary for Ulysses and Ring"
+            "identical boundary across parallel scales"
         )
     else:
         print(
