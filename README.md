@@ -110,6 +110,19 @@ bash scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh \
   --image IMAGE
 ```
 
+在镜像重做前收集分布式 Video VAE 的源码直跑证据，使用 Run collector：
+
+```bash
+bash scripts/collector/LTX25-ScaleCollector.sh \
+  --image IMAGE \
+  --output-dir /disk/ssd/lightx2v-runtime/ltx25-scale-collector-001
+```
+
+该入口自动更新 LightX2V 和 Aiter 的 `hvat-gfx1201` 托管 checkout，把两套源码
+只读透传到现有镜像，并复用编号 10 的 4/8/16 卡组、显存监控、视频与 timing
+汇总。Aiter JIT cache 按源码 SHA 隔离。它只收集 E2E 证据，不做 Hot 选拔；后续
+HotPick 仍落在 `aiter-tune-gfx1201/tune`。
+
 Use `--counts 4`, `--counts 8`, or `--counts 16` for one arm. `--counts
 2,4,8,16` includes the existing SP2 baseline. Every arm is a separate
 container run with its own video, runtime config, prompt cache, Conv3D route
@@ -145,10 +158,14 @@ For a later experimental selector artifact, override it with:
   --conv3d-csv /path/to/conv3d_v1_tuned.csv
 ```
 
-LTX Conv3D calls require an exact tuned-CSV hit before dispatching CK. Until
-that artifact exists, or whenever a contract is absent, the original Torch
-Conv3D path remains authoritative. The current `conv_diagnostic` Video VAE and
-known black-output issue remain production-promotion blockers.
+LTX Conv3D replays an exact tuned-CSV Hot when present. New contracts remain
+inside Aiter and use its AOT generic/catalog/Hot selector; Torch is only the
+last-resort path when the CK public operator cannot execute the contract.
+
+SP4/SP8/SP16 distribute the official Video VAE over the same torchrun world:
+each rank decodes one overlapping spatial tile, rank 0 receives tiles through
+RCCL point-to-point operations and blends them in BF16 before uint8 conversion.
+SP2 keeps the previously validated rank-0 tiled decode as the comparison arm.
 
 MiniMax-H3 gfx1201 is a production entry. Its default FL2V first and last
 frames are read-only host inputs at

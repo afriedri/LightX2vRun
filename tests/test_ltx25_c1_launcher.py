@@ -30,6 +30,8 @@ def test_ltx25_c1_config_promotes_only_evidenced_semantic_roles(tmp_path):
     config = json.loads(output.read_text(encoding="utf-8"))
 
     assert config["ltx25_c1_gfx1201"] is True
+    assert config["ltx25_distributed_video_vae"] is False
+    assert config["ltx25_distributed_video_vae_overlap"] == 4
     assert config["ltx25_video_to_audio_attn_type"] == "aiter_triton_dense_bf16_attn"
     assert config["ltx25_qk_rms_norm_type"] == "sgl-kernel"
     assert config["rms_norm_type"] == "torch_native"
@@ -90,6 +92,7 @@ def test_ltx25_c1_host_entry_builds_read_only_two_rank_docker_command(tmp_path):
     assert "GPU devices:    2,3" in stdout
     assert "native-Sage video-self" in stdout
     assert "strict RoPE" in stdout
+    assert "CSV replay or Aiter AOT fallback Hot" in stdout
     assert "PYTORCH_TUNABLEOP_ENABLED=1" in stdout
     assert "PYTORCH_TUNABLEOP_TUNING=0" in stdout
     assert stdout.count(f"source={cache}") == 2

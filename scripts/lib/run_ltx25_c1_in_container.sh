@@ -93,6 +93,7 @@ expected = {
     "rope_type": "ltx25_triton_strict_rope",
     "ltx25_video_self_attn_type": "aiter_fav3_sage_bf16_attn",
     "ltx25_video_text_attn_type": "aiter_triton_dense_bf16_attn",
+    "ltx25_distributed_video_vae": world_size >= 4,
 }
 for key, expected_value in expected.items():
     actual = config.get(key)
@@ -161,7 +162,12 @@ fi
 echo "Attention: video_self=Aiter native Sage v2 (Aiter schedule selector; aligned LTX cores use r32_kv); video_to_text/video_to_audio=Aiter Triton dense; other roles=Torch SDPA"
 echo "Q/K RMSNorm: Aiter CK; block RMSNorm=Torch"
 echo "RoPE: LTX-2.5 strict/no-FMA Triton; structural miss falls back to Torch"
-echo "Conv3D: shared Aiter CK adapter; untuned contracts explicitly fall back to Torch"
+echo "Conv3D: shared Aiter CK adapter; CSV hit or Aiter AOT fallback Hot selection"
+if (( world_size >= 4 )); then
+    echo "Video VAE: distributed ${world_size}-tile spatial decode; RCCL P2P gather; rank0 BF16 blend"
+else
+    echo "Video VAE: validated rank0 tiled decode (SP2 baseline)"
+fi
 
 python3 -m lightx2v.utils.ltx2_prompt_cache \
     --model-generation 2.5 \

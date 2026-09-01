@@ -730,7 +730,7 @@ if [[ "${is_ltx25_mode}" == 1 ]]; then
         else
             printf 'LTX-2.5 GEMM:   %s (SP2/4/8/16 union image cache, read-only)\n' "${ltx25_tunableop_cache_pattern}"
         fi
-        printf 'LTX-2.5 Conv3D: exact tuned hit required; rank route report enabled\n'
+        printf 'LTX-2.5 Conv3D: CSV replay or Aiter AOT fallback Hot; rank route report enabled\n'
     elif [[ "${LIGHTX2V_LTX25_CONTRACT_ULTRA:-0}" == 1 ]]; then
         printf 'LTX-2.5 route:  CollectorUltra evidence; C1 probe disabled\n'
     else

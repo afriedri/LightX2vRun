@@ -25,6 +25,11 @@ def build_config(model_root: Path, seq_parallel_size: int = 2) -> dict:
             # Keep the executable B0 split/offload lifecycle. C1 changes only
             # the isolated operator routes selected below.
             "ltx25_c1_gfx1201": True,
+            # SP4/8/16 split the official Video VAE spatially: one complete
+            # tile per rank, RCCL point-to-point collection, rank-0 BF16 blend.
+            # Keep SP2 on the already validated single-rank decode route.
+            "ltx25_distributed_video_vae": seq_parallel_size >= 4,
+            "ltx25_distributed_video_vae_overlap": 4,
             "attn_type": "torch_sdpa",
             # SP2 plus the SP4/8/16 scale race covered post-A2A H16/H8/H4/H2;
             # native Sage v2 won every core. Keep dispatch role-level; Aiter

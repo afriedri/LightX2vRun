@@ -38,6 +38,8 @@ def test_ltx25_c1_scale_configs_use_pure_ulysses(tmp_path):
         parallel = config["parallel"]
         assert parallel["seq_p_size"] == size
         assert parallel["seq_p_attn_type"] == "ulysses"
+        assert config["ltx25_distributed_video_vae"] is (size >= 4)
+        assert config["ltx25_distributed_video_vae_overlap"] == 4
         assert "ring_p_size" not in parallel
         assert "ulysses_p_size" not in parallel
 
@@ -159,6 +161,7 @@ def test_ltx25_c1_inner_fans_out_one_scale_union_cache_without_tuning():
     assert 'export PYTORCH_TUNABLEOP_FILENAME="${tunableop_cache_pattern}"' in text
     assert 'PYTORCH_TUNABLEOP_RECORD_UNTUNED=0' in text
     assert 'artifact_dir="${video_path%.mp4}_artifacts"' in text
+    assert "RCCL P2P gather; rank0 BF16 blend" in text
 
 
 def test_ltx25_c1_scale_scripts_are_valid_bash():
