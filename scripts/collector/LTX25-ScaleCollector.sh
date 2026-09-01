@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One host entry for image-based LTX-2.5 SP4/SP8/SP16 E2E evidence.
+# One host entry for image-based LTX-2.5 SP2/SP4/SP8/SP16 E2E evidence.
 set -Eeuo pipefail
 
 G='\033[1;32m'; C='\033[0;36m'; Y='\033[1;33m'; R='\033[0;31m'; N='\033[0m'
@@ -37,15 +37,15 @@ usage() {
 Usage:
   bash scripts/collector/LTX25-ScaleCollector.sh --image IMAGE [OPTIONS]
 
-Collects LTX-2.5 SP4/SP8/SP16 E2E scale evidence from IMAGE and delegates
+Collects LTX-2.5 SP2/SP4/SP8/SP16 E2E scale evidence from IMAGE and delegates
 scale grouping, memory observation, video output, and timing summaries to the
 existing numbered task 10 launcher. The default path uses the image-installed
 LightX2V and Aiter wheel, including its AOT CK Conv3d module.
 
 Options:
   --image IMAGE
-  --counts 4,8,16       Forwarded to numbered task 10
-  --gpu-count N         Run one of 4, 8, or 16
+  --counts 2,4,8,16     Forwarded to numbered task 10
+  --gpu-count N         Run one of 2, 4, 8, or 16
   --output-dir DIR      Exact host timing/evidence directory
 
 Source controls:
@@ -158,7 +158,7 @@ run_source_overlay_container() {
     [[ -n "${runtime_image}" ]] || die "internal collector launch received no IMAGE"
     [[ "${gpu_devices}" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "invalid GPU_DEVICES: ${gpu_devices}"
     IFS=',' read -r -a gpu_list <<<"${gpu_devices}"
-    case "${#gpu_list[@]}" in 4|8|16) ;; *) die "ScaleCollector supports SP4, SP8, or SP16" ;; esac
+    case "${#gpu_list[@]}" in 2|4|8|16) ;; *) die "ScaleCollector supports SP2, SP4, SP8, or SP16" ;; esac
 
     if [[ "${DRY_RUN:-0}" != 1 ]]; then
         command -v docker >/dev/null 2>&1 || die "docker is required"
@@ -293,7 +293,7 @@ while (( $# > 0 )); do
             shift 2
             ;;
         --counts=*|--gpu-count=*) run_args+=("$1"); shift ;;
-        4|8|16) run_args+=("$1"); shift ;;
+        2|4|8|16) run_args+=("$1"); shift ;;
         *) die "unsupported argument: $1" ;;
     esac
 done

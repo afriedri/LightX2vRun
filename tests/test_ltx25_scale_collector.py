@@ -75,13 +75,14 @@ def test_scale_collector_mounts_lightx2v_and_aiter_for_task10(tmp_path: Path) ->
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     output = completed.stdout.replace("\\,", ",")
-    assert "GPU counts: 4,8,16" in output
+    assert "GPU counts: 2,4,8,16" in output
     assert f"LightX2V={lightx2v_revision}" in output
     assert f"Aiter={aiter_revision}" in output
     assert f"source={lightx2v},target=/workspace/LightX2V,readonly" in output
     assert f"source={aiter},target=/workspace/aiter-source,readonly" in output
     assert "PYTHONPATH=/workspace/aiter-source" in output
     assert f"AITER_JIT_DIR=/workspace/.cache/aiter/ltx25-source-{aiter_revision[:12]}" in output
+    assert "ScaleCollector container: SP2" in output
     assert "ScaleCollector container: SP4" in output
     assert "ScaleCollector container: SP8" in output
     assert "ScaleCollector container: SP16" in output
@@ -102,7 +103,7 @@ def test_scale_collector_defaults_to_image_installed_sources(tmp_path: Path) -> 
             "--image",
             "example.invalid/ltx25:scale",
             "--gpu-count",
-            "4",
+            "2",
             "--output-dir",
             str(result_dir),
         ],
@@ -114,6 +115,7 @@ def test_scale_collector_defaults_to_image_installed_sources(tmp_path: Path) -> 
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     output = completed.stdout.replace("\\,", ",")
+    assert "ScaleCollector container: SP2" in output
     assert "Source overlay: disabled" in output
     assert "image-installed LightX2V + Aiter AOT wheel" in output
     assert "target=/workspace/aiter-source" not in output

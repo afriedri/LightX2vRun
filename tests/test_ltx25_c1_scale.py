@@ -44,7 +44,7 @@ def test_ltx25_c1_scale_configs_use_pure_ulysses(tmp_path):
         assert "ulysses_p_size" not in parallel
 
 
-def test_ltx25_c1_scale_entry_builds_4_8_16_commands_and_manifest(tmp_path):
+def test_ltx25_c1_scale_entry_builds_2_4_8_16_commands_and_manifest(tmp_path):
     result_dir = tmp_path / "results"
     output_dir = tmp_path / "outputs"
     env = {
@@ -67,16 +67,17 @@ def test_ltx25_c1_scale_entry_builds_4_8_16_commands_and_manifest(tmp_path):
     )
     assert completed.returncode == 0, completed.stderr
     stdout = completed.stdout.replace("\\,", ",")
-    assert "GPU counts: 4,8,16" in stdout
+    assert "GPU counts: 2,4,8,16" in stdout
     assert "LTX-2.5 topology: SP2/SP4/SP8/SP16=pure Ulysses" in stdout
-    for size in (4, 8, 16):
+    for size in (2, 4, 8, 16):
         assert f"LTX25_WORLD_SIZE={size}" in stdout
         assert f"SAVE_RESULT_PATH=/workspace/LightX2V/save_results/ltx25-scale-test/{size}gpu.mp4" in stdout
 
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["model"] == "ltx25_c1"
-    assert manifest["gpu_counts"] == [4, 8, 16]
+    assert manifest["gpu_counts"] == [2, 4, 8, 16]
     assert manifest["parallel_topologies"] == {
+        "2": "ulysses",
         "4": "ulysses",
         "8": "ulysses",
         "16": "ulysses",

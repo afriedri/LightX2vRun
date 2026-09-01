@@ -14,7 +14,7 @@ workload in a model-specific launcher and emits rank-critical evidence.
 | 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
 | 08 | `scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh` | MiniMax-H3, 1344x768, 124f, 24 FPS | 2/4/8/16 |
 | 09 | `scripts/run_09_minimax_h3_480p_124f_24fps_scale.sh` | MiniMax-H3, 832x480, 124f, 24 FPS | 2/4/8/16 |
-| 10 | `scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh` | LTX-2.5 C1, 1280x704, 121f, 24 FPS | 4/8/16 |
+| 10 | `scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh` | LTX-2.5 C1, 1280x704, 121f, 24 FPS | 2/4/8/16 |
 
 ## LTX-2.3 Distilled FP8 B0
 
@@ -119,12 +119,12 @@ bash scripts/collector/LTX25-ScaleCollector.sh \
 ```
 
 该入口默认直接使用镜像内的 LightX2V 与 Aiter AOT wheel，复用编号 10 的
-4/8/16 卡组、显存监控、视频与 timing 汇总，不再用源码挂载遮蔽镜像中的 CK
+2/4/8/16 卡组、显存监控、视频与 timing 汇总，不再用源码挂载遮蔽镜像中的 CK
 Conv3D 模块。它只收集 E2E 证据，不做 Hot 选拔；后续 HotPick 仍落在
 `aiter-tune-gfx1201/tune`。仅调试源码时显式设置 `SOURCE_OVERLAY=1`。
 
-Use `--counts 4`, `--counts 8`, or `--counts 16` for one arm. `--counts
-2,4,8,16` includes the existing SP2 baseline. Every arm is a separate
+The default sweep is `--counts 2,4,8,16`. Use `--gpu-count 2`, `4`, `8`, or
+`16` for one arm. Every arm is a separate
 container run with its own video, runtime config, prompt cache, Conv3D route
 reports, log, and memory report.
 
