@@ -76,7 +76,12 @@ def test_ltx25_c1_scale_entry_builds_2_4_8_16_commands_and_manifest(tmp_path):
     manifest = json.loads((result_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["model"] == "ltx25_c1"
     assert manifest["gpu_counts"] == [2, 4, 8, 16]
-    assert manifest["gpu_groups"]["2"] == "2,3"
+    assert manifest["gpu_groups"] == {
+        "2": "14,15",
+        "4": "8,9,10,11",
+        "8": "0,1,2,3,4,5,6,7",
+        "16": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15",
+    }
     assert manifest["parallel_topologies"] == {
         "2": "ulysses",
         "4": "ulysses",
