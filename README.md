@@ -147,9 +147,31 @@ The `video_self` role uses the shared native gfx1201 SageAttention2 adapter.
 The SP2 focused race and SP4/8/16 scale race cover H16/H8/H4/H2. All six new
 scale contracts passed all 16 numeric replicas; Sage was at least 1.7448x faster
 than public MHA. LightX2V selects Sage by semantic role and does not carry an
-exact-shape table; Aiter remains the sole schedule selector. A fresh image E2E
-run is still required before treating this approximate INT8-QK/FP8-PV route as
-model-quality evidence.
+exact-shape table; Aiter remains the sole schedule selector.
+
+`ltx25-scale-collector-008` completed the image E2E sweep at SP4/SP8/SP16.
+All three arms completed 8+3 steps, saved MP4 files, activated native Sage,
+TunableOp replay, strict RoPE, distributed Video VAE, and the prebuilt Aiter CK
+Conv3D module, with no runtime error or CK-unavailable/Torch-fallback warning:
+
+| SP | DiT 11 steps | VAE Decoder | RUN pipeline | Total |
+|---:|---:|---:|---:|---:|
+| 4 | 62.894 s | 9.523 s | 78.627 s | 78.631 s |
+| 8 | 89.235 s | 7.597 s | 103.167 s | 103.169 s |
+| 16 | 150.443 s | 7.585 s | 164.015 s | 164.017 s |
+
+This small 11-step workload is communication-bound beyond SP4: SP8 and SP16
+take 1.312x and 2.086x the SP4 total time. Distributed VAE improves by about
+20.2% at SP8 and then plateaus. The maximum physical per-GPU usage is about
+17.41 GiB in every arm, below the approximately 31.86 GiB physical capacity,
+and no swap activity was observed. SP4 is therefore the latency recommendation;
+SP8/SP16 remain validated capacity/execution options.
+
+An Aiter internal AOT generic/catalog/Hot selector result is a valid CK route,
+not a Torch fallback, and is permitted for new tile shapes without an exact-shape
+gate. The attached evidence did not include the output videos for visual seam or
+quality review, and the route is still `conv_diagnostic`; these runs are runtime
+evidence, not official DiffVAE or model-quality acceptance.
 
 The normal image contains the merged Conv3D CSV and Hot29--Hot31 AOT aliases.
 For a later experimental selector artifact, override it with:
