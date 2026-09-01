@@ -4,22 +4,19 @@ This directory contains diagnostic launchers and their analysis helpers. They
 observe the frozen production workload and must not silently change model
 precision, offload policy, buffer counts, tuned kernels, or parallel topology.
 
-## LTX-2.5 Optional Weight Audit
+## LTX-2.5 Scale Entry and Optional Weight Audit
 
-`LTX25-ScaleCollector.sh` 是分布式 Video VAE 的 scale collector。它默认直接
-使用镜像内的 LightX2V 和 Aiter AOT wheel，然后复用编号 10 的 SP4/SP8/SP16
-调度、内存监控、视频和 timing 汇总：
+正常模型 scale 必须使用编号 10；它默认直接使用镜像内的 LightX2V 和 Aiter
+AOT wheel，顺序运行 SP2/SP4/SP8/SP16，并统一收集内存、视频和 timing：
 
 ```bash
-bash scripts/collector/LTX25-ScaleCollector.sh \
-  --image IMAGE \
-  --output-dir /disk/ssd/lightx2v-runtime/ltx25-scale-collector-001
+TIMING_RESULT_DIR=/disk/ssd/lightx2v-runtime/ltx25-scale-001 \
+bash scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh \
+  --image IMAGE
 ```
 
-默认不拉取或挂载源码，也不增加 CK 模块 preflight gate。仅调试源码时设置
-`SOURCE_OVERLAY=1`；此时 `LIGHTX2V_SRC`/`AITER_SRC` 可指定显式本地 checkout，
-否则使用托管 checkout。collector 不进行 Hot 选择，也不自动把结果解释为生产
-晋级。
+`LTX25-ScaleCollector.sh` 仅保留用于复现历史分布式 Video VAE 采证，不再作为
+正常运行入口。Scale 运行不拉取或挂载源码，也不进行 Hot 选择。
 
 - `run_ltx25_weight_census.sh` is an optional no-GPU audit for the five
   BF16 split assets. It validates frozen size/SHA identities, Safetensors

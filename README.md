@@ -103,25 +103,22 @@ bash scripts/run_ltx25_c1_704x1280_5s.sh \
   --gpus 0,1
 ```
 
-Run the 4/8/16 scale sweep with one rebuilt image:
+Run the 2/4/8/16 scale sweep with one rebuilt image:
 
 ```bash
 bash scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh \
   --image IMAGE
 ```
 
-使用镜像内实现收集分布式 Video VAE scale 证据：
+编号 10 是正式且唯一的 LTX-2.5 scale 运行入口，默认顺序运行 2/4/8/16 卡。
+指定结果目录并只跑 SP2：
 
 ```bash
-bash scripts/collector/LTX25-ScaleCollector.sh \
+TIMING_RESULT_DIR=/disk/ssd/lightx2v-runtime/ltx25-scale-sp2-001 \
+bash scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh \
   --image IMAGE \
-  --output-dir /disk/ssd/lightx2v-runtime/ltx25-scale-collector-001
+  --gpu-count 2
 ```
-
-该入口默认直接使用镜像内的 LightX2V 与 Aiter AOT wheel，复用编号 10 的
-2/4/8/16 卡组、显存监控、视频与 timing 汇总，不再用源码挂载遮蔽镜像中的 CK
-Conv3D 模块。它只收集 E2E 证据，不做 Hot 选拔；后续 HotPick 仍落在
-`aiter-tune-gfx1201/tune`。仅调试源码时显式设置 `SOURCE_OVERLAY=1`。
 
 The default sweep is `--counts 2,4,8,16`. Use `--gpu-count 2`, `4`, `8`, or
 `16` for one arm. Every arm is a separate
