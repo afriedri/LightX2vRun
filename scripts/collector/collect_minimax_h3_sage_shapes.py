@@ -77,9 +77,10 @@ def collect_log(log_path: Path, expected_world_size: int) -> dict:
     if not log_path.is_file():
         raise ValueError(f"Sage run log does not exist: {log_path}")
     text = ANSI_RE.sub("", log_path.read_text(encoding="utf-8", errors="replace"))
+    runtime_events = parse_runtime_events(text)
     events = [
         event
-        for event in parse_runtime_events(text)
+        for event in runtime_events
         if event.get("kind") == "dispatch"
         and event.get("model") == "minimax_h3"
         and event.get("component") in EXPECTED_COMPONENTS
@@ -163,13 +164,27 @@ def collect_log(log_path: Path, expected_world_size: int) -> dict:
     if missing:
         raise ValueError(f"{log_path} is missing Sage dispatches for ranks {missing}")
     shapes = {tuple(item["shape_bshd"]) for item in by_rank.values()}
-    if len(shapes) != 1:
+    # CP2 partitions odd auxiliary prefixes unevenly; ranks in each U8 row
+    # still agree, while the two context rows may differ by one query.
+    if topology == "ulysses_ring_2d":
+        rows = [{tuple(by_rank[r]["shape_bshd"]) for r in range(start, start + 8)} for start in (0, 8)]
+        if any(len(row) != 1 for row in rows):
+            raise ValueError(f"{log_path} has within-context Sage shape disagreement")
+        left, right = (next(iter(row)) for row in rows)
+        if left[:1] + left[2:] != right[:1] + right[2:] or left[1] - right[1] not in (0, 1):
+            raise ValueError(f"{log_path} has cross-rank Sage shape disagreement: {sorted(shapes)}")
+    elif len(shapes) != 1:
         raise ValueError(f"{log_path} has cross-rank Sage shape disagreement: {sorted(shapes)}")
     components = {str(event["component"]) for event in events}
     if len(components) != 1:
         raise ValueError(f"{log_path} has cross-rank Sage component disagreement: {sorted(components)}")
-    shape = list(next(iter(shapes)))
+    shape = by_rank[0]["shape_bshd"]
+    partition_lengths = {event.get("total_rows") for event in runtime_events
+                         if event.get("model") == "minimax_h3" and event.get("component") == "dit.sequence_partition"}
+    if len(partition_lengths) > 1:
+        raise ValueError(f"{log_path} has inconsistent sequence partition lengths")
     return {
+        "partition_total_rows": next(iter(partition_lengths), None),
         "sp_size": expected_world_size,
         "world_size": expected_world_size,
         "topology": topology,
@@ -218,13 +233,14 @@ def add_kernel_contracts(run: dict, global_sequence_length: int) -> None:
     context_size = 2
     ulysses_size = 8
     aux_length = global_sequence_length % world_size
+    if aux_length < context_size:
+        aux_length += world_size  # Same minimum of two rows as H3 partitioning.
     main_shard_length = (global_sequence_length - aux_length) // world_size
     ulysses_main_length = main_shard_length * ulysses_size
-    local_aux_query_length = aux_length // context_size
+    local_aux_query_length = (aux_length + 1) // context_size
     expected_dispatch_length = ulysses_main_length + local_aux_query_length
     if (
         aux_length <= 0
-        or aux_length % context_size
         or main_shard_length <= 0
         or dispatch_sequence_length != expected_dispatch_length
     ):
@@ -233,6 +249,11 @@ def add_kernel_contracts(run: dict, global_sequence_length: int) -> None:
             f"does not match global sequence {global_sequence_length}"
         )
 
+    for item in run["per_rank"]:
+        context_rank = item["rank"] // ulysses_size
+        local_aux = aux_length // context_size + int(context_rank < aux_length % context_size)
+        if item["sequence_length"] != ulysses_main_length + local_aux:
+            raise ValueError(f"CP2 rank {item['rank']} query length does not match its auxiliary partition")
     aux_shape = [batch, local_aux_query_length, heads, head_dim]
     main_shape = [batch, ulysses_main_length, heads, head_dim]
     combined_shape = [batch, ulysses_main_length + aux_length, heads, head_dim]
@@ -266,6 +287,13 @@ def add_kernel_contracts(run: dict, global_sequence_length: int) -> None:
         },
     ]
 
+    if aux_length % context_size:
+        first = run["kernel_contracts"][0]
+        first["ranks"] = list(range(8))
+        other = {**first, "name": "cp2_nonfinal_aux_rectangular_context1",
+                 "q_shape_bshd": [batch, aux_length // context_size, heads, head_dim], "ranks": list(range(8, 16))}
+        run["kernel_contracts"].insert(1, other)
+
 
 def build_summary(run_specs: list[tuple[int, Path]]) -> dict:
     if not run_specs:
@@ -279,9 +307,10 @@ def build_summary(run_specs: list[tuple[int, Path]]) -> dict:
         for run in runs
         if run["topology"] != "ulysses_ring_2d"
     }
+    sequence_lengths.update(run["partition_total_rows"] for run in runs if run["partition_total_rows"] is not None)
     if not sequence_lengths:
         raise ValueError(
-            "CP2xU8 shape reconstruction requires at least one dense/Ulysses reference run"
+            "CP2xU8 shape reconstruction requires at least one dense/Ulysses reference run or sequence partition metadata"
         )
     if len(sequence_lengths) != 1:
         raise ValueError(
@@ -294,7 +323,7 @@ def build_summary(run_specs: list[tuple[int, Path]]) -> dict:
         "schema_name": SCHEMA_NAME,
         "schema_version": SCHEMA_VERSION,
         "status": "complete",
-        "source": "normalized runtime dispatch; schema-2 runcollector disabled",
+        "source": "normalized runtime dispatch and available sequence partition metadata",
         "numerical_path_changed": False,
         "sp_sizes": sp_sizes,
         "sequence_length": global_sequence_length,

@@ -109,9 +109,6 @@ if [[ "$task" == ref2av ]]; then
     if (( target_video_length < 124 || target_video_length > 362 || target_video_length % 17 != 5 )); then
         echo 'ERROR: Ref2AV requires 17*n+5 frames within 124..362' >&2; exit 1
     fi
-    if (( gpu_count == 16 && target_video_length != 124 )); then
-        echo 'ERROR: H3 SP16 only supports 124 frames; use SP2/4/8 for longer clips' >&2; exit 1
-    fi
     prompt_duration_seconds="$(python3 -c 'import sys; print(round(int(sys.argv[1])/24, 3))' "$target_video_length")"
 fi
 if [[ "${H3_SMOKE:-0}" == 1 ]]; then
@@ -298,6 +295,7 @@ else
     echo "Dense GEMM/LoRA: torch.mm -> default ROCm BLAS heuristic (TunableOp disabled)"
 fi
 echo "Source mode: ${source_mode}"
+echo "LightX2V revision: ${LIGHTX2V_SOURCE_REVISION:-unknown (see preflight.json)}"
 echo "Model: ${model_path}"
 echo "Config: ${runtime_config_json}"
 echo "Input images (${task}): ${image_path} ${last_frame_path}"

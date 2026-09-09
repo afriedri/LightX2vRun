@@ -62,7 +62,7 @@ def test_collector_builds_exact_sp4_sp8_cp2_ulysses8_summary(tmp_path):
     assert payload["schema_version"] == 2
     assert payload["sp_sizes"] == [4, 8, 16]
     assert payload["sequence_length"] == 42196
-    assert payload["source"].endswith("schema-2 runcollector disabled")
+    assert payload["source"].startswith("normalized runtime dispatch")
     assert [run["shape_bshd"] for run in payload["runs"]] == [
         [1, 42196, 14, 128],
         [1, 42196, 7, 128],
@@ -150,3 +150,31 @@ def test_collector_cli_writes_json(tmp_path):
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "SP4: dispatch=[1, 42196, 14, 128] (4 ranks)" in completed.stdout
     assert json.loads(output.read_text(encoding="utf-8"))["runs"][0]["local_heads"] == 14
+
+
+@pytest.mark.parametrize("remainder", [0, 1, 3, 4, 15])
+def test_ref2v_cp2_shapes_follow_odd_aux_and_minimum_prefix(tmp_path, remainder):
+    total = 112000 + remainder
+    aux = remainder if remainder >= 2 else remainder + 16
+    main = (total - aux) // 2
+    lines = []
+    for rank in range(16):
+        local_aux = aux // 2 + int(rank < 8 and aux % 2 != 0)
+        line = hybrid_sage_log(main + local_aux).splitlines()[rank]
+        lines.append(line)
+    lines.append(f"[Runtime] kind=state model=minimax_h3 stage=H3-Prepare "
+                 f"component=dit.sequence_partition status=active backend=ulysses_ring "
+                 f"rank=0/16 total_rows={total} aux_rows={aux}")
+    path = tmp_path / "ref16.log"
+    path.write_text("\n".join(lines))
+    result = COLLECTOR.build_summary([(16, path)])
+    assert result["global_sequence_length"] == total
+    run = result["runs"][0]
+    assert run["aux_sequence_length"] == aux
+    assert run["ulysses_main_sequence_length"] == main
+    contracts = run["kernel_contracts"]
+    if aux % 2:
+        assert contracts[0]["q_shape_bshd"][1] == (aux + 1) // 2
+        assert contracts[1]["q_shape_bshd"][1] == aux // 2
+        assert contracts[1]["ranks"] == list(range(8, 16))
+    assert contracts[-1]["q_shape_bshd"][1] == main + aux

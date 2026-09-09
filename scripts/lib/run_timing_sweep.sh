@@ -22,6 +22,8 @@ Overrides:
   TIMING_RESULT_DIR    Exact result directory.
   WAN_GPU_GROUPS / WAN_RUN_TAG / WAN_RESULT_DIR remain supported aliases.
   MODEL_RUN            Host container launcher.
+  H3_INFER_STEPS       Ref2V sampling count (3 for a full-size pipeline check).
+  H3_PROMPT_FILE / H3_REFERENCE_IMAGE  Ref2V material overrides, as in its dedicated entry.
   MEMORY_MONITOR       1 (default) enables host RAM/rank RSS/PSS/GPU VRAM sampling; 0 disables it.
   MEMORY_MONITOR_INTERVAL        JSONL sampling interval in seconds (default: 2).
   MEMORY_MONITOR_PRINT_INTERVAL  Terminal heartbeat interval in seconds (default: 30).
@@ -149,7 +151,7 @@ result_dir="${TIMING_RESULT_DIR:-${WAN_RESULT_DIR:-${OUTPUT_DIR:-/disk/ssd/light
 gpu_groups_value="${TIMING_GPU_GROUPS:-${WAN_GPU_GROUPS:-${RUN_DEFAULT_GPU_GROUPS}}}"
 h3_first_frame=
 h3_last_frame=
-if [[ "${RUN_MODEL_VERSION}" == minimax_h3 ]]; then
+if [[ "${RUN_MODEL_VERSION}" == minimax_h3 && "${RUN_H3_TASK:-fl2av}" == fl2av ]]; then
     # Numbered tasks are fixed workloads. Do not let frame settings inherited
     # from a previous shell silently replace the task's declared keyframes.
     h3_first_frame="${RUN_H3_FIRST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png}"
@@ -280,8 +282,9 @@ wait_memory_monitor() {
 }
 
 duration_seconds="${RUN_DURATION_SECONDS:-$(( (RUN_TARGET_FRAMES - 1) / RUN_TARGET_FPS ))}"
-python3 - "${result_dir}/run_manifest.json" "${h3_first_frame}" "${h3_last_frame}" <<PY
+python3 - "${result_dir}/run_manifest.json" "${h3_first_frame}" "${h3_last_frame}" "${image_override}" <<PY
 import json
+import os
 import pathlib
 import sys
 
@@ -293,6 +296,7 @@ gpu_group_by_count = {
 }
 payload = {
     "kind": "lightx2v_gfx1201_timing_sweep",
+    "image": sys.argv[4],
     "task_id": "${RUN_TASK_ID}",
     "label": "${RUN_TASK_LABEL}",
     "model": "${RUN_MODEL_VERSION}",
@@ -320,6 +324,16 @@ payload = {
     "video_pattern": "/workspace/LightX2V/save_results/${run_tag}/<count>gpu.mp4",
     "b1_policy": "2/4 baseline, 8/16 b1" if "${RUN_MODEL_VERSION}" == "wan22" else None,
 }
+if os.environ.get("RUN_MODEL_VERSION") == "minimax_h3" and os.environ.get("RUN_H3_TASK") == "ref2av":
+    payload.update(
+        task="ref2av", weights="minimax_h3_ref2va_bf16.safetensors", lora=False,
+        sampling=os.environ["H3_STEP_UPDATE"], infer_steps=int(os.environ["H3_INFER_STEPS"]),
+        reference_image_resize_mode=os.environ.get("H3_REFERENCE_IMAGE_RESIZE_MODE", "match"),
+        collector_enabled=os.environ.get("LIGHTX2V_H3_RUN_COLLECTOR") == "1",
+        prompt_preset=None, prompt_file=(os.environ.get("H3_PROMPT_FILE") or "assets/minimax_h3/rooftop_15s/prompt.txt"),
+        reference_image=os.environ.get("H3_REFERENCE_IMAGE"),
+        video_pattern="<count>gpu/minimax_h3_ref2av.mp4", native_frames=362, output_frames=360,
+    )
 pathlib.Path("${result_dir}/run_manifest.json").write_text(
     json.dumps(payload, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
@@ -363,6 +377,7 @@ for count in "${counts[@]}"; do
         run_environment+=(LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE="${LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE:-auto}")
     elif [[ "${RUN_MODEL_VERSION}" == minimax_h3 ]]; then
         run_environment+=(
+            H3_TASK="${RUN_H3_TASK:-fl2av}"
             LIGHTX2V_H3_EXPLICIT_IMAGE=1
             H3_SMOKE=0
             H3_PREFLIGHT_ONLY=0
@@ -377,8 +392,15 @@ for count in "${counts[@]}"; do
     fi
     start_memory_monitor "${count}" "${selected}" "${log_path}" "${memory_output_path}"
     set +e
-    env "${run_environment[@]}" "${model_run}" "${model_run_mode}" 2>&1 | tee "${log_path}"
-    pipeline_status=("${PIPESTATUS[@]}")
+    if [[ "${RUN_MODEL_VERSION}" == minimax_h3 && "${RUN_H3_TASK:-fl2av}" == ref2av ]]; then
+        env "${run_environment[@]}" bash "${repo_root}/scripts/run_10_minimax_h3_bf16_ref2v.sh" \
+            --image "${image_override}" --gpus "${selected}" --duration 15 \
+            --result-dir "${result_dir}/${count}gpu" 2>&1 | tee "${log_path}"
+        pipeline_status=("${PIPESTATUS[@]}")
+    else
+        env "${run_environment[@]}" "${model_run}" "${model_run_mode}" 2>&1 | tee "${log_path}"
+        pipeline_status=("${PIPESTATUS[@]}")
+    fi
     set -e
     if (( pipeline_status[0] != 0 )); then
         stop_memory_monitor
@@ -407,9 +429,22 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B "${summary_script}" \
     --frames "${RUN_TARGET_FRAMES}" \
     --fps "${RUN_TARGET_FPS}"
 
+if [[ "${RUN_MODEL_VERSION}" == minimax_h3 && "${RUN_H3_TASK:-fl2av}" == ref2av ]]; then
+    shape_args=()
+    for count in "${counts[@]}"; do shape_args+=(--run "${count}=${result_dir}/${count}gpu.log"); done
+    python3 -B "${repo_root}/scripts/collector/collect_minimax_h3_sage_shapes.py" \
+        "${shape_args[@]}" --output "${result_dir}/sage_shapes.json" || \
+        echo "WARNING: Sage shape collection failed; preserve raw logs for review" >&2
+fi
+
 echo "Timing sweep complete: ${run_tag}"
 echo "Raw logs : ${result_dir}/<count>gpu.log"
-echo "Videos   : ${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}/<count>gpu.mp4"
+if [[ "${RUN_MODEL_VERSION}" == minimax_h3 && "${RUN_H3_TASK:-fl2av}" == ref2av ]]; then
+    echo "Videos   : ${result_dir}/<count>gpu/minimax_h3_ref2av.mp4"
+    echo "Evidence : ${result_dir}/<count>gpu/{runtime_config.json,ffprobe.json,h3_runcollector.rank*.json}"
+else
+    echo "Videos   : ${OUTPUT_DIR:-/disk/ssd/lightx2v-runtime/outputs}/${run_tag}/<count>gpu.mp4"
+fi
 echo "CSV      : ${result_dir}/timings.csv"
 echo "Table    : ${result_dir}/timings.md"
 echo "Manifest : ${result_dir}/run_manifest.json"

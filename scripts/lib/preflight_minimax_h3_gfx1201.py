@@ -677,12 +677,11 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
                 config.get("target_height"),
                 config.get("fps"),
             )
-            if workload not in {
-                (124, 1344, 768, 24),
-                (124, 832, 480, 24),
-            }:
+            frames, width, height, fps = workload
+            if not (type(frames) is int and 124 <= frames <= 362 and frames % 17 == 5
+                    and fps == 24 and (width, height) in {(1344, 768), (832, 480)}):
                 die(
-                    "MiniMax-H3 gfx1201 SP16 is validated for 124f at 24fps "
+                    "MiniMax-H3 gfx1201 SP16 supports 17*n+5 frames within 124..362 at 24fps "
                     f"with 1344x768 or 832x480, got {workload!r}"
                 )
     return config

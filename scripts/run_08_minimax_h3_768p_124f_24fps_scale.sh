@@ -6,6 +6,7 @@ export RUN_ENTRY_NAME="$(basename -- "${BASH_SOURCE[0]}")"
 export RUN_TASK_ID=minimax_h3_768p_124f_24fps_scale
 export RUN_TASK_LABEL="08 MiniMax-H3 2/4/8/16-GPU 1344x768 124f 24 FPS timing"
 export RUN_MODEL_VERSION=minimax_h3
+export RUN_H3_TASK=fl2av
 export RUN_DEFAULT_COUNTS=2,4,8,16
 export RUN_SUPPORTED_COUNTS=2,4,8,16
 # Preserve the original Wan timing rotation so each partial-scale arm lets the

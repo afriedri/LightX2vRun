@@ -95,8 +95,6 @@ def build(
         raise SystemExit("H3 frames must be 17*n+5 within 124..362")
     if not ref2av and (frames != 124 or output_duration is not None):
         raise SystemExit("FL2AV Turbo timing remains 124 frames")
-    if seq_parallel_size == 16 and frames != 124:
-        raise SystemExit("H3 SP16 currently supports only 124 frames; use SP2/4/8 for longer clips")
     if output_duration is not None:
         if not isinstance(output_duration, int) or not 5 <= output_duration <= 15:
             raise SystemExit("H3 output duration must be an integer from 5 to 15")

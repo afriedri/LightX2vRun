@@ -28,7 +28,7 @@ def test_ref_base_profile_has_no_lora_and_preserves_backend_policy(world):
     assert 'lora_configs' not in overlay
 
 
-@pytest.mark.parametrize('gpus', ['0,1', '0,1,2,3'])
+@pytest.mark.parametrize('gpus', ['0,1', '0,1,2,3', ','.join(map(str, range(8))), ','.join(map(str, range(16)))])
 def test_ref_docker_launcher_maps_ordered_references_and_current_run(tmp_path, gpus):
     script = ROOT / 'scripts/run_minimax_h3_ref2av_bf16.sh'
     env = {**os.environ, 'DRY_RUN':'1', 'PROMPT':'reference composition', 'CACHE_DIR':str(tmp_path/'cache'),
@@ -82,7 +82,7 @@ def test_ref_base_allows_step_override_but_rejects_lora(tmp_path):
         BUILDER.build(publish, overlay, smoke=True, task='ref2av')
 
 
-@pytest.mark.parametrize("world", [2, 4])
+@pytest.mark.parametrize("world", [2, 4, 8, 16])
 @pytest.mark.parametrize("duration", range(5, 16))
 def test_ref_duration_roundtrip_to_preflight(tmp_path, duration, world):
     from test_minimax_h3_preflight import PREFLIGHT
@@ -102,7 +102,6 @@ def test_ref_duration_roundtrip_to_preflight(tmp_path, duration, world):
     ({'target_video_length': 360}, '17.n.5'),
     ({'target_video_length': 379}, '17.n.5'),
     ({'target_video_length': 362, 'output_duration': 5}, 'does not match'),
-    ({'target_video_length': 362, 'seq_parallel_size': 16}, 'SP16'),
     ({'target_video_length': 362, 'task': 'fl2av'}, 'FL2AV'),
 ])
 def test_ref_rejects_invalid_timing_before_weight_preparation(kwargs, message):

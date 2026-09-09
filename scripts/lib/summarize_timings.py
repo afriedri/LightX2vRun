@@ -282,7 +282,7 @@ def main() -> int:
     if args.model == "wan22":
         print("Image Encoder: N/A (Wan2.2 use_image_encoder=false)")
     elif args.model == "minimax_h3":
-        print("Image Encoder: N/A (MiniMax-H3 keyframes are encoded by the VAE path)")
+        print("Image Encoder: N/A (MiniMax-H3 visual conditioning is handled by its Qwen/VAE preparation path)")
     elif args.model == "ltx25_c1":
         print("Image Encoder: N/A (LTX-2.5 T2AV has no image input)")
         print("VAE Encoder: N/A (LTX-2.5 T2AV starts from latent noise)")

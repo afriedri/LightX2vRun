@@ -1122,3 +1122,5 @@ Run `./lightx2vModelrun --help` for all supported overrides.
 </details>
 
 H3 原始 Ref2VA BF16（无 LoRA、默认 SP2、768P 15 秒、内置双图屋顶素材）入口与两张 32 GiB 卡的算子/显存检查见 [运行说明](docs/h3-ref2av-bf16.md)。
+
+H3 BF16 Ref2V 4/8/16 卡测试入口：`scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh`，复用 FL2AV scale 框架，详见 [scale 说明与算子审查](docs/h3-ref2av-scale.md)。
