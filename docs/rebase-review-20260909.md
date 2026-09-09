@@ -54,12 +54,17 @@ LTX2.5 的完整 HVAT 运行配置与重放前逐项比较，除 `model_cls` 外
 
 复用 Run 现有 safetensors 解析/边界校验，采集指定的未裁剪 BF16 与 INT8 ConvRot 两个文件。只读取 header 和最多 64 KiB 的 ConvRot 整数标量元数据；不读取矩阵 payload，不加载 Torch，不分配 GPU，也不做强制 SHA gate。
 
-在权重机器的 Run 仓库执行：
+在权重机器的最新 Run 仓库执行以下入口。宿主机只负责启动 Docker，Python collector 在镜像环境内执行；当前 Run 与权重只读挂载，报告写回宿主机：
 
 ```bash
-python3 scripts/collector/collect_minimax_h3_ref2v_weights.py \
+bash scripts/collector/run_minimax_h3_ref2v_weights.sh \
+  --image compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-260901-LTX25-Scale-ReleaseFinal \
   --model-root /disk/ssd1/difumodels/MiniMax-H3-ComfyUI \
   --output-dir /disk/ssd1/lightx2v-runtime/h3-ref2va-weight-inventory
 ```
 
 输出 `h3_ref2va_weights.json` 和 `.md`，包含两个文件的 metadata、keys、shape、dtype、大小、ConvRot groupsize 及差异。该机器当前不可达，真实采集和完整 Ref2VA 推理尚未执行，不能把小样本测试当作真实权重验收。
+
+此权重 inventory 仅依赖 Python 标准库，可以使用上述旧镜像作为运行环境，无需 GPU 或重建镜像。入口默认即为该镜像，也支持 `--image` / `IMAGE` 覆盖；`DRY_RUN=1` 可查看挂载和命令。旧镜像的模型实现不会被用于这次采集。新入口的模型推理及性能 collector 仍应使用包含本轮 LightX2V/aiter 代码和依赖的新镜像，不能以 inventory 成功替代运行验收。
+
+容器入口通过 Docker 命令替身验证只读挂载、宿主机报告、缺失权重诊断和退出码；实际 collector 在禁用 site packages 的 Python 下执行成功。本机未对上述镜像执行 Docker 实测。
