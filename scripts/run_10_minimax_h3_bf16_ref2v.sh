@@ -11,15 +11,15 @@ export H3_COMFY_DIR="${H3_COMFY_DIR:-/disk/ssd1/difumodels/MiniMax-H3-ComfyUI}"
 export RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd1/lightx2v-runtime}"
 export GPU_DEVICES="${GPU_DEVICES:-0,1}"
 export H3_INFER_STEPS="${H3_INFER_STEPS:-30}"
-reference_images=(
-    "${H3_REFERENCE_IMAGE:-${RUNTIME_ROOT}/inputs/h3-ref2v/reference.png}"
-    # Add more image paths here in prompt reference order (maximum 9).
-)
-prompt_file="${H3_PROMPT_FILE:-${RUNTIME_ROOT}/inputs/h3-ref2v/prompt.txt}"
+asset_dir="${script_dir}/../assets/minimax_h3/rooftop_15s"
+reference_images=("${asset_dir}/Image Gen-1.png" "${asset_dir}/RYAN-2.png")
+if [[ -n "${H3_REFERENCE_IMAGE:-}" ]]; then reference_images=("$H3_REFERENCE_IMAGE"); fi
+prompt_file="${H3_PROMPT_FILE:-${asset_dir}/prompt.txt}"
+duration="${H3_OUTPUT_DURATION:-15}"
 
 # Keep this profile independent of stale geometry variables from other models.
 # --smoke is handled by the shared entry and selects 480x480.
-export TARGET_HEIGHT=768 TARGET_WIDTH=1344 TARGET_VIDEO_LENGTH=124 TARGET_FPS=24
+export TARGET_HEIGHT=768 TARGET_WIDTH=1344 TARGET_VIDEO_LENGTH=362 TARGET_FPS=24
 
 reference_args=()
 custom_references=0
@@ -33,15 +33,15 @@ H3 original BF16 Ref2V dedicated profile (no LoRA)
 Default image:     ${run_image}
 Shared Qwen/VAEs:  ${H3_MODEL_DIR}
 ComfyUI BF16 root: ${H3_COMFY_DIR}
-Reference image:  ${reference_images[0]}
+Reference images: ${reference_images[*]}
 Prompt file:      ${prompt_file}
 GPUs:             ${GPU_DEVICES} (default two 32 GiB cards)
 Sampling:         ${H3_INFER_STEPS} grid points, video/audio shift 12/3
-Output geometry:  1344x768, 124 frames at 24 FPS
+Output geometry:  1344x768, ${duration} seconds at 24 FPS (native frames aligned to 17*n+5)
 
 Edit the defaults at the top of this script or use the options below.
 Explicit --reference-image options replace the entire default image list.
-Two-card full-resolution VRAM fit still requires testing; use --smoke first.
+Two-card VRAM fit still requires testing; --infer-steps 3 --collect checks full-size shapes.
 HELP
             exec bash "${script_dir}/run_minimax_h3_ref2av_bf16.sh" --help
             ;;
@@ -57,5 +57,5 @@ fi
 # the image. CLI values occur last so --image / --prompt-file override defaults.
 exec bash "${script_dir}/run_minimax_h3_ref2av_bf16.sh" \
     --image "$run_image" \
-    --prompt-file "$prompt_file" \
+    --prompt-file "$prompt_file" --duration "$duration" \
     "${reference_args[@]}" "$@"

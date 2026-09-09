@@ -82,10 +82,24 @@ def build(
     seq_parallel_size: int = 1,
     target_height: int | None = None,
     target_width: int | None = None,
+    target_video_length: int | None = None,
+    output_duration: int | None = None,
 ) -> dict:
     if task not in ("fl2av", "ref2av"):
         raise SystemExit(f"unsupported H3 task: {task}")
     ref2av = task == "ref2av"
+    frames = 124 if target_video_length is None else target_video_length
+    if not isinstance(frames, int) or not 124 <= frames <= 362 or frames % 17 != 5:
+        raise SystemExit("H3 frames must be 17*n+5 within 124..362")
+    if not ref2av and (frames != 124 or output_duration is not None):
+        raise SystemExit("FL2AV Turbo timing remains 124 frames")
+    if seq_parallel_size == 16 and frames != 124:
+        raise SystemExit("H3 SP16 currently supports only 124 frames; use SP2/4/8 for longer clips")
+    if output_duration is not None:
+        if not isinstance(output_duration, int) or not 5 <= output_duration <= 15:
+            raise SystemExit("H3 output duration must be an integer from 5 to 15")
+        if frames != ((output_duration * 24 - 5 + 16) // 17) * 17 + 5:
+            raise SystemExit("H3 output duration does not match the aligned native frame count")
     allowed = ALLOWED_OVERLAY_CHANGES | ({"lazy_load", "offload_granularity", "text_encoder_offload_granularity", "lora_dynamic_apply", "h3_step_update", "reference_image_resize_mode", "target_height", "target_width"} if ref2av else set())
     if seq_parallel_size not in (1, 2, 4, 8, 16):
         raise SystemExit(f"MiniMax-H3 gfx1201 supports seq_parallel_size 1, 2, 4, 8, or 16, got {seq_parallel_size}")
@@ -105,9 +119,13 @@ def build(
         raise SystemExit(f"AMD overlay changes non-whitelisted published semantics: {unauthorized}")
     config = copy.deepcopy(publish)
     config.update(copy.deepcopy(overlay))
-    # Run policy: every H3 backend test uses the shortest valid 17*n+5 shape.
-    # Override older images whose baked published config still requests 362f.
+    # Keep legacy FL2AV and unspecified ref workloads at 124f; Ref2AV can
+    # explicitly request the native 5-15 second range.
     config.update(TEST_WORKLOAD)
+    config["target_video_length"] = frames
+    config.pop("h3_output_duration", None)
+    if output_duration is not None:
+        config["h3_output_duration"] = output_duration
     if smoke:
         config.update(SMOKE)
     else:
@@ -119,7 +137,7 @@ def build(
             supported = ", ".join(f"{width}x{height}" for height, width in sorted(PRODUCTION_GEOMETRIES))
             raise SystemExit(f"unsupported MiniMax-H3 production geometry {geometry[1]}x{geometry[0]}; expected {supported}")
         config.update({"target_height": geometry[0], "target_width": geometry[1]})
-    frozen = {**FROZEN_VALUES}
+    frozen = {**FROZEN_VALUES, "target_video_length": frames}
     if ref2av:
         frozen.update(video_flow_shift=12.0, h3_step_update="reference_blend")
         frozen.pop("infer_steps")
@@ -191,6 +209,8 @@ def main() -> int:
     parser.add_argument("--seq-parallel-size", type=int, choices=(1, 2, 4, 8, 16), default=1)
     parser.add_argument("--target-height", type=int)
     parser.add_argument("--target-width", type=int)
+    parser.add_argument("--target-video-length", type=int)
+    parser.add_argument("--output-duration", type=int)
     args = parser.parse_args()
     config = build(
         load_json(args.publish_json),
@@ -201,6 +221,8 @@ def main() -> int:
         seq_parallel_size=args.seq_parallel_size,
         target_height=args.target_height,
         target_width=args.target_width,
+        target_video_length=args.target_video_length,
+        output_duration=args.output_duration,
     )
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

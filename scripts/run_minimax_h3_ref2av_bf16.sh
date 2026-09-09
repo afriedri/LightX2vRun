@@ -10,6 +10,7 @@ gpus="${GPU_DEVICES:-0,1}"
 references=()
 prompt="${PROMPT:-}"
 prompt_file=
+duration="${H3_OUTPUT_DURATION:-}"
 smoke=0
 preflight=0
 collect="${LIGHTX2V_H3_RUN_COLLECTOR:-0}"
@@ -29,7 +30,8 @@ weights (about 66.3 GB additional disk); subsequent runs reuse the cache.
   --result-dir DIR      Reports/video output (default: timestamped)
   --gpus IDS            GPU ids (default: 0,1; supports 1/2/4/8/16 GPUs)
   --infer-steps N      Base schedule grid points (default: 30, N-1 evaluations)
-  --smoke              480x480 instead of 1344x768, 124 frames at 24 FPS
+  --duration SECONDS   Integer 5-15; native aligned frames, exact output duration
+  --smoke              480x480 instead of 1344x768; duration is unchanged
   --preflight-only     Validate assets and run kernel/communication probes
   --collect            Enable existing H3 runtime collector
   --help, -h           Show help
@@ -40,7 +42,7 @@ EOF
 }
 while (( $# )); do
     case "$1" in
-        --image|--model-dir|--comfy-dir|--reference-image|--prompt-file|--result-dir|--gpus|--infer-steps)
+        --image|--model-dir|--comfy-dir|--reference-image|--prompt-file|--result-dir|--gpus|--infer-steps|--duration)
             (( $# >= 2 )) && [[ -n "$2" && "$2" != --* ]] || { echo "missing value for $1" >&2; exit 2; }
             case "$1" in
                 --image) image="$2" ;;
@@ -51,6 +53,7 @@ while (( $# )); do
                 --result-dir) result_dir="$2" ;;
                 --gpus) gpus="$2" ;;
                 --infer-steps) export H3_INFER_STEPS="$2" ;;
+                --duration) duration="$2" ;;
             esac
             shift 2 ;;
         --smoke) smoke=1; shift ;;
@@ -60,6 +63,12 @@ while (( $# )); do
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+if [[ -n "$duration" ]]; then
+    [[ "$duration" =~ ^([5-9]|1[0-5])$ ]] || { echo '--duration must be an integer from 5 to 15' >&2; exit 2; }
+    export H3_OUTPUT_DURATION="$duration"
+    export TARGET_VIDEO_LENGTH=$(( (duration * 24 - 5 + 16) / 17 * 17 + 5 ))
+    export TARGET_FPS=24
+fi
 [[ -n "$image" ]] || { echo '--image is required' >&2; exit 2; }
 (( ${#references[@]} >= 1 && ${#references[@]} <= 9 )) || { echo 'provide 1-9 --reference-image files' >&2; exit 2; }
 for i in "${!references[@]}"; do

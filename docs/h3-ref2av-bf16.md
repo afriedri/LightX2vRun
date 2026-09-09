@@ -10,7 +10,7 @@ ComfyUI checkpoint 需要改成现有 native loader 的 key/layout：连续 Q/K/
 
 转换在镜像内首次执行，按 block 写入持久缓存，之后复用。需要额外约 66.3 GB 磁盘；不会每次采样临时重排整个权重。缓存用源文件路径、大小、mtime、header hash 和转换版本识别，完整写入后才发布；没有强制扫描全文件 SHA。
 
-采样采用现有 HVAT `configs/minimax_h3/minimax_h3_ref2av.json` 的基础模型参数：video/audio shift=12/3、`reference_blend`、`infer_steps=30`（30 个网格点，29 次模型计算）。支持 `--infer-steps` 显式调整，不继承 Turbo 4step 参数。测试几何沿用 gfx1201 的 124f@24fps、1344×768；`--smoke` 为 480×480。
+采样采用现有 HVAT `configs/minimax_h3/minimax_h3_ref2av.json` 的基础模型参数：video/audio shift=12/3、`reference_blend`、`infer_steps=30`（30 个网格点，29 次模型计算）。支持 `--infer-steps` 显式调整，不继承 Turbo 4step 参数。专用脚本默认 1344×768（768P）、24 FPS、15 秒。原生推理对齐为 362 帧，编码前裁成 360 帧与 480,000 个 32 kHz 音频采样；只编码一次。`--duration 5..15` 可调整时长，`--smoke` 仅把画布改成 480×480，不改变时长。
 
 Qwen、tokenizer、processor、视频/音频 VAE 复用之前的完整 native H3 目录。本入口暂不加载 ComfyUI 目录中的 Qwen/VAE 单文件。
 
@@ -35,9 +35,17 @@ Qwen 多模态输入、较大的参考图、Core 激活/通信临时张量和 VA
 
 更新两仓并重建 LightX2V 镜像。旧 ReleaseFinal 镜像只适用于前面的无 GPU 权重 inventory；本入口需要新镜像内包含本次转换工具及当前 native H3 代码。
 
-日常专用入口为 `scripts/run_10_minimax_h3_bf16_ref2v.sh`。镜像、完整 native H3 目录、ComfyUI BF16 根目录、GPU、参考图数组和 prompt 路径集中在脚本顶部，可直接编辑，也可用命令行覆盖。默认素材为 `/disk/ssd1/lightx2v-runtime/inputs/h3-ref2v/reference.png` 和 `prompt.txt`，需要换成自己的素材；不自动套用 FL2V 首尾帧或旧 prompt。完整采样默认 30 个网格点，默认 GPU `0,1`。
+日常专用入口为 `scripts/run_10_minimax_h3_bf16_ref2v.sh`。镜像、完整 native H3 目录、ComfyUI BF16 根目录、GPU、参考图数组和 prompt 路径集中在脚本顶部，可直接编辑，也可用命令行覆盖。默认素材已设为用户提供的 `promptsandpics.zip`，存放在 `assets/minimax_h3/rooftop_15s/`：`Image Gen-1.png` 对应 `<Picture 1>`，`RYAN-2.png` 对应 `<Picture 2>`；使用调整后的 `prompt.txt`，保留原文 `prompt.original.txt`。仅去掉不存在的外部音频引用，保留六镜头、15 秒屋顶打斗、喘息、音效和配乐描述，音频由 H3 生成。完整采样默认 30 个网格点，默认 GPU `0,1`。
 
-在权重机器的 Run 仓库，先用两卡、单参考图、少量基础模型步骤检查算子/显存：
+在权重机器的 Run 仓库，使用默认素材完整生成：
+
+```bash
+bash scripts/run_10_minimax_h3_bf16_ref2v.sh --image lightx2v-rocm:hvat-gfx1201-R9600 --collect
+```
+
+镜像必须包含本次 H3 精确输出时长修复；Run 使用当前宿主仓库的只读挂载。要先核对 **768P、15 秒、双图实际形状** 的算子/显存，在上面命令后加 `--infer-steps 3`，保留完整画布和时长；只计算 2 次模型，不代表出片质量。
+
+替换素材、显式跑较小 smoke 的示例：
 
 ```bash
 bash scripts/run_10_minimax_h3_bf16_ref2v.sh \
@@ -46,14 +54,14 @@ bash scripts/run_10_minimax_h3_bf16_ref2v.sh \
   --comfy-dir /disk/ssd1/difumodels/MiniMax-H3-ComfyUI \
   --reference-image /path/to/reference.png \
   --prompt-file /path/to/ref2av-prompt.txt \
-  --gpus 0,1 --smoke --infer-steps 3 --collect \
+  --gpus 0,1 --duration 5 --smoke --infer-steps 3 --collect \
   --result-dir /disk/ssd1/lightx2v-runtime/outputs/h3-ref2av-smoke
 ```
 
 少步骤 smoke 只用于检查运行，不代表出片质量。完整基础采样去掉 `--smoke --infer-steps 3`。增加参考图时重复 `--reference-image`，顺序对应 prompt；最多 9 张，不需要首尾帧或 LoRA 目录。
 
-Run 只读挂载进镜像，转换和推理均在容器内执行。默认两卡 `0,1`；`CACHE_DIR` 决定宿主机持久缓存目录，权重缓存在其 `h3_ref2av/` 下。输出目录保留 runtime config、preflight、`run.log`、视频与 ffprobe；`--collect` 另生成各 rank 的 H3 生命周期/算子报告。`run.log` 中的 `dispatch` / `fallback` 用于核实实际 backend；CPU 测试不代表真实 GPU kernel 已通过。
+Run 只读挂载进镜像，转换和推理均在容器内执行。默认两卡 `0,1`；`CACHE_DIR` 决定宿主机持久缓存目录，权重缓存在其 `h3_ref2av/` 下。输出目录保留 runtime config、preflight、`run.log`、视频与 ffprobe；`--collect` 另生成各 rank 的 H3 生命周期/算子报告。H3 入口禁止选定算子回退；`run.log` 中 `dispatch` 记录实际 backend，出现 `fallback` 原因后本次运行失败；CPU 测试不代表真实 GPU kernel 已通过。
 
-验证结果：Run 全量 219 项通过；LightX2V 权重格式 3 项、算子路由/Ref2AV 切分/lazy offload 定向 41 项通过。所有结果均为 CPU/命令替身验证；未执行远端真实 BF16 的转换与推理。
+本次算子审查、测试范围与待实测项目见 [768P Ref2V 审查报告](h3-ref2av-768p-review.md)。未执行远端真实 BF16 的转换与推理。
 
 专用脚本复用 `run_minimax_h3_ref2av_bf16.sh` 和现有镜像内执行链；两入口保持同一套权重转换、算子、offload 和 collector。显式重复 `--reference-image` 会替换脚本顶部的默认图片列表。`--help` 显示有效默认路径，`DRY_RUN=1` 可核对 Docker 挂载；`--collect` 按需启用，不默认增加 profiling 开销。

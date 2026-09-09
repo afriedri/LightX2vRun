@@ -43,6 +43,8 @@ unset CUDA_VISIBLE_DEVICES
 
 export PLATFORM=amd_rocm
 export DTYPE=BF16
+# Required H3 kernels must execute; a fallback is a failed run, not a slower result.
+export LIGHTX2V_NO_FALLBACK_MODELS="${LIGHTX2V_NO_FALLBACK_MODELS:+${LIGHTX2V_NO_FALLBACK_MODELS},}minimax_h3"
 export TOKENIZERS_PARALLELISM=false
 export GPU_ARCHS="${GPU_ARCHS:-gfx1201}"
 export CU_NUM="${CU_NUM:-24}"
@@ -92,15 +94,25 @@ target_width="${TARGET_WIDTH:-1344}"
 target_video_length="${TARGET_VIDEO_LENGTH:-124}"
 target_fps="${TARGET_FPS:-24}"
 prompt_duration_seconds=5.17
+output_duration=
 for target_value in "${target_height}" "${target_width}" "${target_video_length}" "${target_fps}"; do
     [[ "${target_value}" =~ ^[1-9][0-9]*$ ]] || {
         echo "ERROR: MiniMax-H3 target dimensions, frames, and FPS must be positive integers" >&2
         exit 1
     }
 done
-if [[ "${target_video_length}" != 124 || "${target_fps}" != 24 ]]; then
+if [[ "${target_fps}" != 24 || ( "$task" == fl2av && "${target_video_length}" != 124 ) ]]; then
     echo "ERROR: MiniMax-H3 production timing is frozen at 124 frames and 24 FPS" >&2
     exit 1
+fi
+if [[ "$task" == ref2av ]]; then
+    if (( target_video_length < 124 || target_video_length > 362 || target_video_length % 17 != 5 )); then
+        echo 'ERROR: Ref2AV requires 17*n+5 frames within 124..362' >&2; exit 1
+    fi
+    if (( gpu_count == 16 && target_video_length != 124 )); then
+        echo 'ERROR: H3 SP16 only supports 124 frames; use SP2/4/8 for longer clips' >&2; exit 1
+    fi
+    prompt_duration_seconds="$(python3 -c 'import sys; print(round(int(sys.argv[1])/24, 3))' "$target_video_length")"
 fi
 if [[ "${H3_SMOKE:-0}" == 1 ]]; then
     smoke_flag+=(--smoke)
@@ -124,6 +136,23 @@ fi
 
 profile_args=(--task "$task")
 if [[ "$task" == ref2av ]]; then
+    profile_args+=(--target-video-length "$target_video_length")
+    if [[ -n "${H3_OUTPUT_DURATION:-}" ]]; then
+        [[ "$H3_OUTPUT_DURATION" =~ ^([5-9]|1[0-5])$ ]] &&
+            (( target_video_length == (H3_OUTPUT_DURATION * 24 - 5 + 16) / 17 * 17 + 5 )) || {
+            echo 'ERROR: H3 output duration must match native aligned frames (integer 5-15 seconds)' >&2; exit 1;
+        }
+        # Fail before conversion/inference if an old image cannot honor exact duration.
+        python3 - "$lightx2v_path" <<'CHECK'
+import pathlib, sys
+source = pathlib.Path(sys.argv[1]) / "lightx2v/models/runners/minimax_h3/minimax_h3_runner.py"
+if "h3_output_duration" not in source.read_text():
+    raise SystemExit("Rebuild the LightX2V image: this version does not support exact H3 output duration")
+CHECK
+        output_duration="$H3_OUTPUT_DURATION"
+        profile_args+=(--output-duration "$output_duration")
+        prompt_duration_seconds="$H3_OUTPUT_DURATION"
+    fi
     prepared_model="${runtime_config_dir}/ref2av_model"
     python3 "${lightx2v_path}/tools/convert/minimax_h3_comfy.py" \
         --checkpoint /models/minimax_h3_comfy/diffusion_models/minimax_h3_ref2va_bf16.safetensors \
@@ -304,7 +333,7 @@ fi
 if [[ -n "${evidence_dir}" ]]; then
     ffprobe -v error -show_streams -show_format -of json "${save_result_path}" \
         >"${evidence_dir}/ffprobe.json"
-    python3 - "${evidence_dir}/ffprobe.json" "${target_width}" "${target_height}" <<'PY'
+    python3 - "${evidence_dir}/ffprobe.json" "${target_width}" "${target_height}" "${output_duration}" <<'PY'
 import json
 import pathlib
 import sys
@@ -317,6 +346,14 @@ if missing:
 video = next(stream for stream in payload["streams"] if stream.get("codec_type") == "video")
 actual = (int(video["width"]), int(video["height"]))
 expected = (int(sys.argv[2]), int(sys.argv[3]))
+if sys.argv[4]:
+    from fractions import Fraction
+    duration = int(sys.argv[4])
+    if int(video.get("nb_frames", 0)) != duration * 24 or Fraction(video["avg_frame_rate"]) != 24:
+        raise SystemExit("H3 output frame count/FPS does not match the requested duration")
+    for stream in payload["streams"]:
+        if stream.get("codec_type") in {"video", "audio"} and abs(float(stream.get("duration", 0)) - duration) > 1/24:
+            raise SystemExit(f"H3 {stream['codec_type']} duration does not match {duration}s")
 if actual != expected:
     raise SystemExit(f"MiniMax-H3 output size is {actual[0]}x{actual[1]}, expected {expected[0]}x{expected[1]}")
 PY

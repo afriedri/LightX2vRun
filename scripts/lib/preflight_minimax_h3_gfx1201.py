@@ -182,6 +182,8 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
         import aiter
         from aiter import flash_attn_varlen_func as public_varlen
         from aiter.ops.triton.attention.fav3_sage import fav3_sage_wrapper_func  # noqa: F401
+        from aiter.ops.flydsl.sage_attention import sage_attention_v2_gfx1201_support_reason  # noqa: F401
+        from aiter.ops.triton.normalization.rmsnorm import rms_norm  # noqa: F401
     except ImportError as error:
         die(f"Aiter Triton MHA and Sage APIs are required by the gfx1201 runtime: {error}")
     if not callable(public_varlen):
@@ -192,6 +194,7 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
         import lightx2v.infer  # noqa: F401
         import lightx2v_platform.ops.attn.amd_rocm  # noqa: F401
         from lightx2v.models.input_encoders.hf.minimax_h3.qwen3vl_vision import _PatchEmbed
+        from lightx2v_platform.base.backend_logger import BackendLogger
         from lightx2v_platform.ops.attn.amd_rocm.triton_mha_attn import (
             dense_flash_attn_func,
         )
@@ -235,6 +238,10 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
             die(f"LightX2V runtime registry is missing: {name}")
     if not callable(dense_flash_attn_func):
         die("Aiter dense Triton MHA API required by H4 is unavailable")
+    if "minimax_h3" in os.environ.get("LIGHTX2V_NO_FALLBACK_MODELS", "").split(","):
+        policy = getattr(BackendLogger("minimax_h3"), "fallback_is_disabled", None)
+        if not callable(policy) or not policy():
+            die("Rebuild the LightX2V image: it does not enforce required H3 kernels")
     patch_embed_contract = check_h1_patch_embed_runtime(_PatchEmbed, required=required_runcollector_schema is not None)
 
     source_root = Path(lightx2v.__file__).resolve().parents[1]

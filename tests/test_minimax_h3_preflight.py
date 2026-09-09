@@ -351,6 +351,9 @@ def test_dependency_gate_only_requires_ring_for_sp16(monkeypatch, tmp_path, caps
     module("transformers", __version__="test", Qwen2TokenizerFast=object, Qwen3VLProcessor=object)
     module("aiter", __file__=str(tmp_path / "aiter/__init__.py"), flash_attn_varlen_func=lambda: None)
     module("aiter.ops.triton.attention.fav3_sage", fav3_sage_wrapper_func=lambda: None)
+    module("aiter.ops.flydsl.sage_attention", sage_attention_v2_gfx1201_support_reason=lambda: None)
+    module("aiter.ops.triton.normalization.rmsnorm", rms_norm=lambda: None)
+    backend_logger = module("lightx2v_platform.base.backend_logger", BackendLogger=lambda name: SimpleNamespace(fallback_is_disabled=lambda: True))
     module("lightx2v", __file__=str(tmp_path / "lightx2v/__init__.py"))
     module("lightx2v.infer")
     module("lightx2v_platform.ops.attn.amd_rocm")
@@ -376,3 +379,8 @@ def test_dependency_gate_only_requires_ring_for_sp16(monkeypatch, tmp_path, caps
     attention["aiter_fav3_sage_bf16_attn"] = SimpleNamespace(apply_with_lse=lambda: None)
     attention.update(ring=object, ulysses_ring=object)
     assert PREFLIGHT.check_runtime_dependencies("image", expected_world_size=16)["source_mode"] == "image"
+    monkeypatch.setenv("LIGHTX2V_NO_FALLBACK_MODELS", "minimax_h3")
+    assert PREFLIGHT.check_runtime_dependencies("image", expected_world_size=2)["source_mode"] == "image"
+    backend_logger.BackendLogger = lambda name: SimpleNamespace()
+    with pytest.raises(SystemExit):
+        PREFLIGHT.check_runtime_dependencies("image", expected_world_size=2)

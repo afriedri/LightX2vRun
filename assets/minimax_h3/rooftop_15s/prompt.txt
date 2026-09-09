@@ -1,0 +1,79 @@
+subject_definitions:
+<Picture 1> provides the appearance of the young woman.
+<Picture 2> provides the appearance of the young man.
+<Subject 1> is the young woman, whose appearance is fully defined by <Picture 1>.
+<Subject 2> is the young man, whose appearance is fully defined by <Picture 2>.
+Generate strained grunts, sharp kiai shouts, and rapid heavy breathing for <Subject 1>.
+Generate low forceful exhalations, deep impact grunts, and labored breathing for <Subject 2>.
+
+summary:
+[reference generation] The target video is a 15-second live-action cinematic
+close-quarters fight between <Subject 1> and <Subject 2> on a rooftop at golden hour. All six shots are continuous
+high-intensity combat with no dialogue — strikes, blocks, grapples, throws, and a final mutual charge. All combat vocalizations, sound effects, and music are generated directly; no external audio is supplied.
+
+retention_analysis:
+<Picture 1>: fully_preserved — the young woman's full appearance, facial features, hairstyle, and clothing are
+retained.
+<Picture 2>: fully_preserved — the young man's full appearance, facial features, hairstyle, and clothing are retained.
+<Subject 1> (appears in all shots): fully_preserved — appearance is fully defined by <Picture 1>.
+<Subject 2> (appears in all shots): fully_preserved — appearance is fully defined by <Picture 2>.
+
+detailed_description:
+The target video uses a live-action cinematic style with warm golden-hour lighting, shallow depth of field, handheld
+camera energy, and a film-grain texture throughout.
+
+[Shot 1] A medium wide shot frames <Subject 1> and <Subject 2> facing each other on a rooftop, the setting sun behind
+them casting long shadows forward. The stillness breaks in an instant — <Subject 1> launches forward, pivoting her
+hips into a spinning roundhouse kick aimed at <Subject 2>'s head. The camera whips right at fast speed tracking the
+kick's arc. <Subject 2> ducks under the kick with a sharp backward lean, the sole of her shoe passing inches above his
+hair. Using the sharp kiai, <Subject 1> (S1) exhales a forceful shout with the strike.
+<Subject 2> (S2) responds with a low grunt of effort as he recoils.
+
+[Shot 2] At 00:02.200, the shot cuts to a tight close-up tracking behind <Subject 2>'s shoulder. He explodes upward
+from the crouch, throwing a rapid three-punch combination — jab to the face, cross to the ribs, hook to the jaw — each
+strike cutting through the air with a sharp whoosh. The camera shakes slightly with each impact as <Subject 1>
+parries the first two strikes with her forearms, forearms meeting fists in sharp collisions, but the third grazes her
+jaw, snapping her head to the side. Using the strained impact grunts, <Subject 1> (S1) lets
+out a sharp exhale at each block and a choked grunt at the grazing blow. <Subject 2> (S2) punctuates each punch with a
+low forceful exhalation.
+
+[Shot 3] At 00:04.500, the shot cuts to a low-angle wide shot. <Subject 1> uses the momentum of the grazing blow to
+spin away, then drops low and sweeps her leg in a wide arc, catching <Subject 2>'s ankle. His feet leave the ground.
+The camera tilts up at fast speed as he falls, framing him against the burning orange sky. Before he hits the ground,
+he twists his body mid-air, one hand planting on the concrete to break the fall, legs coiling. <Subject 1> (S1) emits
+a sharp strained shout with the sweep. <Subject 2> (S2) responds with a deep, gut-punched
+grunt as the air leaves his lungs.
+
+[Shot 4] At 00:07.000, the shot cuts to a high-angle close-up looking down at <Subject 2> on the ground. Without
+pause, he kicks upward from his back — both legs driving into <Subject 1>'s midsection — launching her over his head.
+The camera rolls counterclockwise with medium amplitude at fast speed as she flips through the air. She tucks and
+lands in a crouch behind him, skidding backward across the concrete, one hand dragging for balance. Both fighters are
+now reversed in position. The sound of her feet scraping across the rooftop grit is sharp in the mix. <Subject 2> (S2)
+releases a forceful shout with the kick. <Subject 1> (S1) grunts sharply through clenched
+teeth as she absorbs the impact, then her breathing accelerates into rapid heavy pulls.
+
+[Shot 5] At 00:09.500, the shot cuts to a side-on medium shot. Both fighters rise simultaneously, chests heaving.
+<Subject 2> charges first, and <Subject 1> meets him head-on. They collide and lock — his hands gripping her
+shoulders, her forearm pressed against his throat. The camera arcs around them at fast speed, the sunset flare
+streaking across the lens as it passes the sun. Their feet scramble and plant, scramble and plant, each fighting for
+leverage near the edge of the rooftop, a low concrete parapet the only barrier behind them. <Subject 1> (S1) growls
+through strained effort as she pushes forward. <Subject 2> (S2) matches with a deep
+sustained grunt, muscles straining as he resists.
+
+[Shot 6] At 00:12.000, the shot cuts to a wide shot positioned low, looking up at both fighters from near ground
+level. They break apart in the same instant, both launching into a final simultaneous charge — <Subject 1>'s fist and
+<Subject 2>'s fist cutting through the air toward each other. The camera enters slow motion at the moment of
+near-impact, their fists frozen inches apart, sweat droplets suspended in the golden light, faces contorted in
+exertion. The frame freezes on this tableau — two figures in perfect tension against the burning sky. A heartbeat of
+silence, then a sudden cut to black.
+
+overall_soundscape:
+Sharp impacts of fists and forearms colliding punctuate the continuous rush of rapid footwork scraping across
+concrete. Fabric whips and snaps with every rotation and kick. Metal railings rattle from nearby impacts. Heavy,
+ragged breathing from both fighters intensifies through each successive shot, punctuated by explosive grunts and kiai
+shouts at every strike. The distant city hum continues underneath.
+
+non_diegetic_music:
+A driving taiko drum pattern at a fast tempo, with accelerating strikes that sync to each major impact. Low distorted
+bass pulses enter during Shot 3 and intensify through Shot 5, then cut abruptly to silence at the Shot 6 slow-motion
+moment, leaving only the sound of suspended breath before the cut to black.
