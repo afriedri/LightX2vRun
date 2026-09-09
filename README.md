@@ -1119,3 +1119,5 @@ TARGET_HEIGHT=720 TARGET_WIDTH=1280 \
 Run `./lightx2vModelrun --help` for all supported overrides.
 
 </details>
+
+H3 原始 Ref2VA BF16（无 LoRA、默认 SP2）入口与两张 32 GiB 卡的算子/显存检查见 [运行说明](docs/h3-ref2av-bf16.md)。

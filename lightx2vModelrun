@@ -308,26 +308,43 @@ fi
 if [[ "${inference_mode}" == wan21_unified || "${inference_mode}" == wan22_unified ]]; then
     uses_fp8_run_script=1
 fi
+h3_task="${H3_TASK:-fl2av}"
+h3_reference_sources=()
+h3_reference_targets=()
 h3_frame_source=
 h3_first_frame_path=
 h3_last_frame_path=
 if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     [[ -n "${H3_MODEL_DIR:-}" ]] || die "H3_MODEL_DIR is required for MiniMax-H3"
-    [[ -n "${H3_TURBO_DIR:-}" ]] || die "H3_TURBO_DIR is required for MiniMax-H3"
+    [[ "$h3_task" == ref2av || -n "${H3_TURBO_DIR:-}" ]] || die "H3_TURBO_DIR is required for MiniMax-H3"
     h3_frame_source="${H3_FRAME_SOURCE:-image}"
-    case "${h3_frame_source}" in
-        image)
-            h3_first_frame_path="${CONTAINER_H3_IMAGE_FIRST_FRAME}"
-            h3_last_frame_path="${CONTAINER_H3_IMAGE_LAST_FRAME}"
-            ;;
-        host)
-            [[ -n "${H3_FIRST_FRAME:-}" ]] || die "H3_FIRST_FRAME is required when H3_FRAME_SOURCE=host"
-            [[ -n "${H3_LAST_FRAME:-}" ]] || die "H3_LAST_FRAME is required when H3_FRAME_SOURCE=host"
-            h3_first_frame_path="${CONTAINER_H3_FIRST_FRAME}"
-            h3_last_frame_path="${CONTAINER_H3_LAST_FRAME}"
-            ;;
-        *) die "H3_FRAME_SOURCE must be image or host" ;;
-    esac
+    if [[ "$h3_task" == ref2av ]]; then
+        [[ -n "${H3_COMFY_DIR:-}" ]] || die "H3_COMFY_DIR is required for Ref2AV BF16"
+        [[ -n "${H3_REFERENCE_IMAGES:-}" ]] || die "H3_REFERENCE_IMAGES is required for Ref2AV"
+        mapfile -t h3_reference_sources <<<"$H3_REFERENCE_IMAGES"
+        (( ${#h3_reference_sources[@]} >= 1 && ${#h3_reference_sources[@]} <= 9 )) || die "Ref2AV accepts 1 to 9 reference images"
+        for i in "${!h3_reference_sources[@]}"; do
+            h3_reference_targets+=("/inputs/h3_reference_${i}")
+        done
+        h3_first_frame_path="$(IFS=,; echo "${h3_reference_targets[*]}")"
+        h3_frame_source=reference
+    elif [[ "$h3_task" == fl2av ]]; then
+        case "${h3_frame_source}" in
+            image)
+                h3_first_frame_path="${CONTAINER_H3_IMAGE_FIRST_FRAME}"
+                h3_last_frame_path="${CONTAINER_H3_IMAGE_LAST_FRAME}"
+                ;;
+            host)
+                [[ -n "${H3_FIRST_FRAME:-}" ]] || die "H3_FIRST_FRAME is required when H3_FRAME_SOURCE=host"
+                [[ -n "${H3_LAST_FRAME:-}" ]] || die "H3_LAST_FRAME is required when H3_FRAME_SOURCE=host"
+                h3_first_frame_path="${CONTAINER_H3_FIRST_FRAME}"
+                h3_last_frame_path="${CONTAINER_H3_LAST_FRAME}"
+                ;;
+            *) die "H3_FRAME_SOURCE must be image or host" ;;
+        esac
+    else
+        die "H3_TASK must be fl2av or ref2av"
+    fi
     readonly h3_source_mode=image
 fi
 if [[ "${is_ltx23_mode}" == 1 ]]; then
@@ -411,7 +428,12 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         require_dir "${LTX23_GEMMA_DIR}"
     elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
         require_dir "${H3_MODEL_DIR:?H3_MODEL_DIR is required}"
-        require_dir "${H3_TURBO_DIR:?H3_TURBO_DIR is required}"
+        if [[ "$h3_task" == ref2av ]]; then
+            require_dir "$H3_COMFY_DIR"
+            for reference in "${h3_reference_sources[@]}"; do require_file "$reference"; done
+        else
+            require_dir "${H3_TURBO_DIR:?H3_TURBO_DIR is required}"
+        fi
         if [[ "${h3_frame_source}" == host ]]; then
             require_file "${H3_FIRST_FRAME:?H3_FIRST_FRAME is required}"
             require_file "${H3_LAST_FRAME:?H3_LAST_FRAME is required}"
@@ -429,7 +451,11 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         elif [[ "${is_ltx23_mode}" == 1 ]]; then
             : # Strict LTX checkpoint/Gemma contents are validated by preflight.
         elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
-            require_file "${H3_TURBO_DIR}/minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
+            if [[ "$h3_task" == ref2av ]]; then
+                require_file "${H3_COMFY_DIR}/diffusion_models/minimax_h3_ref2va_bf16.safetensors"
+            else
+                require_file "${H3_TURBO_DIR}/minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
+            fi
         elif [[ "${is_wan21_mode}" == 1 ]]; then
             require_dir "${WAN21_DISTILL_DIR}/google/umt5-xxl"
             require_file "${WAN21_DISTILL_DIR}/google/umt5-xxl/special_tokens_map.json"
@@ -597,13 +623,25 @@ elif [[ "${is_ltx23_mode}" == 1 ]]; then
 elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${H3_MODEL_DIR},target=${CONTAINER_H3_MODEL},readonly"
-        --mount "type=bind,source=${H3_TURBO_DIR},target=${CONTAINER_H3_TURBO},readonly"
+        --env "H3_TASK=${h3_task}"
         --env "H3_SOURCE_MODE=${h3_source_mode}"
         --env "H3_FRAME_SOURCE=${h3_frame_source}"
         --env "IMAGE_PATH=${h3_first_frame_path}"
         --env "LAST_FRAME_PATH=${h3_last_frame_path}"
         --env PYTORCH_TUNABLEOP_ENABLED=0
     )
+    if [[ "$h3_task" == ref2av ]]; then
+        if [[ "${DRY_RUN:-0}" != 1 ]]; then mkdir -p "${CACHE_DIR}/h3_ref2av"; fi
+        docker_args+=(
+            --mount "type=bind,source=${H3_COMFY_DIR},target=/models/minimax_h3_comfy,readonly"
+            --mount "type=bind,source=${CACHE_DIR}/h3_ref2av,target=/workspace/.cache/h3_ref2av"
+        )
+        for i in "${!h3_reference_sources[@]}"; do
+            docker_args+=(--mount "type=bind,source=${h3_reference_sources[i]},target=${h3_reference_targets[i]},readonly")
+        done
+    else
+        docker_args+=(--mount "type=bind,source=${H3_TURBO_DIR},target=${CONTAINER_H3_TURBO},readonly")
+    fi
     if [[ "${h3_frame_source}" == host ]]; then
         docker_args+=(
             --mount "type=bind,source=${H3_FIRST_FRAME},target=${CONTAINER_H3_FIRST_FRAME},readonly"
@@ -658,7 +696,7 @@ for inference_env in \
     CLIP_CPU_OFFLOAD USE_CHANNELS_LAST_3D \
     LIGHTX2V_WARMUP LIGHTX2V_DIT_PROGRESS ROPE_CHUNK_SIZE \
     LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE LAST_FRAME_PATH H3_SMOKE H3_PREFLIGHT_ONLY \
-    H3_EVIDENCE_DIR H3_PROMPT_PRESET H3_PROMPT_FILE H3_MEGADISCOVERY \
+    H3_INFER_STEPS H3_EVIDENCE_DIR H3_PROMPT_PRESET H3_PROMPT_FILE H3_MEGADISCOVERY \
     H3_MEGADISCOVERY_TIMEOUT_SECONDS \
     NCCL_DEBUG NCCL_DEBUG_SUBSYS NCCL_DEBUG_FILE \
     LIGHTX2V_H3_RUN_COLLECTOR LIGHTX2V_H3_RUN_COLLECTOR_OUTPUT \
@@ -754,7 +792,12 @@ elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
     printf 'H3 model:       %s -> %s\n' "${H3_MODEL_DIR}" "${CONTAINER_H3_MODEL}"
     printf 'H3 source mode: %s\n' "${h3_source_mode}"
     printf 'H3 LightX2V:    /workspace/LightX2V (from image)\n'
-    printf 'H3 turbo:       %s -> %s\n' "${H3_TURBO_DIR}" "${CONTAINER_H3_TURBO}"
+    if [[ "$h3_task" == ref2av ]]; then
+        printf 'H3 Ref2AV BF16: %s -> /models/minimax_h3_comfy\n' "$H3_COMFY_DIR"
+        printf 'H3 prepared cache: %s/h3_ref2av\n' "$CACHE_DIR"
+    else
+        printf 'H3 turbo:       %s -> %s\n' "${H3_TURBO_DIR}" "${CONTAINER_H3_TURBO}"
+    fi
     printf 'H3 frame source: %s\n' "${h3_frame_source}"
     printf 'H3 Core attn:   %s\n' "aiter_fav3_sage_bf16_attn (sage_attn_v2_gfx1201)"
     printf 'H3 Q/K RMS:     %s\n' "minimax_h3_aiter_triton_qk"

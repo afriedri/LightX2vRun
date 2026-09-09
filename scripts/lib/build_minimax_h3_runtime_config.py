@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 from pathlib import Path
 
@@ -76,28 +77,34 @@ def build(
     overlay: dict,
     *,
     smoke: bool,
+    task: str = "fl2av",
+    infer_steps: int | None = None,
     seq_parallel_size: int = 1,
     target_height: int | None = None,
     target_width: int | None = None,
 ) -> dict:
+    if task not in ("fl2av", "ref2av"):
+        raise SystemExit(f"unsupported H3 task: {task}")
+    ref2av = task == "ref2av"
+    allowed = ALLOWED_OVERLAY_CHANGES | ({"lazy_load", "offload_granularity", "text_encoder_offload_granularity", "lora_dynamic_apply", "h3_step_update", "reference_image_resize_mode", "target_height", "target_width"} if ref2av else set())
     if seq_parallel_size not in (1, 2, 4, 8, 16):
         raise SystemExit(f"MiniMax-H3 gfx1201 supports seq_parallel_size 1, 2, 4, 8, or 16, got {seq_parallel_size}")
     if seq_parallel_size == 16 and smoke:
         raise SystemExit("MiniMax-H3 CP2xU8 SP16 requires a supported production geometry")
     if (target_height is None) != (target_width is None):
         raise SystemExit("target_height and target_width must be provided together")
-    missing = [key for key in REQUIRED_PUBLISH_KEYS if key not in publish]
+    missing = [key for key in REQUIRED_PUBLISH_KEYS if key not in publish and not (ref2av and key in ("lora_dynamic_apply", "h3_step_update"))]
     if missing:
         raise SystemExit(f"published H3 JSON is missing keys: {missing}")
     unauthorized = {
         key: {"published": publish.get(key, "<missing>"), "overlay": value}
         for key, value in overlay.items()
-        if publish.get(key, "<missing>") != value and key not in ALLOWED_OVERLAY_CHANGES and key not in TEST_WORKLOAD
+        if publish.get(key, "<missing>") != value and key not in allowed and key not in TEST_WORKLOAD
     }
     if unauthorized:
         raise SystemExit(f"AMD overlay changes non-whitelisted published semantics: {unauthorized}")
-    config = dict(publish)
-    config.update(overlay)
+    config = copy.deepcopy(publish)
+    config.update(copy.deepcopy(overlay))
     # Run policy: every H3 backend test uses the shortest valid 17*n+5 shape.
     # Override older images whose baked published config still requests 362f.
     config.update(TEST_WORKLOAD)
@@ -112,18 +119,34 @@ def build(
             supported = ", ".join(f"{width}x{height}" for height, width in sorted(PRODUCTION_GEOMETRIES))
             raise SystemExit(f"unsupported MiniMax-H3 production geometry {geometry[1]}x{geometry[0]}; expected {supported}")
         config.update({"target_height": geometry[0], "target_width": geometry[1]})
-    for key, expected in FROZEN_VALUES.items():
+    frozen = {**FROZEN_VALUES}
+    if ref2av:
+        frozen.update(video_flow_shift=12.0, h3_step_update="reference_blend")
+        frozen.pop("infer_steps")
+        if infer_steps is not None:
+            config["infer_steps"] = infer_steps
+        if not isinstance(config.get("infer_steps"), int) or config["infer_steps"] < 2:
+            raise SystemExit("H3 base infer_steps must be at least 2 grid points")
+    elif infer_steps is not None:
+        raise SystemExit("FL2AV Turbo uses its existing fixed step configuration")
+    for key, expected in frozen.items():
         if config.get(key) != expected:
             raise SystemExit(f"{key} must be {expected!r}, got {config.get(key)!r}")
-    lora = config.get("lora_configs") or []
-    if len(lora) != 1 or lora[0].get("alpha") != 128 or lora[0].get("strength") != 1.0:
-        raise SystemExit("H3 Turbo LoRA must be one entry with alpha=128 strength=1.0")
-    path = str(lora[0].get("path") or "")
-    if not path.endswith(TURBO_NAME):
-        raise SystemExit(f"H3 Turbo LoRA path must end with {TURBO_NAME}, got {path}")
-    lora[0]["path"] = f"/models/minimax_h3_turbo/{TURBO_NAME}"
-    config["task"] = "fl2av"
-    config["lora_dynamic_apply"] = True
+    if ref2av:
+        if config.get("lora_configs") or config.get("lora_dynamic_apply", False):
+            raise SystemExit("Ref2AV BF16 base profile does not load LoRA")
+        config.pop("lora_configs", None)
+        config["lora_dynamic_apply"] = False
+    else:
+        lora = config.get("lora_configs") or []
+        if len(lora) != 1 or lora[0].get("alpha") != 128 or lora[0].get("strength") != 1.0:
+            raise SystemExit("H3 Turbo LoRA must be one entry with alpha=128 strength=1.0")
+        path = str(lora[0].get("path") or "")
+        if not path.endswith(TURBO_NAME):
+            raise SystemExit(f"H3 Turbo LoRA path must end with {TURBO_NAME}, got {path}")
+        lora[0]["path"] = f"/models/minimax_h3_turbo/{TURBO_NAME}"
+        config["lora_dynamic_apply"] = True
+    config["task"] = task
     config["tensor_parallel"] = False
     config["text_encoder_tensor_parallel"] = False
     config["lazy_load"] = True
@@ -162,6 +185,8 @@ def main() -> int:
     parser.add_argument("--publish-json", type=Path, required=True)
     parser.add_argument("--overlay-json", type=Path, required=True)
     parser.add_argument("--output-json", type=Path, required=True)
+    parser.add_argument("--task", choices=("fl2av", "ref2av"), default="fl2av")
+    parser.add_argument("--infer-steps", type=int)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--seq-parallel-size", type=int, choices=(1, 2, 4, 8, 16), default=1)
     parser.add_argument("--target-height", type=int)
@@ -171,6 +196,8 @@ def main() -> int:
         load_json(args.publish_json),
         load_json(args.overlay_json),
         smoke=args.smoke,
+        task=args.task,
+        infer_steps=args.infer_steps,
         seq_parallel_size=args.seq_parallel_size,
         target_height=args.target_height,
         target_width=args.target_width,

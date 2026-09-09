@@ -513,13 +513,14 @@ def smoke_distributed_attention() -> int:
         dist.destroy_process_group()
 
 
-def check_artifacts(model_dir: Path, turbo_dir: Path, first_frame: Path, last_frame: Path, expected_world_size: int = 1) -> dict:
+def check_artifacts(model_dir: Path, turbo_dir: Path, first_frame: Path, last_frame: Path, expected_world_size: int = 1, *, task: str = "fl2av", lora_path: str | None = None) -> dict:
+    transformer = "transformer_ref" if task == "ref2av" else "transformer"
     if not model_dir.is_dir():
         die(f"H3 model directory not found: {model_dir}")
     component_files = {
         # auto_calc_config reads the released transformer architecture before
         # the runner is constructed, even though runtime semantics are frozen.
-        "transformer": ("config.json",),
+        transformer: ("config.json",),
         "text_encoder": ("config.json",),
         "tokenizer": ("tokenizer.json", "tokenizer_config.json"),
         "vae": ("config.json",),
@@ -533,7 +534,7 @@ def check_artifacts(model_dir: Path, turbo_dir: Path, first_frame: Path, last_fr
             if not (component_dir / filename).is_file():
                 die(f"H3 model component file not found: {component_dir / filename}")
     try:
-        transformer_config = json.loads((model_dir / "transformer/config.json").read_text(encoding="utf-8"))
+        transformer_config = json.loads((model_dir / transformer / "config.json").read_text(encoding="utf-8"))
         attention_heads = int(transformer_config.get("num_attention_heads", 56))
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
         die(f"H3 transformer config cannot be parsed: {error}")
@@ -555,22 +556,24 @@ def check_artifacts(model_dir: Path, turbo_dir: Path, first_frame: Path, last_fr
     for filename in processor_files:
         if not (processor_dir / filename).is_file():
             die(f"H3 processor file not found: {processor_dir / filename}")
-    for component in ("transformer", "text_encoder", "vae", "audio_vae"):
+    for component in (transformer, "text_encoder", "vae", "audio_vae"):
         component_dir = model_dir / component
         if not any(component_dir.glob("*.safetensors")):
             die(f"H3 model component has no safetensors shard: {component_dir}")
-    turbo = turbo_dir / "minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
-    if not turbo.is_file():
+    turbo = Path(lora_path) if lora_path else turbo_dir / "minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
+    if task != "ref2av" and not turbo.is_file():
         die(f"Turbo LoRA not found: {turbo}")
-    if not first_frame.is_file():
-        die(f"first frame not found: {first_frame}")
-    if not last_frame.is_file():
-        die(f"last frame not found: {last_frame}")
+    images = [(f"reference_image_{i+1}", Path(path)) for i, path in enumerate(str(first_frame).split(","))] if task == "ref2av" else [("first_frame", first_frame), ("last_frame", last_frame)]
+    if task == "ref2av" and not 1 <= len(images) <= 9:
+        die("Ref2AV requires between 1 and 9 reference images")
+    for label, path in images:
+        if not path.is_file():
+            die(f"{label.replace('_', ' ')} not found: {path}")
     try:
         from PIL import Image
 
         image_info = {}
-        for label, path in (("first_frame", first_frame), ("last_frame", last_frame)):
+        for label, path in images:
             with Image.open(path) as image:
                 image.verify()
             with Image.open(path) as image:
@@ -585,7 +588,7 @@ def check_artifacts(model_dir: Path, turbo_dir: Path, first_frame: Path, last_fr
     return {
         "model_dir": str(model_dir),
         "components": sorted((*component_files, "processor")),
-        "turbo": str(turbo),
+        "turbo": None if task == "ref2av" else str(turbo),
         "attention_heads": attention_heads,
         **image_info,
     }
@@ -595,8 +598,8 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
     config = json.loads(path.read_text(encoding="utf-8"))
     for key, expected in (
         ("enable_cfg", False),
-        ("video_flow_shift", 6.0),
-        ("h3_step_update", "training_euler"),
+        ("video_flow_shift", 12.0 if config.get("task") == "ref2av" else 6.0),
+        ("h3_step_update", "reference_blend" if config.get("task") == "ref2av" else "training_euler"),
         ("h3_refiner_attn_type", "aiter_triton_mha"),
         ("h3_core_attn_type", "aiter_fav3_sage_bf16_attn"),
         ("attn_type", "aiter_triton_mha"),
@@ -605,7 +608,7 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
         ("h3_core_rope_type", "minimax_h3_triton_strict_rope"),
         ("h4_video_attn_type", "aiter_triton_mha"),
         ("dit_quant_scheme", "Default"),
-        ("lora_dynamic_apply", True),
+        ("lora_dynamic_apply", config.get("task") != "ref2av"),
         ("lazy_load", True),
         ("cpu_offload", True),
         ("offload_granularity", "block"),
@@ -614,6 +617,8 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
     ):
         if config.get(key) != expected:
             die(f"runtime config {key} must be {expected!r}, got {config.get(key)!r}")
+    if config.get("task") == "ref2av" and config.get("lora_configs"):
+        die("Ref2AV BF16 base profile must not load LoRA")
     if config.get("tensor_parallel") is not False:
         die("runtime config tensor_parallel must remain false for MiniMax-H3 gfx1201")
     if config.get("text_encoder_tensor_parallel", False) is not False:
@@ -701,10 +706,11 @@ def main() -> int:
     # provided below by the one-process-per-device torchrun distributed smoke.
     torch.cuda.set_device(0)
     runtime = check_runtime_dependencies(args.source_mode, args.required_runcollector_schema, args.expected_world_size)
+    config = check_runtime_config(args.runtime_config, args.expected_world_size) if args.runtime_config else {}
     artifacts = {}
     if not args.skip_artifacts:
-        artifacts = check_artifacts(args.model_dir, args.turbo_dir, args.first_frame, args.last_frame, args.expected_world_size)
-    config = check_runtime_config(args.runtime_config, args.expected_world_size) if args.runtime_config else {}
+        artifacts = check_artifacts(args.model_dir, args.turbo_dir, args.first_frame, args.last_frame, args.expected_world_size,
+                                    task=config.get("task", "fl2av"), lora_path=(config.get("lora_configs") or [{}])[0].get("path"))
     # Kernel execution is an explicit diagnostic. Normal inference immediately
     # exercises these same paths, so only retain the cheap static/runtime
     # contracts on every request.

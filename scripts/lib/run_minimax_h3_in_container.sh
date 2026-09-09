@@ -7,10 +7,17 @@ source "${run_root}/scripts/lib/minimax_h3_prompt_presets.sh"
 lightx2v_path="${LIGHTX2V_PATH:-/workspace/LightX2V}"
 model_path="${MODEL_PATH:-/models/minimax_h3}"
 source_mode="${H3_SOURCE_MODE:-image}"
+task="${H3_TASK:-fl2av}"
+case "$task" in fl2av|ref2av) ;; *) echo "unsupported H3 task: $task" >&2; exit 2 ;; esac
 image_path="${IMAGE_PATH:-${lightx2v_path}/assets/inputs/imgs/flf2v_input_first_frame-fs8.png}"
 last_frame_path="${LAST_FRAME_PATH:-${lightx2v_path}/assets/inputs/imgs/flf2v_input_last_frame-fs8.png}"
 overlay_json="${BASE_CONFIG_JSON:-${lightx2v_path}/configs/platforms/amd_rocm/minimax_h3_fl2av_4step_768p_gfx1201.json}"
 publish_json="${lightx2v_path}/configs/minimax_h3/dmd/minimax_h3_bf16_4step_single_gpu_offload.json"
+if [[ "$task" == ref2av ]]; then
+    last_frame_path=
+    overlay_json="${lightx2v_path}/configs/platforms/amd_rocm/minimax_h3_ref2av_bf16_gfx1201.json"
+    publish_json="${lightx2v_path}/configs/minimax_h3/minimax_h3_ref2av.json"
+fi
 
 visible_devices="${HIP_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
 [[ "${visible_devices}" =~ ^[0-9]+(,[0-9]+){0,15}$ ]] || {
@@ -115,7 +122,19 @@ if [[ "${LIGHTX2V_H3_RUN_COLLECTOR:-0}" == 1 ]]; then
     runcollector_schema_flag+=(--required-runcollector-schema 2)
 fi
 
+profile_args=(--task "$task")
+if [[ "$task" == ref2av ]]; then
+    prepared_model="${runtime_config_dir}/ref2av_model"
+    python3 "${lightx2v_path}/tools/convert/minimax_h3_comfy.py" \
+        --checkpoint /models/minimax_h3_comfy/diffusion_models/minimax_h3_ref2va_bf16.safetensors \
+        --cache-dir /workspace/.cache/h3_ref2av \
+        --base-model-dir "$model_path" --model-output "$prepared_model"
+    model_path="$prepared_model"
+    if [[ -n "${H3_INFER_STEPS:-}" ]]; then profile_args+=(--infer-steps "$H3_INFER_STEPS"); fi
+fi
+
 python3 "${script_dir}/build_minimax_h3_runtime_config.py" \
+    "${profile_args[@]}" \
     --publish-json "${publish_json}" \
     --overlay-json "${overlay_json}" \
     --output-json "${runtime_config_json}" \
@@ -220,7 +239,7 @@ resolve_minimax_h3_prompt \
 prompt="${MINIMAX_H3_PROMPT}"
 save_result_path="${SAVE_RESULT_PATH:-${lightx2v_path}/save_results/minimax_h3_fl2av.mp4}"
 
-echo "MiniMax-H3 FL2V gfx1201"
+echo "MiniMax-H3 ${task} gfx1201"
 echo "Workload: ${target_width}x${target_height}, ${target_video_length} frames @ ${target_fps} FPS (${prompt_duration_seconds}s)"
 echo "GPUs: ${visible_devices} (world_size=${gpu_count})"
 parallel_mode="single GPU"
@@ -242,11 +261,15 @@ fi
 echo "Core Q/K RMS: minimax_h3_aiter_triton_qk"
 echo "Core RoPE: minimax_h3_triton_strict_rope"
 echo "H4 Video Attention: aiter_triton_mha"
-echo "Dense GEMM/LoRA: torch.mm -> default ROCm BLAS heuristic (TunableOp disabled)"
+if [[ "$task" == ref2av ]]; then
+    echo "Dense GEMM: BF16 torch.mm -> default ROCm BLAS heuristic (TunableOp disabled); LoRA disabled"
+else
+    echo "Dense GEMM/LoRA: torch.mm -> default ROCm BLAS heuristic (TunableOp disabled)"
+fi
 echo "Source mode: ${source_mode}"
 echo "Model: ${model_path}"
 echo "Config: ${runtime_config_json}"
-echo "First/last: ${image_path} ${last_frame_path}"
+echo "Input images (${task}): ${image_path} ${last_frame_path}"
 echo "Prompt: ${MINIMAX_H3_PROMPT_SOURCE} (${prompt_duration_seconds}s alignment)"
 echo "Output: ${save_result_path}"
 
@@ -256,19 +279,26 @@ cd /models
 infer_args=(
     --seed "${SEED:-42}"
     --model_cls minimax_h3
-    --task fl2av
+    --task "$task"
     --model_path "${model_path}"
     --config_json "${runtime_config_json}"
     --prompt "${prompt}"
     --image_path "${image_path}"
-    --last_frame_path "${last_frame_path}"
     --target_shape "${target_height}" "${target_width}"
     --save_result_path "${save_result_path}"
 )
+if [[ "$task" == fl2av ]]; then
+    infer_args+=(--last_frame_path "${last_frame_path}")
+fi
 if (( gpu_count > 1 )); then
-    torchrun --standalone --nproc_per_node="${gpu_count}" -m lightx2v.infer "${infer_args[@]}"
+    infer_command=(torchrun --standalone --nproc_per_node="${gpu_count}" -m lightx2v.infer)
 else
-    python3 -m lightx2v.infer "${infer_args[@]}"
+    infer_command=(python3 -m lightx2v.infer)
+fi
+if [[ "$task" == ref2av && -n "$evidence_dir" ]]; then
+    "${infer_command[@]}" "${infer_args[@]}" 2>&1 | tee "${evidence_dir}/run.log"
+else
+    "${infer_command[@]}" "${infer_args[@]}"
 fi
 
 if [[ -n "${evidence_dir}" ]]; then

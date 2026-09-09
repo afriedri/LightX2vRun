@@ -444,6 +444,7 @@ PY
 
 export IMAGE="${image}"
 export LIGHTX2V_H3_EXPLICIT_IMAGE=1
+export H3_TASK=fl2av
 unset LIGHTX2V_DIR
 export GPU_DEVICES="${gpu_devices}"
 export H3_MODEL_DIR="${model_dir}"
