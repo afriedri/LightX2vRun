@@ -20,6 +20,7 @@ workload in a model-specific launcher and emits rank-critical evidence.
 | 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
 | 08 | `scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh` | MiniMax-H3, 1344x768, 124f, 24 FPS | 2/4/8/16 |
 | 09 | `scripts/run_09_minimax_h3_480p_124f_24fps_scale.sh` | MiniMax-H3, 832x480, 124f, 24 FPS | 2/4/8/16 |
+| 10 | `scripts/run_10_minimax_h3_bf16_ref2v.sh` | H3 原始 BF16 Ref2V，无 LoRA，1344x768，124f，24 FPS | 默认 2；支持 1/2/4/8/16 |
 | 10 | `scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh` | LTX-2.5 C1, 1280x704, 121f, 24 FPS | 2/4/8/16 |
 
 ## LTX-2.3 Distilled FP8 B0

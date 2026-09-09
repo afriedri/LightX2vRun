@@ -35,10 +35,12 @@ Qwen 多模态输入、较大的参考图、Core 激活/通信临时张量和 VA
 
 更新两仓并重建 LightX2V 镜像。旧 ReleaseFinal 镜像只适用于前面的无 GPU 权重 inventory；本入口需要新镜像内包含本次转换工具及当前 native H3 代码。
 
+日常专用入口为 `scripts/run_10_minimax_h3_bf16_ref2v.sh`。镜像、完整 native H3 目录、ComfyUI BF16 根目录、GPU、参考图数组和 prompt 路径集中在脚本顶部，可直接编辑，也可用命令行覆盖。默认素材为 `/disk/ssd1/lightx2v-runtime/inputs/h3-ref2v/reference.png` 和 `prompt.txt`，需要换成自己的素材；不自动套用 FL2V 首尾帧或旧 prompt。完整采样默认 30 个网格点，默认 GPU `0,1`。
+
 在权重机器的 Run 仓库，先用两卡、单参考图、少量基础模型步骤检查算子/显存：
 
 ```bash
-bash scripts/run_minimax_h3_ref2av_bf16.sh \
+bash scripts/run_10_minimax_h3_bf16_ref2v.sh \
   --image lightx2v-rocm:hvat-gfx1201-R9600 \
   --model-dir /disk/ssd1/difumodels/MiniMax-h3 \
   --comfy-dir /disk/ssd1/difumodels/MiniMax-H3-ComfyUI \
@@ -53,3 +55,5 @@ bash scripts/run_minimax_h3_ref2av_bf16.sh \
 Run 只读挂载进镜像，转换和推理均在容器内执行。默认两卡 `0,1`；`CACHE_DIR` 决定宿主机持久缓存目录，权重缓存在其 `h3_ref2av/` 下。输出目录保留 runtime config、preflight、`run.log`、视频与 ffprobe；`--collect` 另生成各 rank 的 H3 生命周期/算子报告。`run.log` 中的 `dispatch` / `fallback` 用于核实实际 backend；CPU 测试不代表真实 GPU kernel 已通过。
 
 验证结果：Run 全量 219 项通过；LightX2V 权重格式 3 项、算子路由/Ref2AV 切分/lazy offload 定向 41 项通过。所有结果均为 CPU/命令替身验证；未执行远端真实 BF16 的转换与推理。
+
+专用脚本复用 `run_minimax_h3_ref2av_bf16.sh` 和现有镜像内执行链；两入口保持同一套权重转换、算子、offload 和 collector。显式重复 `--reference-image` 会替换脚本顶部的默认图片列表。`--help` 显示有效默认路径，`DRY_RUN=1` 可核对 Docker 挂载；`--collect` 按需启用，不默认增加 profiling 开销。
