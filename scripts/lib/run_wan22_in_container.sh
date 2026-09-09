@@ -157,6 +157,9 @@ if not 0.0 <= offload_ratio <= 1.0:
 
 config.update(
     {
+        "model_cls": "wan2.2_moe",
+        "distill_method": "dmd2",
+        "warmup": os.environ.get("LIGHTX2V_WARMUP", "0") == "1",
         "infer_steps": 4,
         "target_height": int(target_height_text),
         "target_width": int(target_width_text),
@@ -231,7 +234,7 @@ python3 -c 'import importlib; import aiter; assert callable(aiter.ck_conv3d_v1);
 export PYTHONPATH="${run_root}/python_compat/wan22_lazy${PYTHONPATH:+:${PYTHONPATH}}"
 source "${lightx2v_path}/scripts/base/base.sh"
 infer_args=(
-    --model_cls wan2.2_moe_distill
+    --model_cls wan2.2_moe
     --task i2v
     --model_path "${model_path}"
     --config_json "${runtime_config_json}"
@@ -240,9 +243,6 @@ infer_args=(
     --image_path "${image_path}"
     --save_result_path "${save_result_path}"
 )
-if [[ "${LIGHTX2V_WARMUP:-0}" == 1 ]]; then
-    infer_args+=(--warmup)
-fi
 
 cd "${models_root}"
 torchrun_args=(

@@ -1,5 +1,11 @@
 # LightX2VRun — GFX1201 timing entries
 
+
+当前 LightX2V 分支为 `hvat-gfx1201-R9600`，默认构建/运行镜像统一为
+`lightx2v-rocm:hvat-gfx1201-R9600`。本轮需要重建镜像；旧 Hot28 镜像不包含
+新的 Wan 蒸馏入口。LTX2.3、LTX2.5、Wan2.1、Wan2.2、H3 的模型与权重以
+本仓库和 HVAT 适配为准。详见 [两仓迁移 review](docs/rebase-review-20260909.md)。
+
 The active interface contains the numbered timing tasks below plus explicit
 model production entries for MiniMax-H3 and LTX-2.3. Every entry freezes its
 workload in a model-specific launcher and emits rank-critical evidence.
@@ -76,7 +82,7 @@ bash scripts/collector/LTX25-CollectorUltra.sh \
 ```
 
 The launcher follows the same source-direct pattern as the Aiter tuning
-entries: it fetches `hvat-gfx1201` from the LightX2V origin into a managed
+entries: it fetches `hvat-gfx1201-R9600` from the LightX2V origin into a managed
 cache, checks out the resolved commit, records its SHA, and mounts that exact
 tree read-only for direct execution. This avoids an image rebuild and does not
 require a source-path argument. `LTX25_LIGHTX2V_GIT_URL`,

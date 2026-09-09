@@ -84,7 +84,7 @@ while (( $# > 0 )); do
 done
 
 if [[ "${mock_memory_only}" != 1 ]]; then
-    [[ -n "${image}" ]] || { echo "ERROR: --image is required; B0 must use an image built from the current hvat-gfx1201 source" >&2; exit 2; }
+    [[ -n "${image}" ]] || { echo "ERROR: --image is required; B0 must use an image built from the current hvat-gfx1201-R9600 source" >&2; exit 2; }
 fi
 case "${collect}" in 0 | 1) ;; *) echo "ERROR: LTX23_COLLECT must be 0 or 1" >&2; exit 2 ;; esac
 case "${quick_gemm_probe}" in 0 | 1) ;; *) echo "ERROR: LTX23_QUICK_GEMM_PROBE must be 0 or 1" >&2; exit 2 ;; esac

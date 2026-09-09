@@ -143,7 +143,7 @@ def test_ltx25_collector_ultra_dry_run_reaches_the_container(tmp_path):
     assert "LTX-2.5 route:  CollectorUltra evidence; C1 probe disabled" in stdout
     assert "LIGHTX2V_LTX25_CONTRACT_ULTRA=1" in stdout
     assert f"source={lightx2v_source},target=/workspace/LightX2V,readonly" in stdout
-    assert "CollectorUltra source plan: fetch hvat-gfx1201" in stdout
+    assert "CollectorUltra source plan: fetch hvat-gfx1201-R9600" in stdout
 
 
 def test_ltx25_runtime_config_freezes_b0ref_and_labels_conv_diagnostic(tmp_path):

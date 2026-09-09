@@ -186,7 +186,7 @@ python3 -m lightx2v.utils.ltx2_prompt_cache \
 export LIGHTX2V_LTX25_PROMPT_CACHE="${prompt_cache}"
 torchrun --standalone --nproc_per_node="${world_size}" -m lightx2v.infer \
     --seed "${SEED:-42}" \
-    --model_cls ltx2 \
+    --model_cls ltx2_5 \
     --task t2av \
     --model_path "${model_root}" \
     --config_json "${runtime_config}" \

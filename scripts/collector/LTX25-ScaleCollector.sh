@@ -20,14 +20,14 @@ source_overlay="${SOURCE_OVERLAY:-0}"
 
 lightx2v_src="${LIGHTX2V_SRC:-}"
 lightx2v_git_url="${LTX25_LIGHTX2V_GIT_URL:-${LIGHTX2V_GIT_URL:-git@gitcode.com:hvat-ai/LightX2V.git}}"
-lightx2v_git_ref="${LTX25_LIGHTX2V_REF:-${LIGHTX2V_GIT_REF:-hvat-gfx1201}}"
-lightx2v_git_dir="${LTX25_LIGHTX2V_GIT_DIR:-${LIGHTX2V_GIT_DIR:-/disk/ssd/lightx2v-runtime/source-cache/ltx25-scale/LightX2V-hvat-gfx1201}}"
+lightx2v_git_ref="${LTX25_LIGHTX2V_REF:-${LIGHTX2V_GIT_REF:-hvat-gfx1201-R9600}}"
+lightx2v_git_dir="${LTX25_LIGHTX2V_GIT_DIR:-${LIGHTX2V_GIT_DIR:-/disk/ssd/lightx2v-runtime/source-cache/ltx25-scale/LightX2V-hvat-gfx1201-R9600}}"
 allow_dirty_lightx2v="${ALLOW_DIRTY_LIGHTX2V:-0}"
 
 aiter_src="${AITER_SRC:-}"
 aiter_git_url="${AITER_GIT_URL:-git@gitcode.com:hvat-ai/aiter.git}"
-aiter_git_ref="${AITER_GIT_REF:-hvat-gfx1201}"
-aiter_git_dir="${AITER_GIT_DIR:-/disk/ssd/lightx2v-runtime/source-cache/ltx25-scale/aiter-hvat-gfx1201}"
+aiter_git_ref="${AITER_GIT_REF:-LightX2V/hvat-gfx1201-R9600}"
+aiter_git_dir="${AITER_GIT_DIR:-/disk/ssd/lightx2v-runtime/source-cache/ltx25-scale/aiter-hvat-gfx1201-R9600}"
 allow_dirty_aiter="${ALLOW_DIRTY_AITER:-0}"
 
 run_args=()
@@ -52,13 +52,13 @@ Source controls:
   SOURCE_OVERLAY=0|1    Default: 0. Set to 1 only for explicit source debugging
   LIGHTX2V_SRC=/path    Use this local Git checkout instead of fetching
   LIGHTX2V_GIT_URL=URL
-  LIGHTX2V_GIT_REF=REF  Default: hvat-gfx1201
+  LIGHTX2V_GIT_REF=REF  Default: hvat-gfx1201-R9600
   LIGHTX2V_GIT_DIR=DIR  Managed checkout cache
   LTX25_LIGHTX2V_GIT_URL / LTX25_LIGHTX2V_REF / LTX25_LIGHTX2V_GIT_DIR
                          CollectorUltra-compatible aliases
   AITER_SRC=/path       Use this local Git checkout instead of fetching
   AITER_GIT_URL=URL
-  AITER_GIT_REF=REF     Default: hvat-gfx1201
+  AITER_GIT_REF=REF     Default: LightX2V/hvat-gfx1201-R9600
   AITER_GIT_DIR=DIR     Managed checkout cache, including CK submodule
   ALLOW_DIRTY_LIGHTX2V=0|1
   ALLOW_DIRTY_AITER=0|1

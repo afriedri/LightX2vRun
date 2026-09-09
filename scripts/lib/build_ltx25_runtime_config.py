@@ -32,6 +32,7 @@ def build_config(model_root: Path) -> dict:
         "target_height": 704,
         "target_width": 1280,
         "fps": 24,
+        "model_cls": "ltx2_5",
         "attn_type": "torch_sdpa",
         "rms_norm_type": "torch_native",
         "rope_type": "torch_real_rope",

@@ -4,7 +4,7 @@ set -Eeuo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 run_root="$(cd -- "${script_dir}/../.." && pwd)"
 git_url="${LTX25_LIGHTX2V_GIT_URL:-git@gitcode.com:hvat-ai/LightX2V.git}"
-git_ref="${LTX25_LIGHTX2V_REF:-hvat-gfx1201}"
+git_ref="${LTX25_LIGHTX2V_REF:-hvat-gfx1201-R9600}"
 git_dir="${LTX25_LIGHTX2V_GIT_DIR:-/disk/ssd/lightx2v-runtime/source-cache/LightX2V-ltx25-ultra}"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -28,7 +28,7 @@ All options are forwarded to run_ltx25_contract_collector.sh. Common options:
 Environment:
   DRY_RUN=1  Print the Docker command without starting it.
   LTX25_LIGHTX2V_GIT_URL  LightX2V repository URL
-  LTX25_LIGHTX2V_REF      Branch/tag/SHA to fetch (default: hvat-gfx1201)
+  LTX25_LIGHTX2V_REF      Branch/tag/SHA to fetch (default: hvat-gfx1201-R9600)
   LTX25_LIGHTX2V_GIT_DIR  Managed source cache directory
 
 The launcher fetches the requested LightX2V revision into its managed cache,

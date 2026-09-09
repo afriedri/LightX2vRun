@@ -12,10 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 WAN22_INSIDE = SCRIPTS / "lib/run_wan22_in_container.sh"
 SUMMARY = SCRIPTS / "lib/summarize_timings.py"
-FIX1_IMAGE = (
-    "compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:"
-    "gfx1201-R9600-FP8-260813-CKConv3dV1-Hot28-B0B1-Fix1"
-)
+FIX1_IMAGE = "lightx2v-rocm:hvat-gfx1201-R9600"
 H3_IMAGE = "example.invalid/lightx2v:h3-production"
 H3_768_FIRST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png"
 H3_768_LAST_FRAME = "/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png"

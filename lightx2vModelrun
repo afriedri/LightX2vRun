@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CK_CONV3D_V1_IMAGE="compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-FP8-260813-CKConv3dV1-Hot28-B0B1-Fix1"
+CK_CONV3D_V1_IMAGE="lightx2v-rocm:hvat-gfx1201-R9600"
 IMAGE="${IMAGE:-${CK_CONV3D_V1_IMAGE}}"
 CONTAINER_NAME="${CONTAINER_NAME:-lightx2v-gfx1201}"
 GPU_DEVICES="${GPU_DEVICES:-0,1}"

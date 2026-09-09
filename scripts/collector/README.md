@@ -116,3 +116,17 @@ SP16 prints each active U8/CP2 measurement and checkpoints every completed
 result. A timeout keeps those checkpoints and marks the unified report partial.
 The historical root-level SuperCollect and Sage sweep shell entry points remain
 compatibility wrappers.
+
+## H3 Ref2VA BF16 / INT8 ConvRot 权重采集
+
+```bash
+python3 scripts/collector/collect_minimax_h3_ref2v_weights.py \
+  --model-root /disk/ssd1/difumodels/MiniMax-H3-ComfyUI \
+  --output-dir /disk/ssd1/lightx2v-runtime/h3-ref2va-weight-inventory
+```
+
+固定采集未裁剪的 `minimax_h3_ref2va_bf16.safetensors` 与
+`minimax_h3_ref2va_int8_convrot.safetensors`。复用现有 safetensors 解析器，
+读取 header 和有上限的 ConvRot 整数标量，不读取权重矩阵、不初始化 GPU。
+JSON/Markdown 包含文件结构、dtype、shape、groupsize 和两种格式差异。
+这是资产采集，不是 GPU 推理或性能验收，也不加入运行时 preflight gate。

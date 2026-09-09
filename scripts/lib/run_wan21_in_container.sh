@@ -115,6 +115,7 @@ python3 - "${base_config_json}" "${runtime_config_json}" "${model_path}" "${dist
     "${t5_cpu_offload}" "${clip_cpu_offload}" "${target_height}" "${target_width}" \
     "${target_video_length}" "${target_fps}" <<'PY'
 import json
+import os
 import sys
 
 (
@@ -146,6 +147,9 @@ with open(source_path, encoding="utf-8") as source_file:
 seq_p_size = int(seq_p_size_text)
 config.update(
     {
+        "model_cls": "wan2.1",
+        "distill_method": "dmd2",
+        "warmup": os.environ.get("LIGHTX2V_WARMUP", "0") == "1",
         "infer_steps": 4,
         "target_video_length": int(target_video_length_text),
         "target_height": int(target_height_text),
@@ -218,7 +222,7 @@ python3 -c 'import importlib; import aiter; assert callable(aiter.ck_conv3d_v1);
 export PYTHONPATH="${PYTHONPATH:-}"
 source "${lightx2v_path}/scripts/base/base.sh"
 infer_args=(
-    --model_cls wan2.1_distill
+    --model_cls wan2.1
     --task i2v
     --model_path "${model_path}"
     --config_json "${runtime_config_json}"
@@ -228,9 +232,6 @@ infer_args=(
     --save_result_path "${save_result_path}"
     --seed "${seed}"
 )
-if [[ "${LIGHTX2V_WARMUP:-0}" == 1 ]]; then
-    infer_args+=(--warmup)
-fi
 
 cd "${models_root}"
 torchrun_args=(
