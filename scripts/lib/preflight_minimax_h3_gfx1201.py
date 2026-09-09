@@ -606,7 +606,7 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
     for key, expected in (
         ("enable_cfg", False),
         ("video_flow_shift", 12.0 if config.get("task") == "ref2av" else 6.0),
-        ("h3_step_update", "reference_blend" if config.get("task") == "ref2av" else "training_euler"),
+        ("h3_step_update", config.get("h3_step_update") if config.get("task") == "ref2av" else "training_euler"),
         ("h3_refiner_attn_type", "aiter_triton_mha"),
         ("h3_core_attn_type", "aiter_fav3_sage_bf16_attn"),
         ("attn_type", "aiter_triton_mha"),
@@ -624,6 +624,8 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
     ):
         if config.get(key) != expected:
             die(f"runtime config {key} must be {expected!r}, got {config.get(key)!r}")
+    if config.get("task") == "ref2av" and config.get("h3_step_update") not in ("comfy_res_multistep", "reference_blend", "training_euler"):
+        die("Unsupported H3 Ref2AV sampling mode")
     if config.get("task") == "ref2av" and config.get("lora_configs"):
         die("Ref2AV BF16 base profile must not load LoRA")
     if config.get("tensor_parallel") is not False:

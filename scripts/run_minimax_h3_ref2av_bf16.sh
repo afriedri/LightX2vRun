@@ -29,7 +29,7 @@ weights (about 66.3 GB additional disk); subsequent runs reuse the cache.
   --prompt-file FILE    Prompt with reference descriptions; PROMPT overrides file
   --result-dir DIR      Reports/video output (default: timestamped)
   --gpus IDS            GPU ids (default: 0,1; supports 1/2/4/8/16 GPUs)
-  --infer-steps N      Base schedule grid points (default: 30, N-1 evaluations)
+  --infer-steps N      Model evaluations (default: 20, Comfy res_multistep + simple)
   --duration SECONDS   Integer 5-15; native aligned frames, exact output duration
   --smoke              480x480 instead of 1344x768; duration is unchanged
   --preflight-only     Validate assets and run kernel/communication probes

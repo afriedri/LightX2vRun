@@ -79,6 +79,8 @@ def build(
     smoke: bool,
     task: str = "fl2av",
     infer_steps: int | None = None,
+    step_update: str | None = None,
+    reference_image_resize_mode: str | None = None,
     seq_parallel_size: int = 1,
     target_height: int | None = None,
     target_width: int | None = None,
@@ -100,7 +102,7 @@ def build(
             raise SystemExit("H3 output duration must be an integer from 5 to 15")
         if frames != ((output_duration * 24 - 5 + 16) // 17) * 17 + 5:
             raise SystemExit("H3 output duration does not match the aligned native frame count")
-    allowed = ALLOWED_OVERLAY_CHANGES | ({"lazy_load", "offload_granularity", "text_encoder_offload_granularity", "lora_dynamic_apply", "h3_step_update", "reference_image_resize_mode", "target_height", "target_width"} if ref2av else set())
+    allowed = ALLOWED_OVERLAY_CHANGES | ({"infer_steps", "lazy_load", "offload_granularity", "text_encoder_offload_granularity", "lora_dynamic_apply", "h3_step_update", "reference_image_resize_mode", "target_height", "target_width"} if ref2av else set())
     if seq_parallel_size not in (1, 2, 4, 8, 16):
         raise SystemExit(f"MiniMax-H3 gfx1201 supports seq_parallel_size 1, 2, 4, 8, or 16, got {seq_parallel_size}")
     if seq_parallel_size == 16 and smoke:
@@ -119,6 +121,13 @@ def build(
         raise SystemExit(f"AMD overlay changes non-whitelisted published semantics: {unauthorized}")
     config = copy.deepcopy(publish)
     config.update(copy.deepcopy(overlay))
+    if step_update is not None or reference_image_resize_mode is not None:
+        if not ref2av:
+            raise SystemExit("Sampling/reference overrides apply only to Ref2AV")
+        if step_update is not None:
+            config["h3_step_update"] = step_update
+        if reference_image_resize_mode is not None:
+            config["reference_image_resize_mode"] = reference_image_resize_mode
     # Keep legacy FL2AV and unspecified ref workloads at 124f; Ref2AV can
     # explicitly request the native 5-15 second range.
     config.update(TEST_WORKLOAD)
@@ -139,12 +148,20 @@ def build(
         config.update({"target_height": geometry[0], "target_width": geometry[1]})
     frozen = {**FROZEN_VALUES, "target_video_length": frames}
     if ref2av:
-        frozen.update(video_flow_shift=12.0, h3_step_update="reference_blend")
+        frozen.update(video_flow_shift=12.0)
+        frozen.pop("h3_step_update")
+        if config.get("h3_step_update") not in ("comfy_res_multistep", "reference_blend", "training_euler"):
+            raise SystemExit("Unsupported H3 Ref2AV sampling mode")
+        if config.get("reference_image_resize_mode", "diffusers") not in ("match", "max", "diffusers"):
+            raise SystemExit("Unsupported H3 reference image resize mode")
         frozen.pop("infer_steps")
         if infer_steps is not None:
             config["infer_steps"] = infer_steps
-        if not isinstance(config.get("infer_steps"), int) or config["infer_steps"] < 2:
-            raise SystemExit("H3 base infer_steps must be at least 2 grid points")
+        minimum = 1 if config["h3_step_update"] == "comfy_res_multistep" else 2
+        if type(config.get("infer_steps")) is not int or config["infer_steps"] < minimum:
+            raise SystemExit(f"H3 infer_steps must be an integer >= {minimum}")
+        if config["h3_step_update"] == "comfy_res_multistep" and config["infer_steps"] > 1000:
+            raise SystemExit("H3 Comfy simple sampling requires 1..1000 model evaluations")
     elif infer_steps is not None:
         raise SystemExit("FL2AV Turbo uses its existing fixed step configuration")
     for key, expected in frozen.items():
@@ -205,6 +222,8 @@ def main() -> int:
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--task", choices=("fl2av", "ref2av"), default="fl2av")
     parser.add_argument("--infer-steps", type=int)
+    parser.add_argument("--step-update", choices=("comfy_res_multistep", "reference_blend", "training_euler"))
+    parser.add_argument("--reference-image-resize-mode", choices=("match", "max", "diffusers"))
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--seq-parallel-size", type=int, choices=(1, 2, 4, 8, 16), default=1)
     parser.add_argument("--target-height", type=int)
@@ -218,6 +237,8 @@ def main() -> int:
         smoke=args.smoke,
         task=args.task,
         infer_steps=args.infer_steps,
+        step_update=args.step_update,
+        reference_image_resize_mode=args.reference_image_resize_mode,
         seq_parallel_size=args.seq_parallel_size,
         target_height=args.target_height,
         target_width=args.target_width,

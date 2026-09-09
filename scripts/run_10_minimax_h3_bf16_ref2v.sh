@@ -10,7 +10,9 @@ export H3_MODEL_DIR="${H3_MODEL_DIR:-/disk/ssd1/difumodels/MiniMax-h3}"
 export H3_COMFY_DIR="${H3_COMFY_DIR:-/disk/ssd1/difumodels/MiniMax-H3-ComfyUI}"
 export RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd1/lightx2v-runtime}"
 export GPU_DEVICES="${GPU_DEVICES:-0,1}"
-export H3_INFER_STEPS="${H3_INFER_STEPS:-30}"
+default_steps=20
+if [[ "${H3_STEP_UPDATE:-comfy_res_multistep}" != comfy_res_multistep ]]; then default_steps=30; fi
+export H3_INFER_STEPS="${H3_INFER_STEPS:-${default_steps}}"
 asset_dir="${script_dir}/../assets/minimax_h3/rooftop_15s"
 reference_images=("${asset_dir}/Image Gen-1.png" "${asset_dir}/RYAN-2.png")
 if [[ -n "${H3_REFERENCE_IMAGE:-}" ]]; then reference_images=("$H3_REFERENCE_IMAGE"); fi
@@ -36,11 +38,13 @@ ComfyUI BF16 root: ${H3_COMFY_DIR}
 Reference images: ${reference_images[*]}
 Prompt file:      ${prompt_file}
 GPUs:             ${GPU_DEVICES} (default two 32 GiB cards)
-Sampling:         ${H3_INFER_STEPS} grid points, video/audio shift 12/3
+Sampling:         ${H3_STEP_UPDATE:-comfy_res_multistep}, steps=${H3_INFER_STEPS}, shift 12/3
+Step counting:    Comfy mode counts evaluations; legacy modes count grid points
 Output geometry:  1344x768, ${duration} seconds at 24 FPS (native frames aligned to 17*n+5)
 
 Edit the defaults at the top of this script or use the options below.
 Explicit --reference-image options replace the entire default image list.
+H3_STEP_UPDATE and H3_REFERENCE_IMAGE_RESIZE_MODE select existing alternatives.
 Two-card VRAM fit still requires testing; --infer-steps 3 --collect checks full-size shapes.
 HELP
             exec bash "${script_dir}/run_minimax_h3_ref2av_bf16.sh" --help

@@ -160,6 +160,8 @@ CHECK
         --base-model-dir "$model_path" --model-output "$prepared_model"
     model_path="$prepared_model"
     if [[ -n "${H3_INFER_STEPS:-}" ]]; then profile_args+=(--infer-steps "$H3_INFER_STEPS"); fi
+    if [[ -n "${H3_STEP_UPDATE:-}" ]]; then profile_args+=(--step-update "$H3_STEP_UPDATE"); fi
+    if [[ -n "${H3_REFERENCE_IMAGE_RESIZE_MODE:-}" ]]; then profile_args+=(--reference-image-resize-mode "$H3_REFERENCE_IMAGE_RESIZE_MODE"); fi
 fi
 
 python3 "${script_dir}/build_minimax_h3_runtime_config.py" \
