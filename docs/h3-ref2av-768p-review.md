@@ -47,3 +47,32 @@ bash scripts/run_10_minimax_h3_bf16_ref2v.sh \
 ```
 
 这条命令保留双图、768P、15 秒，只减少模型评估次数。核对 `runtime_config.json`、`run.log` 中实际 `dispatch/fallback`、各 rank collector 的形状/阶段耗时/峰值，以及 `ffprobe.json`。完整视频生成去掉 `--infer-steps 3`；默认 30 个网格点、29 次模型计算。使用重建后的 LightX2V 镜像与更新后的 Run。
+
+
+## 2026-09-09：首次 2×32 GiB 实跑的输出头 OOM
+
+用户提供的日志定位到 `MiniMaxH3PostInfer.infer`：rank0 调制张量申请 1.40 GiB 失败（剩余 468 MiB）；rank1 将完整隐藏状态转 FP32 时申请 2.81 GiB 失败（剩余 1.57 GiB）。这次已经到达 DiT 输出头，尚不能证明后续去噪步骤、VAE 解码及整片生成通过。NCCL 清理警告是异常退出后的信息。
+
+代码确认 SP2 和 SP4 都在输出头前 all-gather 完整序列。因此加到 4 卡会减少 Core 的部分激活和 attention heads，但不会把旧输出头的 2.81 GiB 临时张量减半；固定权重、参考图预处理也不会按卡数均分。不能承诺直接加卡就能解决。
+
+修复沿用现有逐行 RMS、调制顺序和 FP32 输出投影，按各模态索引每 4096 行执行。隐藏宽度 7168 时，单块 FP32 输入为 112 MiB；省去对文本行的输出计算，以及给视频行算音频头、给音频行算视频头的无用投影。保留所有参考条件行的输出和既有顺序，不改 BF16 权重、算子 backend、参考图 resize、768P/15 秒。分块增加小 GEMM 调用数，GPU 时延及累计数值差异仍需实测，不能宣称逐位相同或零性能成本。
+
+两卡设备占用与当前进程 PyTorch reserved 之间均有约 22 GiB 的差额。用户确认没有其他任务；现有日志不能确定其来自哪个运行库或驱动统计。新增 collector 各 stage 的 `memory_start` / `memory_end`，记录设备 free/total、PyTorch allocated/reserved、累计峰值和统计差额。只在 `--collect` 模式查询，不清缓存、不改变 allocator；不是阶段内设备峰值采样。
+
+先用包含本次修复的新镜像，保留默认双图、768P、15 秒，执行 2 次模型计算和完整解码：
+
+```bash
+bash scripts/run_10_minimax_h3_bf16_ref2v.sh \
+  --image YOUR_REBUILT_IMAGE --gpus 0,1 --infer-steps 3 --collect
+```
+
+如仍显存不足，用同一入口切 4 卡：
+
+```bash
+bash scripts/run_10_minimax_h3_bf16_ref2v.sh \
+  --image YOUR_REBUILT_IMAGE --gpus 0,1,2,3 --infer-steps 3 --collect
+```
+
+通过后去掉 `--infer-steps 3`，恢复原始模型默认 30 个网格点。少步运行只验流程和峰值，不验出片质量。保存每个 rank 的 collector 和完整 `run.log`；输出头修复位于 LightX2V，单独更新宿主 Run 不会更新镜像内的代码。4 卡长序列切分、配置/preflight 和 Docker GPU 参数均补充 CPU 回归；没有本地 GPU 实测。
+
+本次验证：LightX2V 定向 52 项通过（分块数值/临时行数、SP2/SP4 长序列、collector、offload 和音视频输出）；Run 定向 102 项通过（Ref2AV 配置、preflight、启动参数）。新增及修改的输出头测试通过 Ruff；两个仓库 `git diff --check` 通过。上述为 CPU/命令替身检查，不是两卡或四卡 GPU 验收。

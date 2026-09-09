@@ -27,7 +27,7 @@ Qwen、tokenizer、processor、视频/音频 VAE 复用之前的完整 native H3
 
 参考图增加序列行数，架构仍为 56 heads × D128。复用上游 Ref2AV packing 和 HVAT SP 切分；算子不依赖固定 FL2V 序列长度。单张、3 张、9 张参考图的 SP2/4/8/16 切分与位置/时间索引已做 CPU 回归；29 次模型计算的 block 双缓冲轮转也已验证。未新增 GPU 算子或每步格式适配。
 
-**两张 32 GiB 卡：静态权重预算可行，完整峰值未验收。** DiT 原始 payload 合计 61.73 GiB；每块约 1.2025 GiB，两个 GPU block 缓冲约 2.405 GiB，固定部分约 1.605 GiB，合计约 4.01 GiB/卡。该数字仅计权重，不是运行显存峰值；SP2 不把全部权重简单平分。
+**两张 32 GiB 卡：首次 768P/15 秒实跑在旧输出头 OOM，已实现分块修复，须重建镜像复测。** DiT 原始 payload 合计 61.73 GiB；每块约 1.2025 GiB，两个 GPU block 缓冲约 2.405 GiB，固定部分约 1.605 GiB，合计约 4.01 GiB/卡。该数字仅计权重，不是运行显存峰值；SP2 不把全部权重简单平分。
 
 Qwen 多模态输入、较大的参考图、Core 激活/通信临时张量和 VAE 编解码可能抬高峰值。现有 DiT buffer 为后续复用而保留，不能假设进入 VAE 时显存归零。原始模型步数增加会增加时间与磁盘传输次数，不能拿 Turbo 4step 耗时作为基线。本机没有可用 GPU/Docker 实测，不能保证 2×32 GiB 的 768p 多参考图运行成功。
 
@@ -62,6 +62,6 @@ bash scripts/run_10_minimax_h3_bf16_ref2v.sh \
 
 Run 只读挂载进镜像，转换和推理均在容器内执行。默认两卡 `0,1`；`CACHE_DIR` 决定宿主机持久缓存目录，权重缓存在其 `h3_ref2av/` 下。输出目录保留 runtime config、preflight、`run.log`、视频与 ffprobe；`--collect` 另生成各 rank 的 H3 生命周期/算子报告。H3 入口禁止选定算子回退；`run.log` 中 `dispatch` 记录实际 backend，出现 `fallback` 原因后本次运行失败；CPU 测试不代表真实 GPU kernel 已通过。
 
-本次算子审查、测试范围与待实测项目见 [768P Ref2V 审查报告](h3-ref2av-768p-review.md)。未执行远端真实 BF16 的转换与推理。
+本次算子审查、测试范围与待实测项目见 [768P Ref2V 审查报告](h3-ref2av-768p-review.md)。用户已提供远端真实 BF16 推理的输出头 OOM 日志；修复后的远端完整推理尚未验收。可用 `--gpus 0,1,2,3` 切换 SP4，详细分析及复测命令见上述报告。
 
 专用脚本复用 `run_minimax_h3_ref2av_bf16.sh` 和现有镜像内执行链；两入口保持同一套权重转换、算子、offload 和 collector。显式重复 `--reference-image` 会替换脚本顶部的默认图片列表。`--help` 显示有效默认路径，`DRY_RUN=1` 可核对 Docker 挂载；`--collect` 按需启用，不默认增加 profiling 开销。

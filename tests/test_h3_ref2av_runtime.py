@@ -28,12 +28,13 @@ def test_ref_base_profile_has_no_lora_and_preserves_backend_policy(world):
     assert 'lora_configs' not in overlay
 
 
-def test_ref_docker_launcher_maps_ordered_references_and_current_run(tmp_path):
+@pytest.mark.parametrize('gpus', ['0,1', '0,1,2,3'])
+def test_ref_docker_launcher_maps_ordered_references_and_current_run(tmp_path, gpus):
     script = ROOT / 'scripts/run_minimax_h3_ref2av_bf16.sh'
     env = {**os.environ, 'DRY_RUN':'1', 'PROMPT':'reference composition', 'CACHE_DIR':str(tmp_path/'cache')}
     result = subprocess.run(['bash', str(script), '--image','example:h3-new',
         '--reference-image', str(tmp_path/'first image.png'), '--reference-image', str(tmp_path/'second.png'),
-        '--comfy-dir',str(tmp_path/'comfy'), '--result-dir',str(tmp_path/'out'), '--collect', '--duration', '15'],
+        '--comfy-dir',str(tmp_path/'comfy'), '--result-dir',str(tmp_path/'out'), '--collect', '--duration', '15', '--gpus', gpus],
         text=True,capture_output=True,env=env)
     assert result.returncode == 0, result.stderr
     # Docker arguments are shell-quoted in dry-run output.
@@ -42,6 +43,7 @@ def test_ref_docker_launcher_maps_ordered_references_and_current_run(tmp_path):
     command = next(line for line in lines if line.startswith('DRY RUN: docker '))
     args = shlex.split(command.removeprefix("DRY RUN: "))
     assert 'H3_TASK=ref2av' in args
+    assert f'HIP_VISIBLE_DEVICES={gpus}' in args
     assert 'H3_OUTPUT_DURATION=15' in args and 'TARGET_VIDEO_LENGTH=362' in args
     assert 'IMAGE_PATH=/inputs/h3_reference_0,/inputs/h3_reference_1' in args
     assert f'type=bind,source={tmp_path}/first image.png,target=/inputs/h3_reference_0,readonly' in args
@@ -77,19 +79,20 @@ def test_ref_base_allows_step_override_but_rejects_lora(tmp_path):
         BUILDER.build(publish, overlay, smoke=True, task='ref2av')
 
 
+@pytest.mark.parametrize("world", [2, 4])
 @pytest.mark.parametrize("duration", range(5, 16))
-def test_ref_duration_roundtrip_to_preflight(tmp_path, duration):
+def test_ref_duration_roundtrip_to_preflight(tmp_path, duration, world):
     from test_minimax_h3_preflight import PREFLIGHT
     publish = json.loads((LIGHTX2V / 'configs/minimax_h3/minimax_h3_ref2av.json').read_text())
     overlay = json.loads((LIGHTX2V / 'configs/platforms/amd_rocm/minimax_h3_ref2av_bf16_gfx1201.json').read_text())
     frames = ((duration * 24 - 5 + 16) // 17) * 17 + 5
-    config = BUILDER.build(publish, overlay, smoke=False, task='ref2av', seq_parallel_size=2,
+    config = BUILDER.build(publish, overlay, smoke=False, task='ref2av', seq_parallel_size=world,
                            target_video_length=frames, output_duration=duration)
     assert config['target_video_length'] == frames
     assert config['h3_output_duration'] == duration
     path = tmp_path / 'runtime.json'
     path.write_text(json.dumps(config))
-    assert PREFLIGHT.check_runtime_config(path, 2)['task'] == 'ref2av'
+    assert PREFLIGHT.check_runtime_config(path, world)['task'] == 'ref2av'
 
 
 @pytest.mark.parametrize("kwargs, message", [
