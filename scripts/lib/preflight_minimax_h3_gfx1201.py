@@ -17,6 +17,11 @@ def die(message: str) -> None:
     raise SystemExit(1)
 
 
+def warn(message: str) -> None:
+    # Keep JSON evidence on stdout parseable.
+    print(f"WARNING: {message}", file=sys.stderr)
+
+
 def git_revision(path: Path) -> str | None:
     try:
         completed = subprocess.run(
@@ -71,8 +76,10 @@ def require_gfx1201(expected_devices: int) -> dict:
             }
         )
     rocm = str(torch.version.hip or "")
+    if not rocm:
+        die("MiniMax-H3 gfx1201 requires a ROCm PyTorch build")
     if not rocm.startswith("7.2"):
-        die(f"MiniMax-H3 gfx1201 is frozen to ROCm 7.2, got torch.version.hip={rocm!r}")
+        warn(f"MiniMax-H3 was validated on ROCm 7.2; testing torch.version.hip={rocm!r}")
     if os.environ.get("GPU_ARCHS") != "gfx1201" or os.environ.get("CU_NUM") != "24":
         die(
             "MiniMax-H3 gfx1201 requires GPU_ARCHS=gfx1201 and CU_NUM=24 "
@@ -90,7 +97,7 @@ def require_gfx1201(expected_devices: int) -> dict:
     }
 
 
-def check_h1_patch_embed_runtime(patch_embed_class) -> dict:
+def check_h1_patch_embed_runtime(patch_embed_class, *, required: bool = False) -> dict:
     contract = {
         "name": getattr(patch_embed_class, "_lightx2v_patch_embed_backend", None),
         "frontend_api": getattr(
@@ -112,7 +119,10 @@ def check_h1_patch_embed_runtime(patch_embed_class) -> dict:
         "sequence_sharded": False,
     }
     if contract != expected:
-        die(f"LightX2V image does not contain the MiniMax-H3 T2a PatchEmbed contract: expected {expected}, got {contract}")
+        message = f"LightX2V H1 PatchEmbed metadata differs from the measured T2a backend: expected {expected}, got {contract}"
+        if required:
+            die(message)
+        warn(message)
     return contract
 
 
@@ -157,7 +167,7 @@ def check_runcollector_runtime(required_schema_version: int | None) -> dict:
     )
 
 
-def check_runtime_dependencies(source_mode: str, required_runcollector_schema: int | None = None) -> dict:
+def check_runtime_dependencies(source_mode: str, required_runcollector_schema: int | None = None, expected_world_size: int = 1) -> dict:
     for executable in ("ffmpeg", "ffprobe"):
         if shutil.which(executable) is None:
             die(f"required executable is missing from the image: {executable}")
@@ -204,7 +214,7 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
         if backend not in ATTN_WEIGHT_REGISTER:
             die(f"LightX2V model-facing attention registry is missing: {backend}")
     sage_backend = PLATFORM_ATTN_WEIGHT_REGISTER["aiter_fav3_sage_bf16_attn"]
-    if not callable(getattr(sage_backend, "apply_with_lse", None)):
+    if expected_world_size == 16 and not callable(getattr(sage_backend, "apply_with_lse", None)):
         die("LightX2V Sage backend is missing apply_with_lse required by CP2xU8 SP16")
     for registry, name in (
         (RUNNER_REGISTER, "minimax_h3"),
@@ -217,19 +227,20 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
         (ROPE_REGISTER, "torch_real_rope"),
         (ROPE_REGISTER, "minimax_h3_triton_strict_rope"),
     ):
+        if name in ("ring", "ulysses_ring") and expected_world_size != 16:
+            continue
+        if name == "ulysses" and expected_world_size == 1:
+            continue
         if name not in registry:
             die(f"LightX2V runtime registry is missing: {name}")
     if not callable(dense_flash_attn_func):
         die("Aiter dense Triton MHA API required by H4 is unavailable")
-    patch_embed_contract = check_h1_patch_embed_runtime(_PatchEmbed)
+    patch_embed_contract = check_h1_patch_embed_runtime(_PatchEmbed, required=required_runcollector_schema is not None)
 
     source_root = Path(lightx2v.__file__).resolve().parents[1]
     source_revision = os.environ.get("LIGHTX2V_SOURCE_REVISION") or git_revision(source_root)
     if not source_revision:
-        die(
-            "image source provenance is missing; bake LIGHTX2V_SOURCE_REVISION into the image "
-            "or include readable git metadata"
-        )
+        warn("image source provenance is missing; recording an unknown LightX2V revision")
     return {
         "source_mode": source_mode,
         "lightx2v_root": str(source_root),
@@ -689,7 +700,7 @@ def main() -> int:
     # FlyDSL owns device-local runtime state. Multi-GPU Sage coverage is
     # provided below by the one-process-per-device torchrun distributed smoke.
     torch.cuda.set_device(0)
-    runtime = check_runtime_dependencies(args.source_mode, args.required_runcollector_schema)
+    runtime = check_runtime_dependencies(args.source_mode, args.required_runcollector_schema, args.expected_world_size)
     artifacts = {}
     if not args.skip_artifacts:
         artifacts = check_artifacts(args.model_dir, args.turbo_dir, args.first_frame, args.last_frame, args.expected_world_size)

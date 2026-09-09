@@ -206,6 +206,13 @@ frames. It uses one continuous takeoff shot, explicit keyframe timing, identity
 constraints, and synchronized natural sound. The launcher renders the final
 keyframe mark as 5.17 seconds for every H3 test.
 
+H3 preflight treats a ROCm version other than the validated 7.2 baseline and
+missing source/PatchEmbed metadata as warnings for ordinary test runs. Hardware,
+weights, required kernels, and parallel topology are still checked; SP16-specific
+Ring/LSE APIs are required only for SP16. `--collect` still requires compatible
+collector metadata. Numbered timing sweeps clear inherited smoke/preflight flags
+and preserve image-baked source revisions.
+
 The gfx1201 production overlay routes H3 Core Attention through Aiter SageAttention2
 (`aiter_fav3_sage_bf16_attn` / `sage_attn_v2_gfx1201`), H1/Refiner and H4 Video
 Attention through canonical `aiter_triton_mha`, H3 Core Q/K normalization through

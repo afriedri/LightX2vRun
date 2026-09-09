@@ -513,3 +513,31 @@ def test_h3_launcher_rejects_host_source_overlay(tmp_path):
     completed, _ = run_dry(tmp_path, "--lightx2v-dir", str(tmp_path / "LightX2V"))
     assert completed.returncode == 2
     assert "unknown argument: --lightx2v-dir" in completed.stderr
+
+
+def test_h3_image_provenance_cannot_be_overridden_by_host(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIGHTX2V_SOURCE_REVISION", "stale-host-lightx2v")
+    monkeypatch.setenv("AITER_SOURCE_REVISION", "stale-host-aiter")
+    monkeypatch.setenv("AITER_COMMIT", "stale-host-commit")
+    completed, _ = run_dry(tmp_path)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "--env LIGHTX2V_SOURCE_REVISION=" not in completed.stdout
+    assert "--env AITER_SOURCE_REVISION=" not in completed.stdout
+    assert "--env AITER_COMMIT=" not in completed.stdout
+
+
+def test_h3_numbered_sweep_clears_inherited_smoke_and_preflight(tmp_path):
+    completed = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/run_09_minimax_h3_480p_124f_24fps_scale.sh"),
+         "--image", "test:h3", "2"],
+        env={**os.environ, "DRY_RUN": "1", "MEMORY_MONITOR": "0",
+             "H3_SMOKE": "1", "H3_PREFLIGHT_ONLY": "1", "CONFIG_ONLY": "1",
+             "TIMING_RESULT_DIR": str(tmp_path / "sweep")},
+        capture_output=True, text=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    for key in ("H3_SMOKE", "H3_PREFLIGHT_ONLY", "CONFIG_ONLY"):
+        assert f"--env {key}=0" in completed.stdout
+        assert f"--env {key}=1" not in completed.stdout
+    manifest = json.loads((tmp_path / "sweep/run_manifest.json").read_text())
+    assert (manifest["width"], manifest["height"]) == (832, 480)

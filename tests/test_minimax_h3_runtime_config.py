@@ -212,3 +212,12 @@ def test_builder_overrides_older_image_workload_to_124_frames():
     publish["target_video_length"] = 362
     config = BUILDER.build(publish, amd_overlay(), smoke=False, seq_parallel_size=1)
     assert config["target_video_length"] == 124
+
+
+def test_real_overlay_can_replace_older_published_frame_count():
+    publish = published_config()
+    publish["target_video_length"] = 362
+    overlay = {**amd_overlay(), "target_video_length": 124, "fps": 24, "target_fps": 24}
+    config = BUILDER.build(publish, overlay, smoke=False, seq_parallel_size=2)
+    assert config["target_video_length"] == 124
+    assert config["infer_steps"] == 5

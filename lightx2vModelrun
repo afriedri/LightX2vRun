@@ -674,6 +674,13 @@ for inference_env in \
     if [[ "${is_minimax_h3_mode}" == 1 && ( "${inference_env}" == IMAGE_PATH || "${inference_env}" == LAST_FRAME_PATH ) ]]; then
         continue
     fi
+    # H3 executes the image's source. Preserve baked provenance instead of
+    # letting a previous host build label this image with a different commit.
+    if [[ "${is_minimax_h3_mode}" == 1 ]]; then
+        case "${inference_env}" in
+            LIGHTX2V_SOURCE_REVISION | AITER_SOURCE_REVISION | AITER_COMMIT) continue ;;
+        esac
+    fi
     # LTX-2.3 B0 is a frozen workload. Do not let stale Wan/H3 overrides from
     # the host leak into the container and create a second effective profile.
     if [[ "${is_ltx23_mode}" == 1 ]]; then

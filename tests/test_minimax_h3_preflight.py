@@ -33,9 +33,12 @@ def test_h1_patch_embed_contract_separates_frontend_from_aten_operator():
     }
 
 
-def test_h1_patch_embed_contract_rejects_an_old_image():
+def test_h1_patch_embed_metadata_is_optional_without_collection(capsys):
+    contract = PREFLIGHT.check_h1_patch_embed_runtime(SimpleNamespace())
+    assert contract["name"] is None
+    assert "WARNING:" in capsys.readouterr().err
     with pytest.raises(SystemExit):
-        PREFLIGHT.check_h1_patch_embed_runtime(SimpleNamespace())
+        PREFLIGHT.check_h1_patch_embed_runtime(SimpleNamespace(), required=True)
 
 
 def test_h3_t1_runcollector_contract_accepts_schema2():
@@ -309,3 +312,67 @@ def test_runtime_contract_rejects_unsupported_ulysses_options(tmp_path, key, val
     path.write_text(json.dumps(config), encoding="utf-8")
     with pytest.raises(SystemExit):
         PREFLIGHT.check_runtime_config(path, 2)
+
+
+@pytest.mark.parametrize("rocm", ("7.2.0", "7.3.0"))
+def test_rocm_version_difference_is_diagnostic(monkeypatch, capsys, rocm):
+    fake_torch = SimpleNamespace(
+        version=SimpleNamespace(hip=rocm), __version__="test",
+        cuda=SimpleNamespace(
+            is_available=lambda: True, device_count=lambda: 1,
+            get_device_properties=lambda _: SimpleNamespace(
+                gcnArchName="gfx1201", name="test", multi_processor_count=48),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setenv("GPU_ARCHS", "gfx1201")
+    monkeypatch.setenv("CU_NUM", "24")
+    assert PREFLIGHT.require_gfx1201(1)["rocm"] == rocm
+    assert ("WARNING:" in capsys.readouterr().err) == (rocm != "7.2.0")
+    # A ROCm version difference is allowed; a wrong world size still fails.
+    with pytest.raises(SystemExit):
+        PREFLIGHT.require_gfx1201(2)
+
+
+def test_dependency_gate_only_requires_ring_for_sp16(monkeypatch, tmp_path, capsys):
+    from types import ModuleType
+
+    def module(name, **values):
+        parent, _, leaf = name.rpartition(".")
+        if parent and parent not in sys.modules:
+            module(parent)
+        value = ModuleType(name)
+        value.__dict__.update(values)
+        monkeypatch.setitem(sys.modules, name, value)
+        if parent:
+            monkeypatch.setattr(sys.modules[parent], leaf, value, raising=False)
+        return value
+
+    module("transformers", __version__="test", Qwen2TokenizerFast=object, Qwen3VLProcessor=object)
+    module("aiter", __file__=str(tmp_path / "aiter/__init__.py"), flash_attn_varlen_func=lambda: None)
+    module("aiter.ops.triton.attention.fav3_sage", fav3_sage_wrapper_func=lambda: None)
+    module("lightx2v", __file__=str(tmp_path / "lightx2v/__init__.py"))
+    module("lightx2v.infer")
+    module("lightx2v_platform.ops.attn.amd_rocm")
+    module("lightx2v.models.input_encoders.hf.minimax_h3.qwen3vl_vision", _PatchEmbed=SimpleNamespace())
+    module("lightx2v_platform.ops.attn.amd_rocm.triton_mha_attn", dense_flash_attn_func=lambda: None)
+    attention = {name: object for name in ("aiter_triton_mha", "aiter_fav3_sage_bf16_attn", "ulysses", "torch_sdpa")}
+    module("lightx2v_platform.registry_factory", PLATFORM_ATTN_WEIGHT_REGISTER=attention)
+    module("lightx2v.utils.registry_factory",
+           ATTN_WEIGHT_REGISTER=attention, RUNNER_REGISTER={"minimax_h3": object},
+           RMS_WEIGHT_REGISTER={"torch_native": object, "minimax_h3_aiter_triton_qk": object},
+           ROPE_REGISTER={"torch_real_rope": object, "minimax_h3_triton_strict_rope": object})
+    monkeypatch.setattr(PREFLIGHT.shutil, "which", lambda name: "/bin/" + name)
+    monkeypatch.setattr(PREFLIGHT, "git_revision", lambda path: None)
+    monkeypatch.setattr(PREFLIGHT, "git_dirty", lambda path: None)
+    monkeypatch.setattr(PREFLIGHT, "check_dense_gemm_runtime", lambda: {})
+    monkeypatch.delenv("LIGHTX2V_SOURCE_REVISION", raising=False)
+    for count in (1, 2, 4, 8):
+        result = PREFLIGHT.check_runtime_dependencies("image", expected_world_size=count)
+        assert result["lightx2v_revision"] is None
+    assert "provenance is missing" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        PREFLIGHT.check_runtime_dependencies("image", expected_world_size=16)
+    attention["aiter_fav3_sage_bf16_attn"] = SimpleNamespace(apply_with_lse=lambda: None)
+    attention.update(ring=object, ulysses_ring=object)
+    assert PREFLIGHT.check_runtime_dependencies("image", expected_world_size=16)["source_mode"] == "image"

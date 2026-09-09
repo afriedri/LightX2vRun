@@ -364,6 +364,9 @@ for count in "${counts[@]}"; do
     elif [[ "${RUN_MODEL_VERSION}" == minimax_h3 ]]; then
         run_environment+=(
             LIGHTX2V_H3_EXPLICIT_IMAGE=1
+            H3_SMOKE=0
+            H3_PREFLIGHT_ONLY=0
+            CONFIG_ONLY=0
             H3_FRAME_SOURCE=host
             H3_FIRST_FRAME="${h3_first_frame}"
             H3_LAST_FRAME="${h3_last_frame}"

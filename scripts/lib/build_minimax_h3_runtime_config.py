@@ -92,7 +92,7 @@ def build(
     unauthorized = {
         key: {"published": publish.get(key, "<missing>"), "overlay": value}
         for key, value in overlay.items()
-        if publish.get(key, "<missing>") != value and key not in ALLOWED_OVERLAY_CHANGES
+        if publish.get(key, "<missing>") != value and key not in ALLOWED_OVERLAY_CHANGES and key not in TEST_WORKLOAD
     }
     if unauthorized:
         raise SystemExit(f"AMD overlay changes non-whitelisted published semantics: {unauthorized}")
