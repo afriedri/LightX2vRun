@@ -40,15 +40,13 @@
 
 ```bash
 bash scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh \
-  --image lightx2v-rocm:hvat-gfx1201-R9600 \
   --preflight-only
 ```
 
 再运行完整四卡 E2E：
 
 ```bash
-bash scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh \
-  --image lightx2v-rocm:hvat-gfx1201-R9600
+bash scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh
 ```
 
 入口默认启用 schema-2 collector。替换 GPU、权重或参考图示例：
@@ -67,11 +65,10 @@ Turbo profile 会拒绝改变 `training_euler` 或 9 个网格点。`--smoke` �
 
 ## 2/4/8/16 卡 Scale
 
-专用入口会依次运行相同的 Ref2AV Turbo 8-step、1344x768、15 秒 workload，自动采集每档日志、显存、shape 和 timing 汇总：
+专用入口会依次运行相同的 Ref2AV Turbo 8-step、1344x768、15 秒 workload，自动采集每档日志、显存、shape 和 timing 汇总。单次和 scale 入口默认使用 `compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-260910-H3-Ref2V-Turbo8WithFull-V4`，仍可用 `--image` 显式覆盖：
 
 ```bash
-bash scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh \
-  --image lightx2v-rocm:hvat-gfx1201-R9600
+bash scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh
 ```
 
 只验证 16 卡时使用 `--gpu-count 16`。2/4/8 卡使用 Ulysses；16 卡使用 `CP2xU8` UlyssesRing，并要求 16 个 GPU 构成独占的单进程组。可用 `TIMING_GPU_GROUPS` 覆盖默认物理卡组合，结果默认写入 `${RUNTIME_ROOT}/outputs/minimax_h3_ref2av_turbo_8step_768p_15s_scale_<timestamp>/`。

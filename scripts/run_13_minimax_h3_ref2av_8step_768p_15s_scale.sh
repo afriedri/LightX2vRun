@@ -27,4 +27,16 @@ export LIGHTX2V_H3_RUN_COLLECTOR="${LIGHTX2V_H3_RUN_COLLECTOR:-1}"
 export LIGHTX2V_VAE_CONV3D_BACKEND="${LIGHTX2V_VAE_CONV3D_BACKEND:-Aiter_CK_Conv3d_v1}"
 export LIGHTX2V_CK_CONV3D_PROFILE_DIR="${LIGHTX2V_CK_CONV3D_PROFILE_DIR:-/workspace/LightX2V/save_results/ck_conv3d_routes}"
 
-exec bash "${script_dir}/lib/run_timing_sweep.sh" "$@"
+default_image=compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-260910-H3-Ref2V-Turbo8WithFull-V4
+image_provided=0
+image_args=()
+for argument in "$@"; do
+    case "$argument" in
+        --image | --image=*) image_provided=1 ;;
+    esac
+done
+if (( image_provided == 0 )); then
+    image_args=(--image "$default_image")
+fi
+
+exec bash "${script_dir}/lib/run_timing_sweep.sh" "${image_args[@]}" "$@"

@@ -12,9 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_ENTRY = ROOT / "scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh"
 TURBO_ENTRY = ROOT / "scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh"
 SUMMARY = ROOT / "scripts/lib/summarize_timings.py"
+DEFAULT_TURBO_IMAGE = "compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-260910-H3-Ref2V-Turbo8WithFull-V4"
 
 
-def run_sweep(tmp_path, counts="2,4,8,16", fail=False, entry=BASE_ENTRY):
+def run_sweep(tmp_path, counts="2,4,8,16", fail=False, entry=BASE_ENTRY, image="test:h3-scale"):
     fake = tmp_path / "model-run"
     fake.write_text(f"#!/usr/bin/env bash\nexec {shlex.quote(sys.executable)} - <<'PYTHON'\n" +
         "import json,os,pathlib\n" +
@@ -26,8 +27,10 @@ def run_sweep(tmp_path, counts="2,4,8,16", fail=False, entry=BASE_ENTRY):
            "TIMING_RESULT_DIR": str(tmp_path / "sweep"), "H3_INFER_STEPS": "3", "PROMPT": "",
            "H3_PROMPT_FILE": "", "H3_REFERENCE_IMAGE": "", "H3_STEP_UPDATE": "comfy_res_multistep",
            "H3_TASK": "fl2av", "H3_SMOKE": "1", "H3_OUTPUT_DURATION": "5"}
-    result = subprocess.run(["bash", str(entry), "--counts", counts, "--image", "test:h3-scale"],
-                            capture_output=True, text=True, env=env)
+    args = ["bash", str(entry), "--counts", counts]
+    if image is not None:
+        args.extend(("--image", image))
+    result = subprocess.run(args, capture_output=True, text=True, env=env)
     return result, tmp_path / "sweep"
 
 
@@ -107,6 +110,18 @@ def test_turbo_scale_can_run_only_sp16(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert (output / "16gpu/captured.json").exists()
     assert not (output / "2gpu").exists()
+
+
+def test_turbo_scale_defaults_to_v4_production_image(tmp_path):
+    result, output = run_sweep(
+        tmp_path,
+        counts="16",
+        entry=TURBO_ENTRY,
+        image=None,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    env = json.loads((output / "16gpu/captured.json").read_text())
+    assert env["IMAGE"] == DEFAULT_TURBO_IMAGE
 
 
 def test_turbo_scale_summary_labels_eight_model_evaluations(tmp_path):

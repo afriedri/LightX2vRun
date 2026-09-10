@@ -273,7 +273,7 @@ def test_dedicated_ref_turbo_defaults_to_exact_8step_contract(tmp_path):
     capture.write_text(f"exec {shlex.quote(sys.executable)} -c 'import json,os; print(json.dumps(dict(os.environ)))'\n")
     env = {
         key: value for key, value in os.environ.items()
-        if key not in ('PROMPT', 'H3_REFERENCE_IMAGE', 'H3_PROMPT_FILE', 'H3_OUTPUT_DURATION', 'H3_INFER_STEPS', 'H3_STEP_UPDATE')
+        if key not in ('IMAGE', 'PROMPT', 'H3_REFERENCE_IMAGE', 'H3_PROMPT_FILE', 'H3_OUTPUT_DURATION', 'H3_INFER_STEPS', 'H3_STEP_UPDATE')
     }
     env['MODEL_RUN'] = str(capture)
     result = subprocess.run(
@@ -288,6 +288,7 @@ def test_dedicated_ref_turbo_defaults_to_exact_8step_contract(tmp_path):
     assert values['H3_STEP_UPDATE'] == 'training_euler' and values['H3_INFER_STEPS'] == '9'
     assert values['TARGET_VIDEO_LENGTH'] == '362' and values['H3_OUTPUT_DURATION'] == '15'
     assert values['GPU_DEVICES'] == '0,1,2,3'
+    assert values['IMAGE'] == 'compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-260910-H3-Ref2V-Turbo8WithFull-V4'
     assert values['LIGHTX2V_H3_RUN_COLLECTOR'] == '1'
     assert values['H3_TURBO_DIR'] == '/disk/ssd/difumodels-Dis/Minimax-h3-Turbo'
 
@@ -302,7 +303,7 @@ def test_public_help_lists_ref2av_base_scale_and_turbo_entries():
     assert 'scripts/run_10_minimax_h3_bf16_ref2v.sh --image IMAGE' in result.stdout
     assert 'scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh --image IMAGE' in result.stdout
     assert 'scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh --image IMAGE' in result.stdout
-    assert 'scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh --image IMAGE' in result.stdout
+    assert 'scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh [--image IMAGE]' in result.stdout
 
 
 @pytest.mark.parametrize("mode,steps", [("reference_blend",30), ("training_euler",5), ("comfy_res_multistep",20)])

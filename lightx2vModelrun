@@ -74,7 +74,7 @@ Ordinary timing runs should use the numbered scripts:
   scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh --image IMAGE
   scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh --image IMAGE
   scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh --image IMAGE
-  scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh --image IMAGE
+  scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh [--image IMAGE]
 
 Important overrides:
   GPU_DEVICES, IMAGE, MODEL_STORE, OUTPUT_DIR, INPUT_DIR, CACHE_DIR
