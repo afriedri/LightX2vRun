@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ENTRY = ROOT / "scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh"
 
 
-def run_sweep(tmp_path, counts="4,8,16", fail=False):
+def run_sweep(tmp_path, counts="2,4,8,16", fail=False):
     fake = tmp_path / "model-run"
     fake.write_text(f"#!/usr/bin/env bash\nexec {shlex.quote(sys.executable)} - <<'PYTHON'\n" +
         "import json,os,pathlib\n" +
@@ -33,11 +33,11 @@ def test_scale_reuses_materials_and_isolates_each_card_count(tmp_path):
     result, output = run_sweep(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     manifest = json.loads((output / "run_manifest.json").read_text())
-    assert manifest["gpu_counts"] == [4, 8, 16]
+    assert manifest["gpu_counts"] == [2, 4, 8, 16]
     assert manifest["native_frames"] == 362 and manifest["output_frames"] == 360
     assert manifest["infer_steps"] == 3 and manifest["lora"] is False
     refs = prompt = None
-    for count in (4, 8, 16):
+    for count in (2, 4, 8, 16):
         env = json.loads((output / f"{count}gpu/captured.json").read_text())
         assert env["H3_TASK"] == "ref2av" and env["H3_OUTPUT_DURATION"] == "15"
         assert env["H3_INFER_STEPS"] == "3" and env["H3_SMOKE"] == "0"
@@ -46,6 +46,8 @@ def test_scale_reuses_materials_and_isolates_each_card_count(tmp_path):
         assert env["TARGET_HEIGHT"] == "768" and env["TARGET_WIDTH"] == "1344"
         assert env["TARGET_VIDEO_LENGTH"] == "362"
         assert env["LIGHTX2V_H3_RUN_COLLECTOR"] == "1"
+        assert env["LIGHTX2V_VAE_CONV3D_BACKEND"] == "Aiter_CK_Conv3d_v1"
+        assert env["LIGHTX2V_CK_CONV3D_PROFILE_DIR"] == "/workspace/LightX2V/save_results/ck_conv3d_routes"
         assert env["H3_EVIDENCE_DIR"] == "/workspace/LightX2V/save_results"
         assert env["SAVE_RESULT_PATH"].endswith("/minimax_h3_ref2av.mp4")
         assert len(env["H3_REFERENCE_IMAGES"].splitlines()) == 2
@@ -59,8 +61,8 @@ def test_scale_reuses_materials_and_isolates_each_card_count(tmp_path):
 def test_scale_propagates_inference_failure_and_stops_sweep(tmp_path):
     result, output = run_sweep(tmp_path, fail=True)
     assert result.returncode == 37, result.stdout + result.stderr
-    assert (output / "4gpu/captured.json").is_file()
-    assert not (output / "8gpu").exists()
+    assert (output / "2gpu/captured.json").is_file()
+    assert not (output / "4gpu").exists()
 
 
 @pytest.mark.parametrize("counts", ["2", "4", "8", "16"])

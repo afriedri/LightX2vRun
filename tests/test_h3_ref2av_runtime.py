@@ -52,6 +52,8 @@ def test_ref_docker_launcher_maps_ordered_references_and_current_run(tmp_path, g
     assert f'type=bind,source={tmp_path}/first image.png,target=/inputs/h3_reference_0,readonly' in args
     assert f'type=bind,source={tmp_path}/comfy,target=/models/minimax_h3_comfy,readonly' in args
     assert 'LIGHTX2V_H3_RUN_COLLECTOR=1' in args
+    assert 'LIGHTX2V_VAE_CONV3D_BACKEND=Aiter_CK_Conv3d_v1' in args
+    assert 'LIGHTX2V_CK_CONV3D_PROFILE_DIR=/workspace/LightX2V/save_results/ck_conv3d_routes' in args
     assert any('target=/workspace/LightX2VRun' in arg for arg in args)
     assert not any('target=/models/minimax_h3_turbo' in arg for arg in args)
     assert not any('target=/inputs/minimax_h3_last_frame' in arg for arg in args)

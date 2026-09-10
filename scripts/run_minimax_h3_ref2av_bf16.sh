@@ -90,6 +90,8 @@ export H3_MODEL_DIR="$model_dir" H3_COMFY_DIR="$comfy_dir" GPU_DEVICES="$gpus"
 export H3_REFERENCE_IMAGES="$(printf '%s\n' "${references[@]}")"
 export PROMPT="$prompt" H3_SMOKE="$smoke" H3_PREFLIGHT_ONLY="$preflight"
 export LIGHTX2V_H3_RUN_COLLECTOR="$collect"
+export LIGHTX2V_VAE_CONV3D_BACKEND="${LIGHTX2V_VAE_CONV3D_BACKEND:-Aiter_CK_Conv3d_v1}"
+export LIGHTX2V_CK_CONV3D_PROFILE_DIR="${LIGHTX2V_CK_CONV3D_PROFILE_DIR:-/workspace/LightX2V/save_results/ck_conv3d_routes}"
 export OUTPUT_DIR="$result_dir" H3_EVIDENCE_DIR=/workspace/LightX2V/save_results
 export SAVE_RESULT_PATH=/workspace/LightX2V/save_results/minimax_h3_ref2av.mp4
 export LIGHTX2V_H3_RUN_COLLECTOR_OUTPUT="${H3_EVIDENCE_DIR}/h3_runcollector.rank{rank}.json"

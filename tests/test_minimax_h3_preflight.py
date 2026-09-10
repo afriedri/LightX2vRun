@@ -4,7 +4,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -100,6 +100,135 @@ def test_dense_gemm_contract_rejects_tunableop_or_forced_blas(monkeypatch):
     monkeypatch.setenv("TORCH_BLAS_PREFER_HIPBLASLT", "1")
     with pytest.raises(SystemExit):
         PREFLIGHT.check_dense_gemm_runtime()
+
+
+def test_ref2av_ck_conv3d_gate_requires_packaged_fp16_hot_catalog(
+    monkeypatch, tmp_path
+):
+    expected_sha256 = "c05bd995fd752af344bb4850caf533b397f908292fccae66306574d1b1591b51"
+    catalog = tmp_path / "conv3d_v1_tuned.csv"
+    catalog.write_text("catalog\n", encoding="utf-8")
+    configs = {
+        ("gfx1201", 24, "float16", index): {"selector_id": index % 11 + 1}
+        for index in range(17)
+    }
+    configs.update(
+        {
+            ("gfx1201", 24, "bfloat16", index): {"selector_id": index % 31 + 1}
+            for index in range(528)
+        }
+    )
+    fake_aiter = SimpleNamespace(
+        CK_CONV3D_V1_CK_REVISION="af7118e342580ecd3f71edce7b1d0ba465012ecf",
+        CK_CONV3D_V1_TUNED_CONFIG_SHA256=expected_sha256,
+        CK_CONV3D_V1_TUNED_CONFIG_ROWS=545,
+        CK_CONV3D_V1_DEFAULT_CONFIG=str(catalog),
+        CK_CONV3D_V1_FP16_HOT_KERNEL_KEYS={index: str(index) for index in range(1, 12)},
+        CK_CONV3D_V1_FP16_UNIVERSAL_HOT=True,
+        CK_CONV3D_V1_UNIVERSAL_DTYPES={"bfloat16", "float16"},
+        ck_conv3d_v1=lambda: None,
+        get_ck_conv3d_v1_config=lambda: None,
+        is_ck_conv3d_v1_prebuilt=lambda: True,
+        load_ck_conv3d_v1_configs=lambda _path: configs,
+    )
+    vae_module = ModuleType(
+        "lightx2v.models.video_encoders.hf.minimax_h3.video_vae"
+    )
+    vae_module.MiniMaxH3VideoCausalConv3d = type(
+        "MiniMaxH3VideoCausalConv3d",
+        (),
+        {
+            "_lightx2v_ck_conv3d_backend": "Aiter_CK_Conv3d_v1",
+            "_lightx2v_ck_conv3d_universal_hot": True,
+        },
+    )
+    monkeypatch.setitem(sys.modules, vae_module.__name__, vae_module)
+    monkeypatch.setattr(
+        PREFLIGHT.hashlib,
+        "sha256",
+        lambda _data: SimpleNamespace(hexdigest=lambda: expected_sha256),
+    )
+
+    result = PREFLIGHT.check_ck_conv3d_runtime(fake_aiter)
+
+    assert result["aot_prebuilt"] is True
+    assert result["tuned_config_rows"] == 545
+    assert result["fp16_tuned_rows"] == 17
+    assert result["fp16_selectors"] == list(range(1, 12))
+    assert result["fp16_aot_selectors"] == list(range(1, 12))
+    assert result["universal_hot"] is True
+    assert result["universal_dtypes"] == ["bfloat16", "float16"]
+
+
+def test_ref2av_ck_conv3d_gate_accepts_future_fp16_hot_selectors(
+    monkeypatch, tmp_path
+):
+    catalog = tmp_path / "conv3d_v1_tuned.csv"
+    catalog.write_text("catalog\n", encoding="utf-8")
+    configs = {
+        ("gfx1201", 24, "float16", index): {"selector_id": index % 12 + 1}
+        for index in range(18)
+    }
+    fake_aiter = SimpleNamespace(
+        CK_CONV3D_V1_CK_REVISION="future",
+        CK_CONV3D_V1_TUNED_CONFIG_SHA256="future",
+        CK_CONV3D_V1_TUNED_CONFIG_ROWS=546,
+        CK_CONV3D_V1_DEFAULT_CONFIG=str(catalog),
+        CK_CONV3D_V1_FP16_HOT_KERNEL_KEYS={
+            index: str(index) for index in range(1, 13)
+        },
+        CK_CONV3D_V1_FP16_UNIVERSAL_HOT=True,
+        CK_CONV3D_V1_UNIVERSAL_DTYPES={"bfloat16", "float16"},
+        ck_conv3d_v1=lambda: None,
+        get_ck_conv3d_v1_config=lambda: None,
+        is_ck_conv3d_v1_prebuilt=lambda: True,
+        load_ck_conv3d_v1_configs=lambda _path: configs,
+    )
+    vae_module = ModuleType(
+        "lightx2v.models.video_encoders.hf.minimax_h3.video_vae"
+    )
+    vae_module.MiniMaxH3VideoCausalConv3d = type(
+        "MiniMaxH3VideoCausalConv3d",
+        (),
+        {
+            "_lightx2v_ck_conv3d_backend": "Aiter_CK_Conv3d_v1",
+            "_lightx2v_ck_conv3d_universal_hot": True,
+        },
+    )
+    monkeypatch.setitem(sys.modules, vae_module.__name__, vae_module)
+
+    result = PREFLIGHT.check_ck_conv3d_runtime(fake_aiter)
+
+    assert result["fp16_selectors"] == list(range(1, 13))
+    assert result["fp16_aot_selectors"] == list(range(1, 13))
+
+
+def test_ref2av_ck_conv3d_gate_rejects_missing_aot(monkeypatch, capsys):
+    vae_module = ModuleType(
+        "lightx2v.models.video_encoders.hf.minimax_h3.video_vae"
+    )
+    vae_module.MiniMaxH3VideoCausalConv3d = type(
+        "MiniMaxH3VideoCausalConv3d",
+        (),
+        {
+            "_lightx2v_ck_conv3d_backend": "Aiter_CK_Conv3d_v1",
+            "_lightx2v_ck_conv3d_universal_hot": True,
+        },
+    )
+    monkeypatch.setitem(sys.modules, vae_module.__name__, vae_module)
+    fake_aiter = SimpleNamespace(
+        ck_conv3d_v1=lambda: None,
+        get_ck_conv3d_v1_config=lambda: None,
+        is_ck_conv3d_v1_prebuilt=lambda: False,
+        load_ck_conv3d_v1_configs=lambda _path: {},
+        CK_CONV3D_V1_FP16_HOT_KERNEL_KEYS={index: str(index) for index in range(1, 12)},
+        CK_CONV3D_V1_FP16_UNIVERSAL_HOT=True,
+        CK_CONV3D_V1_UNIVERSAL_DTYPES={"bfloat16", "float16"},
+    )
+
+    with pytest.raises(SystemExit):
+        PREFLIGHT.check_ck_conv3d_runtime(fake_aiter)
+    assert "AOT extension is absent" in capsys.readouterr().err
 
 
 def test_distributed_worker_selects_local_device_before_backend_import(monkeypatch):

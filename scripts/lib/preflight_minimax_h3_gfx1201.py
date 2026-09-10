@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -167,7 +168,126 @@ def check_runcollector_runtime(required_schema_version: int | None) -> dict:
     )
 
 
-def check_runtime_dependencies(source_mode: str, required_runcollector_schema: int | None = None, expected_world_size: int = 1) -> dict:
+def check_ck_conv3d_runtime(aiter_module) -> dict:
+    expected_revision = "af7118e342580ecd3f71edce7b1d0ba465012ecf"
+    expected_sha256 = "c05bd995fd752af344bb4850caf533b397f908292fccae66306574d1b1591b51"
+    expected_fp16_rows = 17
+
+    try:
+        from lightx2v.models.video_encoders.hf.minimax_h3.video_vae import (
+            MiniMaxH3VideoCausalConv3d,
+        )
+    except ImportError as error:
+        die(f"LightX2V image is missing the H3 video VAE CK route: {error}")
+
+    if getattr(MiniMaxH3VideoCausalConv3d, "_lightx2v_ck_conv3d_backend", None) != "Aiter_CK_Conv3d_v1":
+        die("LightX2V H3 video VAE does not declare the Aiter CK Conv3d v1 route")
+    if getattr(MiniMaxH3VideoCausalConv3d, "_lightx2v_ck_conv3d_universal_hot", None) is not True:
+        die("LightX2V H3 video VAE does not use Aiter's universal CK Conv3d HOT route")
+
+    required_api = (
+        "ck_conv3d_v1",
+        "get_ck_conv3d_v1_config",
+        "is_ck_conv3d_v1_prebuilt",
+        "load_ck_conv3d_v1_configs",
+    )
+    missing_api = [name for name in required_api if not callable(getattr(aiter_module, name, None))]
+    if missing_api:
+        die(f"installed Aiter is missing CK Conv3d v1 APIs: {missing_api}")
+    if not aiter_module.is_ck_conv3d_v1_prebuilt():
+        die("Aiter CK Conv3d v1 AOT extension is absent from the installed wheel")
+    fp16_aot_selectors = set(
+        getattr(aiter_module, "CK_CONV3D_V1_FP16_HOT_KERNEL_KEYS", {})
+    )
+    universal_dtypes = set(
+        getattr(aiter_module, "CK_CONV3D_V1_UNIVERSAL_DTYPES", ())
+    )
+    required_fp16_selectors = set(range(1, 12))
+    if (
+        not required_fp16_selectors.issubset(fp16_aot_selectors)
+        or getattr(aiter_module, "CK_CONV3D_V1_FP16_UNIVERSAL_HOT", None) is not True
+    ):
+        die("installed Aiter does not contain the universal FP16 CK Conv3d HOT catalog")
+    if universal_dtypes != {"bfloat16", "float16"}:
+        warn(
+            "installed Aiter does not declare universal CK Conv3d coverage for both "
+            f"BF16 and FP16: {sorted(universal_dtypes)}"
+        )
+
+    observed_revision = getattr(aiter_module, "CK_CONV3D_V1_CK_REVISION", None)
+    observed_sha256 = getattr(aiter_module, "CK_CONV3D_V1_TUNED_CONFIG_SHA256", None)
+    observed_rows = getattr(aiter_module, "CK_CONV3D_V1_TUNED_CONFIG_ROWS", None)
+    configured_catalog = os.environ.get("AITER_CONFIG_CONV3D_V1")
+    config_path = Path(
+        configured_catalog
+        or getattr(aiter_module, "CK_CONV3D_V1_DEFAULT_CONFIG", "")
+    )
+    if observed_revision != expected_revision:
+        warn(f"Aiter CK Conv3d revision is {observed_revision!r}, release provenance is {expected_revision}")
+    if observed_sha256 != expected_sha256 or observed_rows != 545:
+        warn(
+            "Aiter default CK Conv3d catalog provenance differs from the H3 release; "
+            f"validating the active catalog by FP16 coverage instead: sha256={observed_sha256!r}, "
+            f"rows={observed_rows!r}"
+        )
+    actual_sha256 = None
+    configs = {}
+    if config_path.is_file():
+        actual_sha256 = hashlib.sha256(config_path.read_bytes()).hexdigest()
+        if configured_catalog is None and actual_sha256 != expected_sha256:
+            warn(
+                f"Aiter default CK Conv3d catalog content SHA256 is {actual_sha256}, "
+                f"release provenance is {expected_sha256}"
+            )
+        try:
+            configs = aiter_module.load_ck_conv3d_v1_configs(str(config_path))
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            warn(
+                "Aiter CK Conv3d preferred-selector catalog could not be loaded; "
+                f"the universal HOT route remains available: {error}"
+            )
+    else:
+        warn(
+            f"Aiter CK Conv3d preferred-selector catalog is missing at {config_path}; "
+            "the universal HOT route remains available"
+        )
+    fp16_rows = sum(1 for key in configs if key[2] == "float16")
+    fp16_selectors = {
+        int(config["selector_id"])
+        for key, config in configs.items()
+        if key[2] == "float16"
+    }
+    if (
+        fp16_rows < expected_fp16_rows
+        or not required_fp16_selectors.issubset(fp16_selectors)
+    ):
+        warn(
+            "Aiter CK Conv3d tuned catalog has incomplete H3 preferred-selector coverage; "
+            "the universal FP16 HOT route remains available: "
+            f"rows={len(configs)}, fp16_rows={fp16_rows}, "
+            f"fp16_selectors={sorted(fp16_selectors)}"
+        )
+    return {
+        "backend": "Aiter_CK_Conv3d_v1",
+        "ck_revision": observed_revision,
+        "tuned_config": str(config_path),
+        "tuned_config_sha256": actual_sha256,
+        "tuned_config_rows": len(configs),
+        "fp16_tuned_rows": fp16_rows,
+        "fp16_selectors": sorted(fp16_selectors),
+        "fp16_aot_selectors": sorted(fp16_aot_selectors),
+        "aot_prebuilt": True,
+        "universal_hot": True,
+        "universal_dtypes": sorted(universal_dtypes),
+    }
+
+
+def check_runtime_dependencies(
+    source_mode: str,
+    required_runcollector_schema: int | None = None,
+    expected_world_size: int = 1,
+    require_ck_conv3d: bool = False,
+) -> dict:
     for executable in ("ffmpeg", "ffprobe"):
         if shutil.which(executable) is None:
             die(f"required executable is missing from the image: {executable}")
@@ -275,6 +395,7 @@ def check_runtime_dependencies(source_mode: str, required_runcollector_schema: i
         ],
         "h1_patch_embed": patch_embed_contract,
         "h3_runcollector": check_runcollector_runtime(required_runcollector_schema),
+        "ck_conv3d": check_ck_conv3d_runtime(aiter) if require_ck_conv3d else {"required": False},
         "sage_api_importable": True,
         "dense_gemm": check_dense_gemm_runtime(),
     }
@@ -713,8 +834,13 @@ def main() -> int:
     # FlyDSL owns device-local runtime state. Multi-GPU Sage coverage is
     # provided below by the one-process-per-device torchrun distributed smoke.
     torch.cuda.set_device(0)
-    runtime = check_runtime_dependencies(args.source_mode, args.required_runcollector_schema, args.expected_world_size)
     config = check_runtime_config(args.runtime_config, args.expected_world_size) if args.runtime_config else {}
+    runtime = check_runtime_dependencies(
+        args.source_mode,
+        args.required_runcollector_schema,
+        args.expected_world_size,
+        require_ck_conv3d=config.get("task") == "ref2av",
+    )
     artifacts = {}
     if not args.skip_artifacts:
         artifacts = check_artifacts(args.model_dir, args.turbo_dir, args.first_frame, args.last_frame, args.expected_world_size,
