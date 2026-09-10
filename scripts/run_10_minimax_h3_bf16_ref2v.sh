@@ -8,6 +8,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 run_image="${IMAGE:-lightx2v-rocm:hvat-gfx1201-R9600}"
 export H3_MODEL_DIR="${H3_MODEL_DIR:-/disk/ssd1/difumodels/MiniMax-h3}"
 export H3_COMFY_DIR="${H3_COMFY_DIR:-/disk/ssd1/difumodels/MiniMax-H3-ComfyUI}"
+export H3_PROFILE=ref2av_bf16_base
 export RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd1/lightx2v-runtime}"
 export GPU_DEVICES="${GPU_DEVICES:-0,1}"
 default_steps=20

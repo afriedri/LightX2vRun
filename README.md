@@ -20,8 +20,10 @@ workload in a model-specific launcher and emits rank-critical evidence.
 | 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
 | 08 | `scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh` | MiniMax-H3, 1344x768, 124f, 24 FPS | 2/4/8/16 |
 | 09 | `scripts/run_09_minimax_h3_480p_124f_24fps_scale.sh` | MiniMax-H3, 832x480, 124f, 24 FPS | 2/4/8/16 |
-| 10 | `scripts/run_10_minimax_h3_bf16_ref2v.sh` | H3 原始 BF16 Ref2V，无 LoRA，1344x768，124f，24 FPS | 默认 2；支持 1/2/4/8/16 |
+| 10 | `scripts/run_10_minimax_h3_bf16_ref2v.sh` | H3 原始 BF16 Ref2AV，无 LoRA，1344x768，15 秒 | 默认 2；支持 1/2/4/8/16 |
 | 10 | `scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh` | LTX-2.5 C1, 1280x704, 121f, 24 FPS | 2/4/8/16 |
+| 11 | `scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh` | H3 原始 BF16 Ref2AV，无 LoRA，1344x768，15 秒 scale | 2/4/8/16 |
+| 12 | `scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh` | H3 Ref2AV Turbo 8-step 动态 LoRA，1344x768，15 秒 | 默认 4；支持 1/2/4/8/16 |
 
 ## LTX-2.3 Distilled FP8 B0
 
@@ -224,9 +226,11 @@ The gfx1201 production overlay routes H3 Core Attention through Aiter SageAttent
 (`aiter_fav3_sage_bf16_attn` / `sage_attn_v2_gfx1201`), H1/Refiner and H4 Video
 Attention through canonical `aiter_triton_mha`, H3 Core Q/K normalization through
 `minimax_h3_aiter_triton_qk`, and H3 Core RoPE through strict/no-FMA
-`minimax_h3_triton_strict_rope`. Core Dense GEMM and dynamic rank-128 LoRA remain
-the measured `torch.mm` path using PyTorch's default ROCm BLAS heuristic
-(hipBLASLt on the collected hot shapes). The H3
+`minimax_h3_triton_strict_rope`. Core Dense GEMM and FL2AV's dynamic rank-128
+LoRA remain on the measured `torch.mm` path using PyTorch's default ROCm BLAS
+heuristic (hipBLASLt on the collected hot shapes). Ref2AV Turbo 8-step uses the
+same dynamic path, while its rank and exact M/K/N contracts are recorded from
+the real checkpoint by the first collector E2E. The H3
 launcher explicitly disables TunableOp and does not load a tuning cache: its
 weighted gain was only 1.035x and QKV LoRA-up regressed. Preflight executes
 only static/runtime contracts during a normal inference start;
@@ -1124,3 +1128,5 @@ Run `./lightx2vModelrun --help` for all supported overrides.
 H3 原始 Ref2VA BF16（无 LoRA、默认 SP2、768P 15 秒、内置双图屋顶素材）入口与两张 32 GiB 卡的算子/显存检查见 [运行说明](docs/h3-ref2av-bf16.md)。
 
 H3 BF16 Ref2V 4/8/16 卡测试入口：`scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh`，复用 FL2AV scale 框架，详见 [scale 说明与算子审查](docs/h3-ref2av-scale.md)。
+
+H3 Ref2AV Turbo 8-step LoRA 入口：`scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh`。它复用完整 Ref2AV BF16 base，动态加载 `minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors`，默认四卡并开启 collector；采样合约、shape 收集和 E2E 验收见 [8-step 接入说明](docs/h3-ref2av-8step.md)。

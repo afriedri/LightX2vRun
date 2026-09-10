@@ -24,13 +24,9 @@ REQUIRED_PUBLISH_KEYS = (
     "vae_cpu_offload",
     "keep_latents_dtype_in_scheduler",
 )
-FROZEN_VALUES = {
-    "target_video_length": 124,
+COMMON_FROZEN_VALUES = {
     "fps": 24,
     "target_fps": 24,
-    "video_flow_shift": 6.0,
-    "h3_step_update": "training_euler",
-    "infer_steps": 5,
     "warmup": False,
     "h3_refiner_attn_type": "aiter_triton_mha",
     "h3_core_attn_type": "aiter_fav3_sage_bf16_attn",
@@ -62,7 +58,29 @@ ALLOWED_OVERLAY_CHANGES = {
     "local_files_only",
     "lora_configs",
 }
-TURBO_NAME = "minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
+PROFILE_TASKS = {
+    "fl2av_turbo_4step": "fl2av",
+    "ref2av_bf16_base": "ref2av",
+    "ref2av_turbo_8step": "ref2av",
+}
+DEFAULT_PROFILES = {
+    "fl2av": "fl2av_turbo_4step",
+    "ref2av": "ref2av_bf16_base",
+}
+TURBO_CONTRACTS = {
+    "fl2av_turbo_4step": {
+        "filename": "minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors",
+        "alpha": 128,
+        "infer_steps": 5,
+        "video_flow_shift": 6.0,
+    },
+    "ref2av_turbo_8step": {
+        "filename": "minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors",
+        "alpha": 8,
+        "infer_steps": 9,
+        "video_flow_shift": 12.0,
+    },
+}
 TEST_WORKLOAD = {"target_video_length": 124, "fps": 24, "target_fps": 24}
 SMOKE = {"target_height": 480, "target_width": 480}
 PRODUCTION_GEOMETRIES = {(768, 1344), (480, 832)}
@@ -78,6 +96,7 @@ def build(
     *,
     smoke: bool,
     task: str = "fl2av",
+    profile: str | None = None,
     infer_steps: int | None = None,
     step_update: str | None = None,
     reference_image_resize_mode: str | None = None,
@@ -89,7 +108,14 @@ def build(
 ) -> dict:
     if task not in ("fl2av", "ref2av"):
         raise SystemExit(f"unsupported H3 task: {task}")
+    profile = profile or DEFAULT_PROFILES[task]
+    if profile not in PROFILE_TASKS:
+        raise SystemExit(f"unsupported H3 profile: {profile}")
+    if PROFILE_TASKS[profile] != task:
+        raise SystemExit(f"H3 profile {profile} is not valid for task {task}")
     ref2av = task == "ref2av"
+    ref2av_base = profile == "ref2av_bf16_base"
+    turbo_contract = TURBO_CONTRACTS.get(profile)
     frames = 124 if target_video_length is None else target_video_length
     if not isinstance(frames, int) or not 124 <= frames <= 362 or frames % 17 != 5:
         raise SystemExit("H3 frames must be 17*n+5 within 124..362")
@@ -107,7 +133,12 @@ def build(
         raise SystemExit("MiniMax-H3 CP2xU8 SP16 requires a supported production geometry")
     if (target_height is None) != (target_width is None):
         raise SystemExit("target_height and target_width must be provided together")
-    missing = [key for key in REQUIRED_PUBLISH_KEYS if key not in publish and not (ref2av and key in ("lora_dynamic_apply", "h3_step_update"))]
+    missing = [
+        key
+        for key in REQUIRED_PUBLISH_KEYS
+        if key not in publish
+        and not (ref2av_base and key in ("lora_dynamic_apply", "h3_step_update"))
+    ]
     if missing:
         raise SystemExit(f"published H3 JSON is missing keys: {missing}")
     unauthorized = {
@@ -144,15 +175,13 @@ def build(
             supported = ", ".join(f"{width}x{height}" for height, width in sorted(PRODUCTION_GEOMETRIES))
             raise SystemExit(f"unsupported MiniMax-H3 production geometry {geometry[1]}x{geometry[0]}; expected {supported}")
         config.update({"target_height": geometry[0], "target_width": geometry[1]})
-    frozen = {**FROZEN_VALUES, "target_video_length": frames}
+    frozen = {**COMMON_FROZEN_VALUES, "target_video_length": frames}
     if ref2av:
         frozen.update(video_flow_shift=12.0)
-        frozen.pop("h3_step_update")
         if config.get("h3_step_update") not in ("comfy_res_multistep", "reference_blend", "training_euler"):
             raise SystemExit("Unsupported H3 Ref2AV sampling mode")
         if config.get("reference_image_resize_mode", "diffusers") not in ("match", "max", "diffusers"):
             raise SystemExit("Unsupported H3 reference image resize mode")
-        frozen.pop("infer_steps")
         if infer_steps is not None:
             config["infer_steps"] = infer_steps
         minimum = 1 if config["h3_step_update"] == "comfy_res_multistep" else 2
@@ -160,26 +189,44 @@ def build(
             raise SystemExit(f"H3 infer_steps must be an integer >= {minimum}")
         if config["h3_step_update"] == "comfy_res_multistep" and config["infer_steps"] > 1000:
             raise SystemExit("H3 Comfy simple sampling requires 1..1000 model evaluations")
+        if turbo_contract is not None:
+            frozen.update(
+                video_flow_shift=turbo_contract["video_flow_shift"],
+                h3_step_update="training_euler",
+                infer_steps=turbo_contract["infer_steps"],
+            )
     elif infer_steps is not None:
         raise SystemExit("FL2AV Turbo uses its existing fixed step configuration")
+    else:
+        frozen.update(
+            video_flow_shift=turbo_contract["video_flow_shift"],
+            h3_step_update="training_euler",
+            infer_steps=turbo_contract["infer_steps"],
+        )
     for key, expected in frozen.items():
         if config.get(key) != expected:
             raise SystemExit(f"{key} must be {expected!r}, got {config.get(key)!r}")
-    if ref2av:
+    if ref2av_base:
         if config.get("lora_configs") or config.get("lora_dynamic_apply", False):
             raise SystemExit("Ref2AV BF16 base profile does not load LoRA")
         config.pop("lora_configs", None)
         config["lora_dynamic_apply"] = False
     else:
+        contract = TURBO_CONTRACTS[profile]
         lora = config.get("lora_configs") or []
-        if len(lora) != 1 or lora[0].get("alpha") != 128 or lora[0].get("strength") != 1.0:
-            raise SystemExit("H3 Turbo LoRA must be one entry with alpha=128 strength=1.0")
+        if len(lora) != 1 or lora[0].get("alpha") != contract["alpha"] or lora[0].get("strength") != 1.0:
+            raise SystemExit(
+                f"H3 {profile} LoRA must be one entry with "
+                f"alpha={contract['alpha']} strength=1.0"
+            )
         path = str(lora[0].get("path") or "")
-        if not path.endswith(TURBO_NAME):
-            raise SystemExit(f"H3 Turbo LoRA path must end with {TURBO_NAME}, got {path}")
-        lora[0]["path"] = f"/models/minimax_h3_turbo/{TURBO_NAME}"
+        filename = contract["filename"]
+        if not path.endswith(filename):
+            raise SystemExit(f"H3 {profile} LoRA path must end with {filename}, got {path}")
+        lora[0]["path"] = f"/models/minimax_h3_turbo/{filename}"
         config["lora_dynamic_apply"] = True
     config["task"] = task
+    config["h3_profile"] = profile
     config["tensor_parallel"] = False
     config["text_encoder_tensor_parallel"] = False
     config["lazy_load"] = True
@@ -219,6 +266,7 @@ def main() -> int:
     parser.add_argument("--overlay-json", type=Path, required=True)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--task", choices=("fl2av", "ref2av"), default="fl2av")
+    parser.add_argument("--profile", choices=tuple(PROFILE_TASKS))
     parser.add_argument("--infer-steps", type=int)
     parser.add_argument("--step-update", choices=("comfy_res_multistep", "reference_blend", "training_euler"))
     parser.add_argument("--reference-image-resize-mode", choices=("match", "max", "diffusers"))
@@ -234,6 +282,7 @@ def main() -> int:
         load_json(args.overlay_json),
         smoke=args.smoke,
         task=args.task,
+        profile=args.profile,
         infer_steps=args.infer_steps,
         step_update=args.step_update,
         reference_image_resize_mode=args.reference_image_resize_mode,
@@ -248,7 +297,8 @@ def main() -> int:
     print(f"H3 runtime config: {args.output_json}")
     print(
         f"geometry={config['target_height']}x{config['target_width']} "
-        f"frames={config['target_video_length']} attn={config['h3_core_attn_type']} "
+        f"frames={config['target_video_length']} profile={config['h3_profile']} "
+        f"attn={config['h3_core_attn_type']} "
         f"seq_parallel_size={args.seq_parallel_size}"
     )
     return 0

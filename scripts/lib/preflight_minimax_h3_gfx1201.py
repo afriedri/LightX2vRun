@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,108 @@ def die(message: str) -> None:
 def warn(message: str) -> None:
     # Keep JSON evidence on stdout parseable.
     print(f"WARNING: {message}", file=sys.stderr)
+
+
+def _normalize_h3_lora_key(key: str) -> str | None:
+    for prefix in (
+        "base_model.model.",
+        "model.diffusion_model.",
+        "diffusion_model.",
+        "transformer.",
+        "model.",
+    ):
+        if key.startswith(prefix):
+            key = key[len(prefix) :]
+            break
+    suffixes = {
+        ".lora_A.default.weight": ".lora_down.weight",
+        ".lora_B.default.weight": ".lora_up.weight",
+        ".lora_A.weight": ".lora_down.weight",
+        ".lora_B.weight": ".lora_up.weight",
+        ".lora.down.weight": ".lora_down.weight",
+        ".lora.up.weight": ".lora_up.weight",
+        ".lora_down.weight": ".lora_down.weight",
+        ".lora_up.weight": ".lora_up.weight",
+    }
+    for suffix, replacement in suffixes.items():
+        if key.endswith(suffix):
+            return key[: -len(suffix)] + replacement
+    return key if key.endswith(".alpha") else None
+
+
+def inspect_h3_lora_header(path: Path) -> dict:
+    """Validate the same LoRA key/pair contract as the runtime without loading tensors."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as stream:
+            raw_length = stream.read(8)
+            if len(raw_length) != 8:
+                raise ValueError("missing safetensors header length")
+            header_length = struct.unpack("<Q", raw_length)[0]
+            if header_length <= 0 or header_length > min(size - 8, 64 * 1024 * 1024):
+                raise ValueError(f"invalid safetensors header length {header_length}")
+            header = json.loads(stream.read(header_length))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, struct.error) as error:
+        die(f"Turbo LoRA header cannot be parsed: {path}: {error}")
+    if not isinstance(header, dict):
+        die(f"Turbo LoRA header must be an object: {path}")
+
+    tensors = {key: value for key, value in header.items() if key != "__metadata__"}
+    normalized = {}
+    unsupported = []
+    for source_key, descriptor in tensors.items():
+        key = _normalize_h3_lora_key(source_key)
+        if key is None:
+            unsupported.append(source_key)
+            continue
+        if key in normalized:
+            die(f"Turbo LoRA keys collide after normalization: {source_key} and {normalized[key][0]}")
+        normalized[key] = (source_key, descriptor)
+    if unsupported:
+        die(f"Turbo LoRA contains {len(unsupported)} unsupported tensors: {unsupported[:4]}")
+
+    down_names = {key for key in normalized if key.endswith(".lora_down.weight")}
+    up_names = {key for key in normalized if key.endswith(".lora_up.weight")}
+    expected_up = {key[: -len(".lora_down.weight")] + ".lora_up.weight" for key in down_names}
+    if not down_names or up_names != expected_up:
+        die(
+            "Turbo LoRA has incomplete pairs: "
+            f"missing_up={sorted(expected_up - up_names)[:3]}, "
+            f"orphan_up={sorted(up_names - expected_up)[:3]}"
+        )
+
+    ranks = set()
+    dtypes = set()
+    for down_name in down_names:
+        base = down_name[: -len(".lora_down.weight")]
+        down = normalized[down_name][1]
+        up = normalized[base + ".lora_up.weight"][1]
+        try:
+            down_shape = tuple(int(value) for value in down["shape"])
+            up_shape = tuple(int(value) for value in up["shape"])
+            dtypes.update((str(down["dtype"]), str(up["dtype"])))
+        except (KeyError, TypeError, ValueError) as error:
+            die(f"Turbo LoRA pair has an invalid tensor descriptor for {base}: {error}")
+        if len(down_shape) != 2 or len(up_shape) != 2 or down_shape[0] != up_shape[1]:
+            die(f"Turbo LoRA pair has incompatible shapes for {base}: down={down_shape}, up={up_shape}")
+        ranks.add(down_shape[0])
+
+    alpha_names = {key for key in normalized if key.endswith(".alpha")}
+    expected_alpha = {key[: -len(".lora_down.weight")] + ".alpha" for key in down_names}
+    orphan_alpha = alpha_names - expected_alpha
+    if orphan_alpha:
+        die(f"Turbo LoRA contains alpha tensors without matching pairs: {sorted(orphan_alpha)[:3]}")
+    return {
+        "path": str(path),
+        "size_bytes": size,
+        "tensor_count": len(tensors),
+        "pair_count": len(down_names),
+        "ranks": sorted(ranks),
+        "dtypes": sorted(dtypes),
+        "alpha_tensor_count": len(alpha_names),
+        "config_alpha_required": bool(expected_alpha - alpha_names),
+        "metadata": header.get("__metadata__", {}),
+    }
 
 
 def git_revision(path: Path) -> str | None:
@@ -689,8 +792,11 @@ def check_artifacts(model_dir: Path, turbo_dir: Path, first_frame: Path, last_fr
         if not any(component_dir.glob("*.safetensors")):
             die(f"H3 model component has no safetensors shard: {component_dir}")
     turbo = Path(lora_path) if lora_path else turbo_dir / "minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
+    if lora_path and not turbo.is_file():
+        die(f"Turbo LoRA not found: {turbo}")
     if task != "ref2av" and not turbo.is_file():
         die(f"Turbo LoRA not found: {turbo}")
+    lora_header = inspect_h3_lora_header(turbo) if lora_path else None
     images = [(f"reference_image_{i+1}", Path(path)) for i, path in enumerate(str(first_frame).split(","))] if task == "ref2av" else [("first_frame", first_frame), ("last_frame", last_frame)]
     if task == "ref2av" and not 1 <= len(images) <= 9:
         die("Ref2AV requires between 1 and 9 reference images")
@@ -716,7 +822,8 @@ def check_artifacts(model_dir: Path, turbo_dir: Path, first_frame: Path, last_fr
     return {
         "model_dir": str(model_dir),
         "components": sorted((*component_files, "processor")),
-        "turbo": None if task == "ref2av" else str(turbo),
+        "turbo": str(turbo) if lora_path or task != "ref2av" else None,
+        "lora_header": lora_header,
         "attention_heads": attention_heads,
         **image_info,
     }
@@ -724,6 +831,21 @@ def check_artifacts(model_dir: Path, turbo_dir: Path, first_frame: Path, last_fr
 
 def check_runtime_config(path: Path, expected_world_size: int) -> dict:
     config = json.loads(path.read_text(encoding="utf-8"))
+    task = config.get("task", "fl2av")
+    profile = config.get("h3_profile")
+    if profile is None:
+        if task == "ref2av":
+            profile = "ref2av_turbo_8step" if config.get("lora_configs") else "ref2av_bf16_base"
+        else:
+            profile = "fl2av_turbo_4step"
+    expected_profiles = {
+        "fl2av_turbo_4step": ("fl2av", True),
+        "ref2av_bf16_base": ("ref2av", False),
+        "ref2av_turbo_8step": ("ref2av", True),
+    }
+    if profile not in expected_profiles or expected_profiles[profile][0] != task:
+        die(f"runtime config has invalid H3 profile/task combination: profile={profile!r}, task={task!r}")
+    expects_lora = expected_profiles[profile][1]
     for key, expected in (
         ("enable_cfg", False),
         ("video_flow_shift", 12.0 if config.get("task") == "ref2av" else 6.0),
@@ -736,7 +858,7 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
         ("h3_core_rope_type", "minimax_h3_triton_strict_rope"),
         ("h4_video_attn_type", "aiter_triton_mha"),
         ("dit_quant_scheme", "Default"),
-        ("lora_dynamic_apply", config.get("task") != "ref2av"),
+        ("lora_dynamic_apply", expects_lora),
         ("lazy_load", True),
         ("cpu_offload", True),
         ("offload_granularity", "block"),
@@ -747,8 +869,20 @@ def check_runtime_config(path: Path, expected_world_size: int) -> dict:
             die(f"runtime config {key} must be {expected!r}, got {config.get(key)!r}")
     if config.get("task") == "ref2av" and config.get("h3_step_update") not in ("comfy_res_multistep", "reference_blend", "training_euler"):
         die("Unsupported H3 Ref2AV sampling mode")
-    if config.get("task") == "ref2av" and config.get("lora_configs"):
+    if profile == "ref2av_bf16_base" and config.get("lora_configs"):
         die("Ref2AV BF16 base profile must not load LoRA")
+    if profile == "ref2av_turbo_8step":
+        lora = config.get("lora_configs") or []
+        filename = "minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors"
+        if config.get("h3_step_update") != "training_euler" or config.get("infer_steps") != 9:
+            die("Ref2AV Turbo 8-step requires training_euler with 9 grid points (8 model evaluations)")
+        if (
+            len(lora) != 1
+            or lora[0].get("alpha") != 8
+            or lora[0].get("strength") != 1.0
+            or not str(lora[0].get("path") or "").endswith(filename)
+        ):
+            die(f"Ref2AV Turbo 8-step requires one {filename} LoRA with alpha=8 strength=1.0")
     if config.get("tensor_parallel") is not False:
         die("runtime config tensor_parallel must remain false for MiniMax-H3 gfx1201")
     if config.get("text_encoder_tensor_parallel", False) is not False:

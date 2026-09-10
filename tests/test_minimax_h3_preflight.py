@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import struct
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -282,6 +283,22 @@ def make_artifacts(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     return model_dir, turbo_dir, first_frame, last_frame
 
 
+def write_lora_fixture(path: Path, *, include_up: bool = True) -> None:
+    tensors = {
+        "model.transformer_blocks.0.attn.to_q.lora_A.weight": {
+            "dtype": "BF16", "shape": [8, 4], "data_offsets": [0, 64]
+        },
+    }
+    payload_size = 64
+    if include_up:
+        tensors["model.transformer_blocks.0.attn.to_q.lora_B.weight"] = {
+            "dtype": "BF16", "shape": [6, 8], "data_offsets": [64, 160]
+        }
+        payload_size = 160
+    header = json.dumps(tensors, separators=(",", ":")).encode("utf-8")
+    path.write_bytes(struct.pack("<Q", len(header)) + header + bytes(payload_size))
+
+
 def test_artifact_contract_accepts_published_component_layout(tmp_path):
     artifacts = PREFLIGHT.check_artifacts(*make_artifacts(tmp_path), expected_world_size=2)
     assert artifacts["components"] == ["audio_vae", "processor", "text_encoder", "tokenizer", "transformer", "vae"]
@@ -291,6 +308,36 @@ def test_artifact_contract_accepts_published_component_layout(tmp_path):
 def test_artifact_contract_uses_u8_head_divisibility_for_sp16(tmp_path):
     artifacts = PREFLIGHT.check_artifacts(*make_artifacts(tmp_path), expected_world_size=16)
     assert artifacts["attention_heads"] == 56
+
+
+def test_ref2av_turbo_artifact_contract_inspects_lora_header(tmp_path):
+    model_dir, turbo_dir, first_frame, last_frame = make_artifacts(tmp_path)
+    (model_dir / "transformer").rename(model_dir / "transformer_ref")
+    lora = turbo_dir / "minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors"
+    write_lora_fixture(lora)
+
+    artifacts = PREFLIGHT.check_artifacts(
+        model_dir,
+        turbo_dir,
+        first_frame,
+        last_frame,
+        expected_world_size=4,
+        task="ref2av",
+        lora_path=str(lora),
+    )
+
+    assert artifacts["turbo"] == str(lora)
+    assert artifacts["lora_header"]["pair_count"] == 1
+    assert artifacts["lora_header"]["ranks"] == [8]
+    assert artifacts["lora_header"]["dtypes"] == ["BF16"]
+    assert artifacts["lora_header"]["config_alpha_required"] is True
+
+
+def test_lora_header_contract_rejects_incomplete_pair(tmp_path):
+    lora = tmp_path / "incomplete.safetensors"
+    write_lora_fixture(lora, include_up=False)
+    with pytest.raises(SystemExit):
+        PREFLIGHT.inspect_h3_lora_header(lora)
 
 
 def test_artifact_contract_rejects_incomplete_processor(tmp_path):

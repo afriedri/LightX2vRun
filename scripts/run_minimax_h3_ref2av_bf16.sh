@@ -5,6 +5,8 @@ run_root="$(cd -- "${script_dir}/.." && pwd)"
 image=
 model_dir="${H3_MODEL_DIR:-/disk/ssd1/difumodels/MiniMax-h3}"
 comfy_dir="${H3_COMFY_DIR:-/disk/ssd1/difumodels/MiniMax-H3-ComfyUI}"
+turbo_dir="${H3_TURBO_DIR:-/disk/ssd1/difumodels/Minimax-h3-Turbo}"
+profile="${H3_PROFILE:-ref2av_bf16_base}"
 result_dir="${H3_RESULT_DIR:-}"
 gpus="${GPU_DEVICES:-0,1}"
 references=()
@@ -25,11 +27,12 @@ weights (about 66.3 GB additional disk); subsequent runs reuse the cache.
 
   --model-dir DIR       Existing complete native H3 directory for Qwen/tokenizer/VAEs
   --comfy-dir DIR       ComfyUI root with diffusion_models/
+  --turbo-dir DIR       Turbo LoRA root (required by ref2av_turbo_8step)
   --reference-image FILE  Repeat for 1-9 images, in prompt reference order
   --prompt-file FILE    Prompt with reference descriptions; PROMPT overrides file
   --result-dir DIR      Reports/video output (default: timestamped)
   --gpus IDS            GPU ids (default: 0,1; supports 1/2/4/8/16 GPUs)
-  --infer-steps N      Model evaluations (default: 20, Comfy res_multistep + simple)
+  --infer-steps N       Base: model evaluations; Turbo: grid points (must be 9 for 8 evaluations)
   --duration SECONDS   Integer 5-15; native aligned frames, exact output duration
   --smoke              480x480 instead of 1344x768; duration is unchanged
   --preflight-only     Validate assets and run kernel/communication probes
@@ -42,12 +45,13 @@ EOF
 }
 while (( $# )); do
     case "$1" in
-        --image|--model-dir|--comfy-dir|--reference-image|--prompt-file|--result-dir|--gpus|--infer-steps|--duration)
+        --image|--model-dir|--comfy-dir|--turbo-dir|--reference-image|--prompt-file|--result-dir|--gpus|--infer-steps|--duration)
             (( $# >= 2 )) && [[ -n "$2" && "$2" != --* ]] || { echo "missing value for $1" >&2; exit 2; }
             case "$1" in
                 --image) image="$2" ;;
                 --model-dir) model_dir="$2" ;;
                 --comfy-dir) comfy_dir="$2" ;;
+                --turbo-dir) turbo_dir="$2" ;;
                 --reference-image) references+=("$2") ;;
                 --prompt-file) prompt_file="$2" ;;
                 --result-dir) result_dir="$2" ;;
@@ -82,11 +86,13 @@ fi
 [[ -n "$prompt" ]] || { echo 'provide --prompt-file or PROMPT for your references' >&2; exit 2; }
 [[ "$model_dir" == /* ]] || model_dir="${PWD}/${model_dir}"
 [[ "$comfy_dir" == /* ]] || comfy_dir="${PWD}/${comfy_dir}"
-result_dir="${result_dir:-${OUTPUT_DIR:-/disk/ssd1/lightx2v-runtime/outputs}/minimax_h3_ref2av_$(date +%Y%m%d_%H%M%S)}"
+[[ "$turbo_dir" == /* ]] || turbo_dir="${PWD}/${turbo_dir}"
+case "$profile" in ref2av_bf16_base|ref2av_turbo_8step) ;; *) echo "unsupported Ref2AV profile: $profile" >&2; exit 2 ;; esac
+result_dir="${result_dir:-${OUTPUT_DIR:-/disk/ssd1/lightx2v-runtime/outputs}/minimax_h3_${profile}_$(date +%Y%m%d_%H%M%S)}"
 [[ "$result_dir" == /* ]] || result_dir="${PWD}/${result_dir}"
 export RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd1/lightx2v-runtime}"
-export IMAGE="$image" LIGHTX2V_H3_EXPLICIT_IMAGE=1 H3_TASK=ref2av
-export H3_MODEL_DIR="$model_dir" H3_COMFY_DIR="$comfy_dir" GPU_DEVICES="$gpus"
+export IMAGE="$image" LIGHTX2V_H3_EXPLICIT_IMAGE=1 H3_TASK=ref2av H3_PROFILE="$profile"
+export H3_MODEL_DIR="$model_dir" H3_COMFY_DIR="$comfy_dir" H3_TURBO_DIR="$turbo_dir" GPU_DEVICES="$gpus"
 export H3_REFERENCE_IMAGES="$(printf '%s\n' "${references[@]}")"
 export PROMPT="$prompt" H3_SMOKE="$smoke" H3_PREFLIGHT_ONLY="$preflight"
 export LIGHTX2V_H3_RUN_COLLECTOR="$collect"

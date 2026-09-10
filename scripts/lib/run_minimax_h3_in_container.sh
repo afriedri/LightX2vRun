@@ -9,15 +9,32 @@ model_path="${MODEL_PATH:-/models/minimax_h3}"
 source_mode="${H3_SOURCE_MODE:-image}"
 task="${H3_TASK:-fl2av}"
 case "$task" in fl2av|ref2av) ;; *) echo "unsupported H3 task: $task" >&2; exit 2 ;; esac
+profile="${H3_PROFILE:-}"
+if [[ -z "$profile" ]]; then
+    if [[ "$task" == ref2av ]]; then profile=ref2av_bf16_base; else profile=fl2av_turbo_4step; fi
+fi
 image_path="${IMAGE_PATH:-${lightx2v_path}/assets/inputs/imgs/flf2v_input_first_frame-fs8.png}"
 last_frame_path="${LAST_FRAME_PATH:-${lightx2v_path}/assets/inputs/imgs/flf2v_input_last_frame-fs8.png}"
-overlay_json="${BASE_CONFIG_JSON:-${lightx2v_path}/configs/platforms/amd_rocm/minimax_h3_fl2av_4step_768p_gfx1201.json}"
-publish_json="${lightx2v_path}/configs/minimax_h3/dmd/minimax_h3_bf16_4step_single_gpu_offload.json"
-if [[ "$task" == ref2av ]]; then
-    last_frame_path=
-    overlay_json="${lightx2v_path}/configs/platforms/amd_rocm/minimax_h3_ref2av_bf16_gfx1201.json"
-    publish_json="${lightx2v_path}/configs/minimax_h3/minimax_h3_ref2av.json"
-fi
+case "$profile" in
+    fl2av_turbo_4step)
+        [[ "$task" == fl2av ]] || { echo "profile $profile requires task fl2av" >&2; exit 2; }
+        overlay_json="${BASE_CONFIG_JSON:-${lightx2v_path}/configs/platforms/amd_rocm/minimax_h3_fl2av_4step_768p_gfx1201.json}"
+        publish_json="${lightx2v_path}/configs/minimax_h3/dmd/minimax_h3_bf16_4step_single_gpu_offload.json"
+        ;;
+    ref2av_bf16_base)
+        [[ "$task" == ref2av ]] || { echo "profile $profile requires task ref2av" >&2; exit 2; }
+        last_frame_path=
+        overlay_json="${lightx2v_path}/configs/platforms/amd_rocm/minimax_h3_ref2av_bf16_gfx1201.json"
+        publish_json="${lightx2v_path}/configs/minimax_h3/minimax_h3_ref2av.json"
+        ;;
+    ref2av_turbo_8step)
+        [[ "$task" == ref2av ]] || { echo "profile $profile requires task ref2av" >&2; exit 2; }
+        last_frame_path=
+        overlay_json="${lightx2v_path}/configs/platforms/amd_rocm/minimax_h3_ref2av_8step_768p_gfx1201.json"
+        publish_json="${lightx2v_path}/configs/minimax_h3/dmd/minimax_h3_ref2av_8step.json"
+        ;;
+    *) echo "unsupported H3 profile: $profile" >&2; exit 2 ;;
+esac
 
 visible_devices="${HIP_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
 [[ "${visible_devices}" =~ ^[0-9]+(,[0-9]+){0,15}$ ]] || {
@@ -50,9 +67,9 @@ export GPU_ARCHS="${GPU_ARCHS:-gfx1201}"
 export CU_NUM="${CU_NUM:-24}"
 export PYTORCH_ROCM_ARCH=gfx1201
 export AITER_ROCM_ARCH=gfx1201
-# The measured H3 BF16 GEMM/LoRA winner is ordinary torch.mm with PyTorch's
-# default ROCm BLAS heuristic (hipBLASLt for the collected hot shapes).
-# TunableOp replay regressed QKV LoRA-up and is deliberately excluded.
+# Ordinary torch.mm is the production baseline. The collected FL2AV rank-128
+# LoRA did not benefit from TunableOp replay; Ref2AV rank shapes are collected
+# independently before any profile-specific promotion.
 export PYTORCH_TUNABLEOP_ENABLED=0
 unset TORCH_BLAS_PREFER_CUBLASLT TORCH_BLAS_PREFER_HIPBLASLT
 export PYTHONPATH="${lightx2v_path}${PYTHONPATH:+:${PYTHONPATH}}"
@@ -131,7 +148,7 @@ if [[ "${LIGHTX2V_H3_RUN_COLLECTOR:-0}" == 1 ]]; then
     runcollector_schema_flag+=(--required-runcollector-schema 2)
 fi
 
-profile_args=(--task "$task")
+profile_args=(--task "$task" --profile "$profile")
 if [[ "$task" == ref2av ]]; then
     profile_args+=(--target-video-length "$target_video_length")
     if [[ -n "${H3_OUTPUT_DURATION:-}" ]]; then
@@ -267,7 +284,7 @@ resolve_minimax_h3_prompt \
 prompt="${MINIMAX_H3_PROMPT}"
 save_result_path="${SAVE_RESULT_PATH:-${lightx2v_path}/save_results/minimax_h3_fl2av.mp4}"
 
-echo "MiniMax-H3 ${task} gfx1201"
+echo "MiniMax-H3 ${task} gfx1201 (${profile})"
 echo "Workload: ${target_width}x${target_height}, ${target_video_length} frames @ ${target_fps} FPS (${prompt_duration_seconds}s)"
 echo "GPUs: ${visible_devices} (world_size=${gpu_count})"
 parallel_mode="single GPU"
@@ -289,7 +306,7 @@ fi
 echo "Core Q/K RMS: minimax_h3_aiter_triton_qk"
 echo "Core RoPE: minimax_h3_triton_strict_rope"
 echo "H4 Video Attention: aiter_triton_mha"
-if [[ "$task" == ref2av ]]; then
+if [[ "$profile" == ref2av_bf16_base ]]; then
     echo "Dense GEMM: BF16 torch.mm -> default ROCm BLAS heuristic (TunableOp disabled); LoRA disabled"
 else
     echo "Dense GEMM/LoRA: torch.mm -> default ROCm BLAS heuristic (TunableOp disabled)"

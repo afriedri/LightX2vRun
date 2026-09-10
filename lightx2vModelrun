@@ -52,7 +52,7 @@ Usage:
   ./lightx2vModelrun --run-wan21-gfx1201    Run the consolidated Wan2.1 container entry
   ./lightx2vModelrun --run-wan22-gfx1201    Run the consolidated Wan2.2 lazy/B1 entry
   ./lightx2vModelrun --run-minimax-h3-gfx1201
-                                            Run MiniMax-H3 FL2V on 1 GPU, Ulysses SP2/SP4/SP8, or Ring SP16
+                                            Run MiniMax-H3 FL2AV/Ref2AV on 1 GPU, Ulysses SP2/SP4/SP8, or Ring SP16
                                             (H3 launcher only; TP stays disabled)
   ./lightx2vModelrun --run-ltx23-gfx1201   Run LTX-2.3 Distilled FP8 B0 on exactly 2 GPUs
   ./lightx2vModelrun --run-ltx25-contract-collector
@@ -70,11 +70,14 @@ Ordinary timing runs should use the numbered scripts:
   scripts/run_07_wan22_720p_121f_24fps_scale.sh
   scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh --image IMAGE
   scripts/run_09_minimax_h3_480p_124f_24fps_scale.sh --image IMAGE
+  scripts/run_10_minimax_h3_bf16_ref2v.sh --image IMAGE
   scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh --image IMAGE
+  scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh --image IMAGE
+  scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh --image IMAGE
 
 Important overrides:
   GPU_DEVICES, IMAGE, MODEL_STORE, OUTPUT_DIR, INPUT_DIR, CACHE_DIR
-  H3_MODEL_DIR, H3_TURBO_DIR
+  H3_MODEL_DIR, H3_COMFY_DIR, H3_TURBO_DIR, H3_PROFILE
   LTX23_CHECKPOINT, LTX23_UPSCALER, LTX23_GEMMA_DIR
   LTX25_MODEL_ROOT
   TARGET_HEIGHT, TARGET_WIDTH, TARGET_VIDEO_LENGTH, TARGET_FPS
@@ -309,6 +312,11 @@ if [[ "${inference_mode}" == wan21_unified || "${inference_mode}" == wan22_unifi
     uses_fp8_run_script=1
 fi
 h3_task="${H3_TASK:-fl2av}"
+h3_profile="${H3_PROFILE:-}"
+if [[ -z "$h3_profile" ]]; then
+    if [[ "$h3_task" == ref2av ]]; then h3_profile=ref2av_bf16_base; else h3_profile=fl2av_turbo_4step; fi
+fi
+h3_needs_turbo=0
 h3_reference_sources=()
 h3_reference_targets=()
 h3_frame_source=
@@ -316,7 +324,21 @@ h3_first_frame_path=
 h3_last_frame_path=
 if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     [[ -n "${H3_MODEL_DIR:-}" ]] || die "H3_MODEL_DIR is required for MiniMax-H3"
-    [[ "$h3_task" == ref2av || -n "${H3_TURBO_DIR:-}" ]] || die "H3_TURBO_DIR is required for MiniMax-H3"
+    case "$h3_profile" in
+        fl2av_turbo_4step)
+            [[ "$h3_task" == fl2av ]] || die "H3 profile $h3_profile requires task fl2av"
+            h3_needs_turbo=1
+            ;;
+        ref2av_bf16_base)
+            [[ "$h3_task" == ref2av ]] || die "H3 profile $h3_profile requires task ref2av"
+            ;;
+        ref2av_turbo_8step)
+            [[ "$h3_task" == ref2av ]] || die "H3 profile $h3_profile requires task ref2av"
+            h3_needs_turbo=1
+            ;;
+        *) die "unsupported H3 profile: $h3_profile" ;;
+    esac
+    (( h3_needs_turbo == 0 )) || [[ -n "${H3_TURBO_DIR:-}" ]] || die "H3_TURBO_DIR is required for $h3_profile"
     h3_frame_source="${H3_FRAME_SOURCE:-image}"
     if [[ "$h3_task" == ref2av ]]; then
         [[ -n "${H3_COMFY_DIR:-}" ]] || die "H3_COMFY_DIR is required for Ref2AV BF16"
@@ -431,6 +453,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         if [[ "$h3_task" == ref2av ]]; then
             require_dir "$H3_COMFY_DIR"
             for reference in "${h3_reference_sources[@]}"; do require_file "$reference"; done
+            if (( h3_needs_turbo == 1 )); then require_dir "$H3_TURBO_DIR"; fi
         else
             require_dir "${H3_TURBO_DIR:?H3_TURBO_DIR is required}"
         fi
@@ -453,6 +476,9 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
         elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
             if [[ "$h3_task" == ref2av ]]; then
                 require_file "${H3_COMFY_DIR}/diffusion_models/minimax_h3_ref2va_bf16.safetensors"
+                if [[ "$h3_profile" == ref2av_turbo_8step ]]; then
+                    require_file "${H3_TURBO_DIR}/minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors"
+                fi
             else
                 require_file "${H3_TURBO_DIR}/minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
             fi
@@ -624,6 +650,7 @@ elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
     docker_args+=(
         --mount "type=bind,source=${H3_MODEL_DIR},target=${CONTAINER_H3_MODEL},readonly"
         --env "H3_TASK=${h3_task}"
+        --env "H3_PROFILE=${h3_profile}"
         --env "H3_SOURCE_MODE=${h3_source_mode}"
         --env "H3_FRAME_SOURCE=${h3_frame_source}"
         --env "IMAGE_PATH=${h3_first_frame_path}"
@@ -641,7 +668,8 @@ elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
         for i in "${!h3_reference_sources[@]}"; do
             docker_args+=(--mount "type=bind,source=${h3_reference_sources[i]},target=${h3_reference_targets[i]},readonly")
         done
-    else
+    fi
+    if (( h3_needs_turbo == 1 )); then
         docker_args+=(--mount "type=bind,source=${H3_TURBO_DIR},target=${CONTAINER_H3_TURBO},readonly")
     fi
     if [[ "${h3_frame_source}" == host ]]; then
@@ -795,12 +823,14 @@ elif [[ "${is_ltx23_mode}" == 1 ]]; then
     printf 'LTX L2 route:   torch._scaled_mm + Torch SDPA/norm/RoPE/modulate\n'
 elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
     printf 'H3 model:       %s -> %s\n' "${H3_MODEL_DIR}" "${CONTAINER_H3_MODEL}"
+    printf 'H3 profile:     %s\n' "${h3_profile}"
     printf 'H3 source mode: %s\n' "${h3_source_mode}"
     printf 'H3 LightX2V:    /workspace/LightX2V (from image)\n'
     if [[ "$h3_task" == ref2av ]]; then
         printf 'H3 Ref2AV BF16: %s -> /models/minimax_h3_comfy\n' "$H3_COMFY_DIR"
         printf 'H3 prepared cache: %s/h3_ref2av\n' "$CACHE_DIR"
-    else
+    fi
+    if (( h3_needs_turbo == 1 )); then
         printf 'H3 turbo:       %s -> %s\n' "${H3_TURBO_DIR}" "${CONTAINER_H3_TURBO}"
     fi
     printf 'H3 frame source: %s\n' "${h3_frame_source}"
