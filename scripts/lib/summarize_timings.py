@@ -157,20 +157,29 @@ def format_value(metric: str, value: float | None, *, model: str, csv_mode=False
     return f"{value:.6f}" if csv_mode else f"{value:.3f}s"
 
 
-def metric_label(metric: str, *, model: str) -> str:
+def metric_label(metric: str, *, model: str, dit_steps: int | None = None) -> str:
+    if metric == "DiT 4 steps" and dit_steps is not None:
+        return f"DiT {dit_steps} steps"
     if model == "ltx25_c1" and metric == "DiT 4 steps":
         return "DiT 11 steps"
     return metric
 
 
-def write_csv(path: Path, scales, results, *, model: str) -> None:
+def write_csv(
+    path: Path,
+    scales,
+    results,
+    *,
+    model: str,
+    dit_steps: int | None = None,
+) -> None:
     with path.open("w", newline="", encoding="utf-8") as output:
         writer = csv.writer(output)
         writer.writerow(("metric", *(str(scale) for scale in scales), "unit"))
         for metric in METRICS:
             writer.writerow(
                 (
-                    metric_label(metric, model=model),
+                    metric_label(metric, model=model, dit_steps=dit_steps),
                     *(
                         format_value(
                             metric,
@@ -194,6 +203,7 @@ def markdown_table(
     height: int = 768,
     frames: int = 124,
     fps: int = 24,
+    dit_steps: int | None = None,
 ) -> str:
     lines = [
         "| metric | " + " | ".join(str(scale) for scale in scales) + " |",
@@ -205,7 +215,9 @@ def markdown_table(
             for scale in scales
         ]
         lines.append(
-            f"| {metric_label(metric, model=model)} | " + " | ".join(cells) + " |"
+            f"| {metric_label(metric, model=model, dit_steps=dit_steps)} | "
+            + " | ".join(cells)
+            + " |"
         )
     lines.append("")
     if model == "minimax_h3":
@@ -237,7 +249,10 @@ def main() -> int:
     parser.add_argument("--height", type=int, default=768)
     parser.add_argument("--frames", type=int, default=124)
     parser.add_argument("--fps", type=int, default=24)
+    parser.add_argument("--dit-steps", type=int)
     args = parser.parse_args()
+    if args.dit_steps is not None and args.dit_steps < 1:
+        parser.error("--dit-steps must be a positive integer")
 
     scales = SCALES[args.model]
     if any(count not in scales for count in args.counts):
@@ -267,7 +282,13 @@ def main() -> int:
 
     output_csv = args.log_dir / "timings.csv"
     output_md = args.log_dir / "timings.md"
-    write_csv(output_csv, scales, results, model=args.model)
+    write_csv(
+        output_csv,
+        scales,
+        results,
+        model=args.model,
+        dit_steps=args.dit_steps,
+    )
     table = markdown_table(
         scales,
         results,
@@ -276,6 +297,7 @@ def main() -> int:
         height=args.height,
         frames=args.frames,
         fps=args.fps,
+        dit_steps=args.dit_steps,
     )
     output_md.write_text(table, encoding="utf-8")
     print(table, end="")

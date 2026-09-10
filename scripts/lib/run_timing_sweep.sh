@@ -151,14 +151,32 @@ result_dir="${TIMING_RESULT_DIR:-${WAN_RESULT_DIR:-${OUTPUT_DIR:-/disk/ssd/light
 gpu_groups_value="${TIMING_GPU_GROUPS:-${WAN_GPU_GROUPS:-${RUN_DEFAULT_GPU_GROUPS}}}"
 h3_first_frame=
 h3_last_frame=
+h3_ref2av_entry=
 if [[ "${RUN_MODEL_VERSION}" == minimax_h3 && "${RUN_H3_TASK:-fl2av}" == fl2av ]]; then
     # Numbered tasks are fixed workloads. Do not let frame settings inherited
     # from a previous shell silently replace the task's declared keyframes.
     h3_first_frame="${RUN_H3_FIRST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/STRAT_FL2V.png}"
     h3_last_frame="${RUN_H3_LAST_FRAME:-/disk/ssd/lightx2v-runtime/inputs/END_FL2V.png}"
+elif [[ "${RUN_MODEL_VERSION}" == minimax_h3 && "${RUN_H3_TASK:-fl2av}" == ref2av ]]; then
+    case "${H3_PROFILE:-ref2av_bf16_base}" in
+        ref2av_bf16_base)
+            h3_ref2av_entry="${repo_root}/scripts/run_10_minimax_h3_bf16_ref2v.sh"
+            ;;
+        ref2av_turbo_8step)
+            h3_ref2av_entry="${repo_root}/scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh"
+            ;;
+        *)
+            echo "ERROR: unsupported Ref2AV scale profile: ${H3_PROFILE}" >&2
+            exit 2
+            ;;
+    esac
 fi
 
 [[ -x "${model_run}" ]] || { echo "ERROR: launcher is not executable: ${model_run}" >&2; exit 1; }
+[[ -z "${h3_ref2av_entry}" || -x "${h3_ref2av_entry}" ]] || {
+    echo "ERROR: Ref2AV scale entry is not executable: ${h3_ref2av_entry}" >&2
+    exit 1
+}
 [[ -f "${summary_script}" ]] || { echo "ERROR: timing summary not found: ${summary_script}" >&2; exit 1; }
 case "${memory_monitor_enabled}" in
     0 | 1) ;;
@@ -325,9 +343,17 @@ payload = {
     "b1_policy": "2/4 baseline, 8/16 b1" if "${RUN_MODEL_VERSION}" == "wan22" else None,
 }
 if os.environ.get("RUN_MODEL_VERSION") == "minimax_h3" and os.environ.get("RUN_H3_TASK") == "ref2av":
+    h3_profile = os.environ.get("H3_PROFILE", "ref2av_bf16_base")
+    turbo = h3_profile == "ref2av_turbo_8step"
+    sampling = os.environ["H3_STEP_UPDATE"]
+    infer_steps = int(os.environ["H3_INFER_STEPS"])
     payload.update(
-        task="ref2av", weights="minimax_h3_ref2va_bf16.safetensors", lora=False,
-        sampling=os.environ["H3_STEP_UPDATE"], infer_steps=int(os.environ["H3_INFER_STEPS"]),
+        task="ref2av", profile=h3_profile,
+        weights="transformer_ref" if turbo else "minimax_h3_ref2va_bf16.safetensors",
+        lora=turbo,
+        lora_file=("minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors" if turbo else None),
+        sampling=sampling, infer_steps=infer_steps,
+        model_evaluations=(8 if turbo else infer_steps if sampling == "comfy_res_multistep" else infer_steps - 1),
         reference_image_resize_mode=os.environ.get("H3_REFERENCE_IMAGE_RESIZE_MODE", "match"),
         collector_enabled=os.environ.get("LIGHTX2V_H3_RUN_COLLECTOR") == "1",
         prompt_preset=None, prompt_file=(os.environ.get("H3_PROMPT_FILE") or "assets/minimax_h3/rooftop_15s/prompt.txt"),
@@ -393,7 +419,7 @@ for count in "${counts[@]}"; do
     start_memory_monitor "${count}" "${selected}" "${log_path}" "${memory_output_path}"
     set +e
     if [[ "${RUN_MODEL_VERSION}" == minimax_h3 && "${RUN_H3_TASK:-fl2av}" == ref2av ]]; then
-        env "${run_environment[@]}" bash "${repo_root}/scripts/run_10_minimax_h3_bf16_ref2v.sh" \
+        env "${run_environment[@]}" bash "${h3_ref2av_entry}" \
             --image "${image_override}" --gpus "${selected}" --duration 15 \
             --result-dir "${result_dir}/${count}gpu" 2>&1 | tee "${log_path}"
         pipeline_status=("${PIPESTATUS[@]}")
@@ -420,14 +446,19 @@ if [[ "${DRY_RUN:-0}" == 1 ]]; then
     exit 0
 fi
 
-PYTHONDONTWRITEBYTECODE=1 python3 -B "${summary_script}" \
-    --model "${summary_model}" \
-    --log-dir "${result_dir}" \
-    --counts "${selected_counts}" \
-    --width "${RUN_TARGET_WIDTH}" \
-    --height "${RUN_TARGET_HEIGHT}" \
-    --frames "${RUN_TARGET_FRAMES}" \
+summary_args=(
+    --model "${summary_model}"
+    --log-dir "${result_dir}"
+    --counts "${selected_counts}"
+    --width "${RUN_TARGET_WIDTH}"
+    --height "${RUN_TARGET_HEIGHT}"
+    --frames "${RUN_TARGET_FRAMES}"
     --fps "${RUN_TARGET_FPS}"
+)
+if [[ -n "${RUN_DIT_STEPS:-}" ]]; then
+    summary_args+=(--dit-steps "${RUN_DIT_STEPS}")
+fi
+PYTHONDONTWRITEBYTECODE=1 python3 -B "${summary_script}" "${summary_args[@]}"
 
 if [[ "${RUN_MODEL_VERSION}" == minimax_h3 && "${RUN_H3_TASK:-fl2av}" == ref2av ]]; then
     shape_args=()

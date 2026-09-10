@@ -302,6 +302,7 @@ def test_public_help_lists_ref2av_base_scale_and_turbo_entries():
     assert 'scripts/run_10_minimax_h3_bf16_ref2v.sh --image IMAGE' in result.stdout
     assert 'scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh --image IMAGE' in result.stdout
     assert 'scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh --image IMAGE' in result.stdout
+    assert 'scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh --image IMAGE' in result.stdout
 
 
 @pytest.mark.parametrize("mode,steps", [("reference_blend",30), ("training_euler",5), ("comfy_res_multistep",20)])

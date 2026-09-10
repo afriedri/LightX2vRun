@@ -65,6 +65,17 @@ bash scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh \
 
 Turbo profile 会拒绝改变 `training_euler` 或 9 个网格点。`--smoke` 只降低画布，不代表质量验收；首轮正式验收应保留 768P、15 秒和真实参考图。
 
+## 2/4/8/16 卡 Scale
+
+专用入口会依次运行相同的 Ref2AV Turbo 8-step、1344x768、15 秒 workload，自动采集每档日志、显存、shape 和 timing 汇总：
+
+```bash
+bash scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh \
+  --image lightx2v-rocm:hvat-gfx1201-R9600
+```
+
+只验证 16 卡时使用 `--gpu-count 16`。2/4/8 卡使用 Ulysses；16 卡使用 `CP2xU8` UlyssesRing，并要求 16 个 GPU 构成独占的单进程组。可用 `TIMING_GPU_GROUPS` 覆盖默认物理卡组合，结果默认写入 `${RUNTIME_ROOT}/outputs/minimax_h3_ref2av_turbo_8step_768p_15s_scale_<timestamp>/`。
+
 ## Shape 与后续优化
 
 需要收 shape，但不需要先修改 `aiter-tune-gfx1201`。现有 H3 collector 已在动态 LoRA 的实际算子边界记录每层 down/up GEMM 的 `M/K/N/rank`、alpha、scale、strength 和 GPU 时间，同时汇总每步 `dynamic_lora_gpu_ms`。首轮 E2E 后重点检查：
