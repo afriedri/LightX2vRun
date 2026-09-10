@@ -167,12 +167,16 @@ CHECK
         profile_args+=(--output-duration "$output_duration")
         prompt_duration_seconds="$H3_OUTPUT_DURATION"
     fi
-    prepared_model="${runtime_config_dir}/ref2av_model"
-    python3 "${lightx2v_path}/tools/convert/minimax_h3_comfy.py" \
-        --checkpoint /models/minimax_h3_comfy/diffusion_models/minimax_h3_ref2va_bf16.safetensors \
-        --cache-dir /workspace/.cache/h3_ref2av \
-        --base-model-dir "$model_path" --model-output "$prepared_model"
-    model_path="$prepared_model"
+    if [[ "$profile" == ref2av_bf16_base ]]; then
+        prepared_model="${runtime_config_dir}/ref2av_model"
+        python3 "${lightx2v_path}/tools/convert/minimax_h3_comfy.py" \
+            --checkpoint /models/minimax_h3_comfy/diffusion_models/minimax_h3_ref2va_bf16.safetensors \
+            --cache-dir /workspace/.cache/h3_ref2av \
+            --base-model-dir "$model_path" --model-output "$prepared_model"
+        model_path="$prepared_model"
+    fi
+    # ref2av_turbo_8step keeps model_path at the native model directory and
+    # loads its transformer_ref partition directly; no ComfyUI conversion.
     if [[ -n "${H3_INFER_STEPS:-}" ]]; then profile_args+=(--infer-steps "$H3_INFER_STEPS"); fi
     if [[ -n "${H3_STEP_UPDATE:-}" ]]; then profile_args+=(--step-update "$H3_STEP_UPDATE"); fi
     if [[ -n "${H3_REFERENCE_IMAGE_RESIZE_MODE:-}" ]]; then profile_args+=(--reference-image-resize-mode "$H3_REFERENCE_IMAGE_RESIZE_MODE"); fi

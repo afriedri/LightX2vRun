@@ -123,7 +123,7 @@ def test_ref_turbo_docker_launcher_mounts_base_and_8step_lora(tmp_path):
         [
             'bash', str(script), '--image', 'example:h3-turbo',
             '--reference-image', str(tmp_path / 'reference.png'),
-            '--comfy-dir', str(tmp_path / 'comfy'),
+            '--model-dir', str(tmp_path / 'model'),
             '--turbo-dir', str(tmp_path / 'turbo'),
             '--result-dir', str(tmp_path / 'out'), '--duration', '15', '--gpus', '0,1,2,3',
         ],
@@ -137,8 +137,10 @@ def test_ref_turbo_docker_launcher_mounts_base_and_8step_lora(tmp_path):
     assert 'H3_TASK=ref2av' in args
     assert 'H3_PROFILE=ref2av_turbo_8step' in args
     assert 'H3_STEP_UPDATE=training_euler' in args and 'H3_INFER_STEPS=9' in args
-    assert f'type=bind,source={tmp_path}/comfy,target=/models/minimax_h3_comfy,readonly' in args
+    assert f'type=bind,source={tmp_path}/model,target=/models/minimax_h3,readonly' in args
     assert f'type=bind,source={tmp_path}/turbo,target=/models/minimax_h3_turbo,readonly' in args
+    assert not any('target=/models/minimax_h3_comfy' in arg for arg in args)
+    assert f'type=bind,source={tmp_path}/cache/h3_ref2av,target=/workspace/.cache/h3_ref2av' not in args
 
 
 def test_ref_artifacts_do_not_require_turbo_or_last_frame(tmp_path):

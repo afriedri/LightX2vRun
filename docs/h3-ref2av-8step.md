@@ -1,13 +1,13 @@
 # H3 Ref2AV Turbo 8-step LoRA 接入
 
-本入口在已经跑通的 Ref2AV 完整 BF16 模型上动态加载 8-step LoRA，不合并、不量化基础权重，也不改变 Ref2AV 的参考图 packing、长视频、SP、Sage、Conv3D 和 VAE 路径。FL2AV 4-step 与 Ref2AV 原始 BF16 两个既有入口保持原行为。
+本入口在 `H3_MODEL_DIR` 的原生 `transformer_ref/` 分区上动态加载 8-step LoRA，不合并、不量化基础权重，**不经 ComfyUI 权重转换**，也不改变 Ref2AV 的参考图 packing、长视频、SP、Sage、Conv3D 和 VAE 路径。FL2AV 4-step 与 Ref2AV 原始 BF16（Comfy 权重 + 转换）两个既有入口保持原行为。
 
 ## 冻结合约
 
 | 项目 | Ref2AV Turbo 8-step |
 |---|---|
 | profile | `ref2av_turbo_8step` |
-| base | `diffusion_models/minimax_h3_ref2va_bf16.safetensors` |
+| base | `H3_MODEL_DIR/transformer_ref/`（官方 Diffusers 组件，直接加载） |
 | LoRA | `minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors` |
 | LoRA 应用 | dynamic，`strength=1.0`，`alpha=8` |
 | sampler | `training_euler` |
@@ -23,14 +23,16 @@
 建议的宿主权重布局：
 
 ```text
-/disk/ssd1/difumodels/MiniMax-H3-ComfyUI/
-└── diffusion_models/minimax_h3_ref2va_bf16.safetensors
+/disk/ssd1/difumodels/MiniMax-h3/
+├── transformer_ref/   # 官方 Ref2VA 组件：config.json + 权重分片
+├── transformer/       # fl2av 任务使用（已存在）
+├── text_encoder/ tokenizer/ processor/ vae/ audio_vae/
 
 /disk/ssd1/difumodels/Minimax-h3-Turbo/
 └── minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors
 ```
 
-LoRA 可从 [Hugging Face](https://huggingface.co/lightx2v/Minimax-h3-Turbo/blob/main/minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors) 或 [ModelScope](https://modelscope.cn/models/lightx2v/Minimax-h3-Turbo) 获取。实际目录不同时使用 `--turbo-dir`。
+`transformer_ref/` 从官方 MiniMax-H3 发布结构按组件下载（与 upstream README 的目录约定一致），不是 ComfyUI 单文件权重；本入口不做任何转换。LoRA 可从 [Hugging Face](https://huggingface.co/lightx2v/Minimax-h3-Turbo/blob/main/minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors) 或 [ModelScope](https://modelscope.cn/models/lightx2v/Minimax-h3-Turbo) 获取。实际目录不同时使用 `--model-dir` / `--turbo-dir`。
 
 ## 首次 E2E
 

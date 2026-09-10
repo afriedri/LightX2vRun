@@ -341,7 +341,9 @@ if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     (( h3_needs_turbo == 0 )) || [[ -n "${H3_TURBO_DIR:-}" ]] || die "H3_TURBO_DIR is required for $h3_profile"
     h3_frame_source="${H3_FRAME_SOURCE:-image}"
     if [[ "$h3_task" == ref2av ]]; then
-        [[ -n "${H3_COMFY_DIR:-}" ]] || die "H3_COMFY_DIR is required for Ref2AV BF16"
+        if [[ "$h3_profile" == ref2av_bf16_base ]]; then
+            [[ -n "${H3_COMFY_DIR:-}" ]] || die "H3_COMFY_DIR is required for Ref2AV BF16 base"
+        fi
         [[ -n "${H3_REFERENCE_IMAGES:-}" ]] || die "H3_REFERENCE_IMAGES is required for Ref2AV"
         mapfile -t h3_reference_sources <<<"$H3_REFERENCE_IMAGES"
         (( ${#h3_reference_sources[@]} >= 1 && ${#h3_reference_sources[@]} <= 9 )) || die "Ref2AV accepts 1 to 9 reference images"
@@ -451,7 +453,11 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
         require_dir "${H3_MODEL_DIR:?H3_MODEL_DIR is required}"
         if [[ "$h3_task" == ref2av ]]; then
-            require_dir "$H3_COMFY_DIR"
+            if [[ "$h3_profile" == ref2av_bf16_base ]]; then
+                require_dir "$H3_COMFY_DIR"
+            else
+                require_dir "${H3_MODEL_DIR%/}/transformer_ref"
+            fi
             for reference in "${h3_reference_sources[@]}"; do require_file "$reference"; done
             if (( h3_needs_turbo == 1 )); then require_dir "$H3_TURBO_DIR"; fi
         else
@@ -475,9 +481,11 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
             : # Strict LTX checkpoint/Gemma contents are validated by preflight.
         elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
             if [[ "$h3_task" == ref2av ]]; then
-                require_file "${H3_COMFY_DIR}/diffusion_models/minimax_h3_ref2va_bf16.safetensors"
                 if [[ "$h3_profile" == ref2av_turbo_8step ]]; then
+                    require_file "${H3_MODEL_DIR%/}/transformer_ref/config.json"
                     require_file "${H3_TURBO_DIR}/minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors"
+                else
+                    require_file "${H3_COMFY_DIR}/diffusion_models/minimax_h3_ref2va_bf16.safetensors"
                 fi
             else
                 require_file "${H3_TURBO_DIR}/minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors"
@@ -658,13 +666,17 @@ elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
         --env PYTORCH_TUNABLEOP_ENABLED=0
     )
     if [[ "$h3_task" == ref2av ]]; then
-        if [[ "${DRY_RUN:-0}" != 1 ]]; then mkdir -p "${CACHE_DIR}/h3_ref2av"; fi
         docker_args+=(
-            --mount "type=bind,source=${H3_COMFY_DIR},target=/models/minimax_h3_comfy,readonly"
-            --mount "type=bind,source=${CACHE_DIR}/h3_ref2av,target=/workspace/.cache/h3_ref2av"
             --env LIGHTX2V_VAE_CONV3D_BACKEND=Aiter_CK_Conv3d_v1
             --env LIGHTX2V_CK_CONV3D_PROFILE_DIR=/workspace/LightX2V/save_results/ck_conv3d_routes
         )
+        if [[ "$h3_profile" == ref2av_bf16_base ]]; then
+            if [[ "${DRY_RUN:-0}" != 1 ]]; then mkdir -p "${CACHE_DIR}/h3_ref2av"; fi
+            docker_args+=(
+                --mount "type=bind,source=${H3_COMFY_DIR},target=/models/minimax_h3_comfy,readonly"
+                --mount "type=bind,source=${CACHE_DIR}/h3_ref2av,target=/workspace/.cache/h3_ref2av"
+            )
+        fi
         for i in "${!h3_reference_sources[@]}"; do
             docker_args+=(--mount "type=bind,source=${h3_reference_sources[i]},target=${h3_reference_targets[i]},readonly")
         done
