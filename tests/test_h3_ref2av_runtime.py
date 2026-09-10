@@ -289,7 +289,7 @@ def test_dedicated_ref_turbo_defaults_to_exact_8step_contract(tmp_path):
     assert values['TARGET_VIDEO_LENGTH'] == '362' and values['H3_OUTPUT_DURATION'] == '15'
     assert values['GPU_DEVICES'] == '0,1,2,3'
     assert values['LIGHTX2V_H3_RUN_COLLECTOR'] == '1'
-    assert values['H3_TURBO_DIR'].endswith('/Minimax-h3-Turbo')
+    assert values['H3_TURBO_DIR'] == '/disk/ssd/difumodels-Dis/Minimax-h3-Turbo'
 
 
 def test_public_help_lists_ref2av_base_scale_and_turbo_entries():

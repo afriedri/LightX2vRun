@@ -28,7 +28,7 @@
 ├── transformer/       # fl2av 任务使用（已存在）
 ├── text_encoder/ tokenizer/ processor/ vae/ audio_vae/
 
-/disk/ssd1/difumodels/Minimax-h3-Turbo/
+/disk/ssd/difumodels-Dis/Minimax-h3-Turbo/
 └── minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors
 ```
 

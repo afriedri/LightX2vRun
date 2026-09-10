@@ -5,7 +5,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 run_image="${IMAGE:-lightx2v-rocm:hvat-gfx1201-R9600}"
 export H3_MODEL_DIR="${H3_MODEL_DIR:-/disk/ssd1/difumodels/MiniMax-h3}"
-export H3_TURBO_DIR="${H3_TURBO_DIR:-/disk/ssd1/difumodels/Minimax-h3-Turbo}"
+export H3_TURBO_DIR="${H3_TURBO_DIR:-/disk/ssd/difumodels-Dis/Minimax-h3-Turbo}"
 export RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd1/lightx2v-runtime}"
 export GPU_DEVICES="${GPU_DEVICES:-0,1,2,3}"
 export H3_PROFILE=ref2av_turbo_8step
