@@ -23,4 +23,4 @@ export IMAGE="$image" RUN_H3_TASK=ref2av
 export LIGHTX2V_VAE_CONV3D_BACKEND="${LIGHTX2V_VAE_CONV3D_BACKEND:-Aiter_CK_Conv3d_v1}"
 export LIGHTX2V_CK_CONV3D_PROFILE_DIR="${LIGHTX2V_CK_CONV3D_PROFILE_DIR:-/workspace/LightX2V/save_results/ck_conv3d_routes}"
 [[ -n "$output" ]] && export RESULT_DIR="$output"
-exec bash "$run_root/scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh" "${args[@]}"
+exec bash "$run_root/scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh" --image "$image" "${args[@]}"
