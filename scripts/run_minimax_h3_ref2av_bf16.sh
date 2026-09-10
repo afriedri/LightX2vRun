@@ -21,12 +21,12 @@ usage() {
 Usage: bash scripts/run_minimax_h3_ref2av_bf16.sh \
   --image IMAGE --reference-image FILE --prompt-file FILE [options]
 
-Runs in the image using the current mounted Run checkout. The image must include
-LightX2V's tools/convert/minimax_h3_comfy.py. First use prepares/caches native BF16
-weights (about 66.3 GB additional disk); subsequent runs reuse the cache.
+Runs in the image using the current mounted Run checkout. The BF16 base profile
+converts and caches the Comfy checkpoint. The Turbo profile loads the native
+transformer_ref/ partition directly and does not use Comfy weights or cache.
 
   --model-dir DIR       Existing complete native H3 directory for Qwen/tokenizer/VAEs
-  --comfy-dir DIR       ComfyUI root with diffusion_models/
+  --comfy-dir DIR       ComfyUI root with diffusion_models/ (BF16 base only)
   --turbo-dir DIR       Turbo LoRA root (required by ref2av_turbo_8step)
   --reference-image FILE  Repeat for 1-9 images, in prompt reference order
   --prompt-file FILE    Prompt with reference descriptions; PROMPT overrides file
@@ -39,8 +39,8 @@ weights (about 66.3 GB additional disk); subsequent runs reuse the cache.
   --collect            Enable existing H3 runtime collector
   --help, -h           Show help
 
-CACHE_DIR selects the persistent host cache. DRY_RUN=1 prints Docker arguments.
-The original native Qwen/VAEs are reused; ComfyUI Qwen/VAEs are not selected here.
+CACHE_DIR selects the BF16 base profile's persistent host cache. DRY_RUN=1 prints
+Docker arguments. Both profiles reuse the original native Qwen and VAEs.
 EOF
 }
 while (( $# )); do
@@ -85,14 +85,21 @@ if [[ -z "$prompt" && -n "$prompt_file" ]]; then
 fi
 [[ -n "$prompt" ]] || { echo 'provide --prompt-file or PROMPT for your references' >&2; exit 2; }
 [[ "$model_dir" == /* ]] || model_dir="${PWD}/${model_dir}"
-[[ "$comfy_dir" == /* ]] || comfy_dir="${PWD}/${comfy_dir}"
 [[ "$turbo_dir" == /* ]] || turbo_dir="${PWD}/${turbo_dir}"
 case "$profile" in ref2av_bf16_base|ref2av_turbo_8step) ;; *) echo "unsupported Ref2AV profile: $profile" >&2; exit 2 ;; esac
+if [[ "$profile" == ref2av_bf16_base ]]; then
+    [[ "$comfy_dir" == /* ]] || comfy_dir="${PWD}/${comfy_dir}"
+fi
 result_dir="${result_dir:-${OUTPUT_DIR:-/disk/ssd1/lightx2v-runtime/outputs}/minimax_h3_${profile}_$(date +%Y%m%d_%H%M%S)}"
 [[ "$result_dir" == /* ]] || result_dir="${PWD}/${result_dir}"
 export RUNTIME_ROOT="${RUNTIME_ROOT:-/disk/ssd1/lightx2v-runtime}"
 export IMAGE="$image" LIGHTX2V_H3_EXPLICIT_IMAGE=1 H3_TASK=ref2av H3_PROFILE="$profile"
-export H3_MODEL_DIR="$model_dir" H3_COMFY_DIR="$comfy_dir" H3_TURBO_DIR="$turbo_dir" GPU_DEVICES="$gpus"
+export H3_MODEL_DIR="$model_dir" H3_TURBO_DIR="$turbo_dir" GPU_DEVICES="$gpus"
+if [[ "$profile" == ref2av_bf16_base ]]; then
+    export H3_COMFY_DIR="$comfy_dir"
+else
+    unset H3_COMFY_DIR
+fi
 export H3_REFERENCE_IMAGES="$(printf '%s\n' "${references[@]}")"
 export PROMPT="$prompt" H3_SMOKE="$smoke" H3_PREFLIGHT_ONLY="$preflight"
 export LIGHTX2V_H3_RUN_COLLECTOR="$collect"

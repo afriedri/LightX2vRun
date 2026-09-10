@@ -141,6 +141,48 @@ def test_ref_turbo_docker_launcher_mounts_base_and_8step_lora(tmp_path):
     assert f'type=bind,source={tmp_path}/turbo,target=/models/minimax_h3_turbo,readonly' in args
     assert not any('target=/models/minimax_h3_comfy' in arg for arg in args)
     assert f'type=bind,source={tmp_path}/cache/h3_ref2av,target=/workspace/.cache/h3_ref2av' not in args
+    assert 'H3 Ref2AV base:' in result.stdout
+    assert 'H3 Ref2AV BF16:' not in result.stdout
+    assert 'H3 prepared cache:' not in result.stdout
+
+
+def test_ref_turbo_modelrun_does_not_require_comfy_environment(tmp_path):
+    import shlex
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key != 'H3_COMFY_DIR'
+    }
+    env.update({
+        'DRY_RUN': '1',
+        'IMAGE': 'example:h3-turbo',
+        'LIGHTX2V_H3_EXPLICIT_IMAGE': '1',
+        'H3_TASK': 'ref2av',
+        'H3_PROFILE': 'ref2av_turbo_8step',
+        'H3_MODEL_DIR': str(tmp_path / 'model'),
+        'H3_TURBO_DIR': str(tmp_path / 'turbo'),
+        'H3_REFERENCE_IMAGES': str(tmp_path / 'reference.png'),
+        'PROMPT': 'reference composition',
+        'GPU_DEVICES': '0',
+        'INPUT_DIR': str(tmp_path / 'inputs'),
+        'OUTPUT_DIR': str(tmp_path / 'outputs'),
+        'CACHE_DIR': str(tmp_path / 'cache'),
+    })
+    result = subprocess.run(
+        ['bash', str(ROOT / 'lightx2vModelrun'), '--run-minimax-h3-gfx1201'],
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    command = next(line for line in result.stdout.splitlines() if line.startswith('DRY RUN: docker '))
+    args = shlex.split(command.removeprefix('DRY RUN: '))
+    assert not any('minimax_h3_comfy' in arg for arg in args)
+    assert 'H3 Ref2AV base:' in result.stdout
+    assert 'H3 Ref2AV BF16:' not in result.stdout
+    assert 'H3 prepared cache:' not in result.stdout
 
 
 def test_ref_artifacts_do_not_require_turbo_or_last_frame(tmp_path):

@@ -838,9 +838,12 @@ elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
     printf 'H3 profile:     %s\n' "${h3_profile}"
     printf 'H3 source mode: %s\n' "${h3_source_mode}"
     printf 'H3 LightX2V:    /workspace/LightX2V (from image)\n'
-    if [[ "$h3_task" == ref2av ]]; then
+    if [[ "$h3_profile" == ref2av_bf16_base ]]; then
         printf 'H3 Ref2AV BF16: %s -> /models/minimax_h3_comfy\n' "$H3_COMFY_DIR"
         printf 'H3 prepared cache: %s/h3_ref2av\n' "$CACHE_DIR"
+    elif [[ "$h3_profile" == ref2av_turbo_8step ]]; then
+        printf 'H3 Ref2AV base: %s/transformer_ref -> %s/transformer_ref (native)\n' \
+            "${H3_MODEL_DIR%/}" "${CONTAINER_H3_MODEL}"
     fi
     if (( h3_needs_turbo == 1 )); then
         printf 'H3 turbo:       %s -> %s\n' "${H3_TURBO_DIR}" "${CONTAINER_H3_TURBO}"
