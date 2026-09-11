@@ -540,4 +540,3 @@ Also retain the image-inspection output, `/app/versions.txt`, model SHA256 manif
 - [768P/15-second memory and sampling review](h3-ref2av-768p-review.md)
 - [Full BF16 and Turbo scale workflow](h3-ref2av-scale.md)
 - [Turbo 8-step LoRA integration](h3-ref2av-8step.md)
-- [September 9 upstream integration review](rebase-review-20260909.md)
