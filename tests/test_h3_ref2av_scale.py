@@ -13,8 +13,10 @@ BASE_ENTRY = ROOT / "scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh"
 TURBO_ENTRY = ROOT / "scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh"
 SUMMARY = ROOT / "scripts/lib/summarize_timings.py"
 DEFAULT_TURBO_IMAGE = "compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-260910-H3-Ref2V-Turbo8WithFull-V4"
-MATERIAL_NAME = "storeroom_courtyard_9ref_15s"
-EXPECTED_REFERENCE_NAMES = [
+DEFAULT_MATERIAL_NAME = "rooftop_2ref_15s"
+DEFAULT_REFERENCE_NAMES = ["Image Gen-1.png", "RYAN-2.png"]
+NINE_REFERENCE_MATERIAL_NAME = "storeroom_courtyard_9ref_15s"
+NINE_REFERENCE_NAMES = [
     "wang_hao_front.png",
     "wang_hao_full.png",
     "chen_fan_front.png",
@@ -27,7 +29,15 @@ EXPECTED_REFERENCE_NAMES = [
 ]
 
 
-def run_sweep(tmp_path, counts="2,4,8,16", fail=False, entry=BASE_ENTRY, image="test:h3-scale"):
+def run_sweep(
+    tmp_path,
+    counts="2,4,8,16",
+    fail=False,
+    entry=BASE_ENTRY,
+    image="test:h3-scale",
+    prompt_profile=None,
+    prompt_profile_option="--prompt-profile",
+):
     fake = tmp_path / "model-run"
     fake.write_text(f"#!/usr/bin/env bash\nexec {shlex.quote(sys.executable)} - <<'PYTHON'\n" +
         "import json,os,pathlib\n" +
@@ -38,24 +48,28 @@ def run_sweep(tmp_path, counts="2,4,8,16", fail=False, entry=BASE_ENTRY, image="
     env = {**os.environ, "MODEL_RUN": str(fake), "DRY_RUN": "1", "MEMORY_MONITOR": "0",
            "TIMING_RESULT_DIR": str(tmp_path / "sweep"), "H3_INFER_STEPS": "3", "PROMPT": "",
            "H3_PROMPT_FILE": "", "H3_REFERENCE_IMAGE": "", "H3_REFERENCE_IMAGES": "",
-           "H3_REF2AV_MATERIAL_CONFIG": "", "H3_STEP_UPDATE": "comfy_res_multistep",
+           "H3_PROMPT_PROFILE": "", "H3_REF2AV_MATERIAL_CONFIG": "",
+           "H3_STEP_UPDATE": "comfy_res_multistep",
            "H3_TASK": "fl2av", "H3_SMOKE": "1", "H3_OUTPUT_DURATION": "5"}
     args = ["bash", str(entry), "--counts", counts]
     if image is not None:
         args.extend(("--image", image))
+    if prompt_profile is not None:
+        args.extend((prompt_profile_option, prompt_profile))
     result = subprocess.run(args, capture_output=True, text=True, env=env)
     return result, tmp_path / "sweep"
 
 
-def test_scale_reuses_materials_and_isolates_each_card_count(tmp_path):
+def test_scale_defaults_to_two_references_and_isolates_each_card_count(tmp_path):
     result, output = run_sweep(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     manifest = json.loads((output / "run_manifest.json").read_text())
     assert manifest["gpu_counts"] == [2, 4, 8, 16]
     assert manifest["native_frames"] == 362 and manifest["output_frames"] == 360
     assert manifest["infer_steps"] == 3 and manifest["lora"] is False
-    assert manifest["material_name"] == MATERIAL_NAME
-    assert [Path(path).name for path in manifest["reference_images"]] == EXPECTED_REFERENCE_NAMES
+    assert manifest["prompt_profile"] == DEFAULT_MATERIAL_NAME
+    assert manifest["material_name"] == DEFAULT_MATERIAL_NAME
+    assert [Path(path).name for path in manifest["reference_images"]] == DEFAULT_REFERENCE_NAMES
     assert all(Path(path).is_file() for path in manifest["reference_images"])
     assert Path(manifest["prompt_file"]).is_file()
     refs = prompt = None
@@ -72,12 +86,12 @@ def test_scale_reuses_materials_and_isolates_each_card_count(tmp_path):
         assert env["LIGHTX2V_CK_CONV3D_PROFILE_DIR"] == "/workspace/LightX2V/save_results/ck_conv3d_routes"
         assert env["H3_EVIDENCE_DIR"] == "/workspace/LightX2V/save_results"
         assert env["SAVE_RESULT_PATH"].endswith("/minimax_h3_ref2av.mp4")
-        assert [Path(path).name for path in env["H3_REFERENCE_IMAGES"].splitlines()] == EXPECTED_REFERENCE_NAMES
+        assert [Path(path).name for path in env["H3_REFERENCE_IMAGES"].splitlines()] == DEFAULT_REFERENCE_NAMES
         if refs is not None:
             assert refs == env["H3_REFERENCE_IMAGES"] and prompt == env["PROMPT"]
         refs, prompt = env["H3_REFERENCE_IMAGES"], env["PROMPT"]
-        assert "[镜头 5]" in prompt and "<Picture 1>" in prompt and "<Picture 9>" in prompt
-        assert "<Audio" not in prompt and "@音频" not in prompt
+        assert "[Shot 6]" in prompt and "<Picture 1>" in prompt and "<Picture 2>" in prompt
+        assert "<Picture 9>" not in prompt and "<Audio" not in prompt
         assert (output / f"{count}gpu.log").is_file()
 
 
@@ -113,9 +127,39 @@ def test_turbo_8step_scale_covers_cp2xu8_sp16_and_preserves_profile(tmp_path):
         assert env["H3_TURBO_DIR"] == "/disk/ssd/difumodels-Dis/Minimax-h3-Turbo"
         assert "H3_COMFY_DIR" not in env
         assert len(env["GPU_DEVICES"].split(",")) == count
-        assert env["H3_REF2AV_MATERIAL_NAME"] == MATERIAL_NAME
-        assert [Path(path).name for path in env["H3_REFERENCE_IMAGES"].splitlines()] == EXPECTED_REFERENCE_NAMES
+        assert env["H3_PROMPT_PROFILE"] == DEFAULT_MATERIAL_NAME
+        assert env["H3_REF2AV_MATERIAL_NAME"] == DEFAULT_MATERIAL_NAME
+        assert [Path(path).name for path in env["H3_REFERENCE_IMAGES"].splitlines()] == DEFAULT_REFERENCE_NAMES
     assert "MiniMax-H3 topology: SP2/SP4/SP8=Ulysses, SP16=CP2xU8" in result.stdout
+
+
+@pytest.mark.parametrize("entry", [BASE_ENTRY, TURBO_ENTRY])
+@pytest.mark.parametrize("option", ["--prompt-profile", "--prompts-profile"])
+def test_scale_selects_nine_reference_prompt_profile(tmp_path, entry, option):
+    result, output = run_sweep(
+        tmp_path,
+        counts="2",
+        entry=entry,
+        prompt_profile=NINE_REFERENCE_MATERIAL_NAME,
+        prompt_profile_option=option,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    manifest = json.loads((output / "run_manifest.json").read_text())
+    assert manifest["prompt_profile"] == NINE_REFERENCE_MATERIAL_NAME
+    assert manifest["material_name"] == NINE_REFERENCE_MATERIAL_NAME
+    assert [Path(path).name for path in manifest["reference_images"]] == NINE_REFERENCE_NAMES
+    env = json.loads((output / "2gpu/captured.json").read_text())
+    assert env["H3_PROMPT_PROFILE"] == NINE_REFERENCE_MATERIAL_NAME
+    assert [Path(path).name for path in env["H3_REFERENCE_IMAGES"].splitlines()] == NINE_REFERENCE_NAMES
+    assert "[镜头 5]" in env["PROMPT"] and "<Picture 9>" in env["PROMPT"]
+    assert "@音频" not in env["PROMPT"]
+
+
+def test_scale_rejects_unknown_prompt_profile(tmp_path):
+    result, output = run_sweep(tmp_path, counts="2", prompt_profile="missing")
+    assert result.returncode == 2
+    assert "unsupported --prompt-profile: missing" in result.stderr
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("counts", ["2", "4", "8", "16"])

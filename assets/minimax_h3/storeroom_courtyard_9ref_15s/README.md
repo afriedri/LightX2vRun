@@ -16,4 +16,4 @@ Source: user-provided `9.zip`. The PNG payloads and original prompt bytes are pr
 
 `prompt.original.txt` is the byte-preserved source prompt. `prompt.txt` is the runtime version: image mentions are mapped to ordered `<Picture N>` references, the unavailable external audio reference is removed, broken line wraps and the shot-4 label are repaired, and the source scene/dialogue/quality constraints are retained.
 
-The material configuration is `configs/minimax_h3/ref2av_storeroom_courtyard_9ref_15s.sh`. Both numbered Ref2AV scale entries load it by default; `H3_REF2AV_MATERIAL_CONFIG`, `H3_PROMPT_FILE`, and `H3_REFERENCE_IMAGES` remain available as overrides.
+The material configuration is `configs/minimax_h3/ref2av_storeroom_courtyard_9ref_15s.sh`. Both numbered Ref2AV scale entries select it with `--prompt-profile storeroom_courtyard_9ref_15s`; without that option they retain the original two-reference rooftop profile.

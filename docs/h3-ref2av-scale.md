@@ -1,12 +1,29 @@
 # H3 Ref2AV：BF16 与 Turbo 8-step scale（2026-09-11）
 
-用户反馈两张 32 GiB 卡初步成功。本轮复用该路径扩展 scale；4/8/16 卡 GPU 出片、性能与 CP2 Sage 数值仍待实测。BF16 权重保持完整原始 `minimax_h3_ref2va_bf16.safetensors`、无 LoRA，Turbo 链路使用固定 8-step LoRA 合约。两条 scale 默认统一使用 `storeroom_courtyard_9ref_15s` 九参考图配置、768P / 24 FPS / 15 秒；BF16 默认 Comfy res_multistep 20 次计算，Turbo 为 8 次模型计算。
+用户反馈两张 32 GiB 卡初步成功。本轮复用该路径扩展 scale；4/8/16 卡 GPU 出片、性能与 CP2 Sage 数值仍待实测。BF16 权重保持完整原始 `minimax_h3_ref2va_bf16.safetensors`、无 LoRA，Turbo 链路使用固定 8-step LoRA 合约。两条 scale 默认保持 `rooftop_2ref_15s` 双参考图配置；通过 `--prompt-profile` 显式选择 `storeroom_courtyard_9ref_15s` 才使用九图。输出均为 768P / 24 FPS / 15 秒；BF16 默认 Comfy res_multistep 20 次计算，Turbo 为 8 次模型计算。
 
 ## 九参考图素材配置
 
-默认配置为 `configs/minimax_h3/ref2av_storeroom_courtyard_9ref_15s.sh`，素材位于 `assets/minimax_h3/storeroom_courtyard_9ref_15s/`。配置按 `<Picture 1>` 到 `<Picture 9>` 的 prompt 顺序导出九条绝对路径，BF16 的 `run_11` 和 Turbo 的 `run_13` 在进入共享 timing sweep 前加载同一份配置，因此各卡数以及两条 profile 使用完全相同的 prompt 和图片顺序。
+九图配置为 `configs/minimax_h3/ref2av_storeroom_courtyard_9ref_15s.sh`，素材位于 `assets/minimax_h3/storeroom_courtyard_9ref_15s/`。配置按 `<Picture 1>` 到 `<Picture 9>` 的 prompt 顺序导出九条绝对路径。BF16 的 `run_11` 和 Turbo 的 `run_13` 都通过共享参数选择同一配置：
 
-需要切换素材时可设置 `H3_REF2AV_MATERIAL_CONFIG=/absolute/path/to/materials.sh`；也可直接用 `H3_PROMPT_FILE` 和换行分隔的 `H3_REFERENCE_IMAGES` 覆盖配置默认值。旧的 `H3_REFERENCE_IMAGE` 单图覆盖继续兼容。
+```bash
+--prompt-profile storeroom_courtyard_9ref_15s
+```
+
+BF16 与 Turbo 九图 scale 示例：
+
+```bash
+H3_INFER_STEPS=3 bash scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh \
+  --image YOUR_REBUILT_IMAGE \
+  --prompt-profile storeroom_courtyard_9ref_15s \
+  --counts 2,4,8,16
+
+bash scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh \
+  --prompt-profile storeroom_courtyard_9ref_15s \
+  --counts 2,4,8,16
+```
+
+不传 `--prompt-profile` 时加载 `configs/minimax_h3/ref2av_rooftop_2ref_15s.sh`，继续使用原双图屋顶素材。兼容别名 `--prompts-profile`。所选 profile 会写入 `run_manifest.json` 的 `prompt_profile`、`material_name`、`material_config`、`prompt_file` 和 `reference_images` 字段。
 
 ## 入口与采集
 

@@ -5,7 +5,7 @@ usage() {
     cat <<EOF
 Usage:
   bash scripts/${RUN_ENTRY_NAME} [GPU_COUNT]
-  bash scripts/${RUN_ENTRY_NAME} [--gpu-count GPU_COUNT | --counts LIST] [--image IMAGE]
+  bash scripts/${RUN_ENTRY_NAME} [--gpu-count GPU_COUNT | --counts LIST] [--image IMAGE] [--prompt-profile PROFILE]
 
 Task: ${RUN_TASK_LABEL}
 Default GPU counts: ${RUN_DEFAULT_COUNTS}
@@ -23,9 +23,9 @@ Overrides:
   WAN_GPU_GROUPS / WAN_RUN_TAG / WAN_RESULT_DIR remain supported aliases.
   MODEL_RUN            Host container launcher.
   H3_INFER_STEPS       Ref2V sampling count (3 for a full-size pipeline check).
-  H3_REF2AV_MATERIAL_CONFIG  Ref2AV shell config loaded by the numbered scale entry.
-  H3_PROMPT_FILE / H3_REFERENCE_IMAGES  Ref2AV prompt and ordered newline-separated image overrides.
-  H3_REFERENCE_IMAGE                   Backward-compatible single-image override.
+  --prompt-profile PROFILE   Ref2AV prompt/images: rooftop_2ref_15s (default) or
+                             storeroom_courtyard_9ref_15s.
+  --prompts-profile PROFILE  Alias for --prompt-profile.
   MEMORY_MONITOR       1 (default) enables host RAM/rank RSS/PSS/GPU VRAM sampling; 0 disables it.
   MEMORY_MONITOR_INTERVAL        JSONL sampling interval in seconds (default: 2).
   MEMORY_MONITOR_PRINT_INTERVAL  Terminal heartbeat interval in seconds (default: 30).
@@ -74,6 +74,8 @@ esac
 
 selected_counts="${WAN_GPU_COUNT:-${RUN_DEFAULT_COUNTS}}"
 image_override=
+prompt_profile=rooftop_2ref_15s
+prompt_profile_explicit=0
 while (( $# > 0 )); do
     case "$1" in
         --gpu-count)
@@ -101,6 +103,17 @@ while (( $# > 0 )); do
             ;;
         --image=*)
             image_override="${1#--image=}"
+            shift
+            ;;
+        --prompt-profile|--prompts-profile)
+            (( $# >= 2 )) || { echo "ERROR: $1 requires a value" >&2; exit 2; }
+            prompt_profile="$2"
+            prompt_profile_explicit=1
+            shift 2
+            ;;
+        --prompt-profile=*|--prompts-profile=*)
+            prompt_profile="${1#*=}"
+            prompt_profile_explicit=1
             shift
             ;;
         -h | --help)
@@ -138,6 +151,28 @@ fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd)"
+if (( prompt_profile_explicit == 1 )) && \
+   [[ "${RUN_MODEL_VERSION}" != minimax_h3 || "${RUN_H3_TASK:-fl2av}" != ref2av ]]; then
+    echo "ERROR: --prompt-profile applies only to MiniMax-H3 Ref2AV scale entries" >&2
+    exit 2
+fi
+if [[ "${RUN_MODEL_VERSION}" == minimax_h3 && "${RUN_H3_TASK:-fl2av}" == ref2av ]]; then
+    case "$prompt_profile" in
+        rooftop_2ref_15s|storeroom_courtyard_9ref_15s) ;;
+        *)
+            echo "ERROR: unsupported --prompt-profile: $prompt_profile" >&2
+            exit 2
+            ;;
+    esac
+    export H3_PROMPT_PROFILE="$prompt_profile"
+    export H3_REF2AV_MATERIAL_CONFIG="${repo_root}/configs/minimax_h3/ref2av_${prompt_profile}.sh"
+    [[ -f "$H3_REF2AV_MATERIAL_CONFIG" ]] || {
+        echo "ERROR: Ref2AV material config not found: $H3_REF2AV_MATERIAL_CONFIG" >&2
+        exit 2
+    }
+    # shellcheck source=/dev/null
+    source "$H3_REF2AV_MATERIAL_CONFIG"
+fi
 model_run="${MODEL_RUN:-${repo_root}/lightx2vModelrun}"
 summary_script="${TIMING_SUMMARY_SCRIPT:-${WAN_TIMING_SUMMARY_SCRIPT:-${script_dir}/summarize_timings.py}}"
 memory_monitor_script="${MEMORY_MONITOR_SCRIPT:-${script_dir}/monitor_run_memory.py}"
@@ -361,6 +396,7 @@ if os.environ.get("RUN_MODEL_VERSION") == "minimax_h3" and os.environ.get("RUN_H
         prompt_preset=None, prompt_file=os.environ.get("H3_PROMPT_FILE"),
         material_name=os.environ.get("H3_REF2AV_MATERIAL_NAME"),
         material_config=os.environ.get("H3_REF2AV_MATERIAL_CONFIG"),
+        prompt_profile=os.environ.get("H3_PROMPT_PROFILE"),
         reference_image=os.environ.get("H3_REFERENCE_IMAGE"),
         reference_images=[path for path in os.environ.get("H3_REFERENCE_IMAGES", "").splitlines() if path],
         video_pattern="<count>gpu/minimax_h3_ref2av.mp4", native_frames=362, output_frames=360,
