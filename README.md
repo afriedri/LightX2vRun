@@ -1144,6 +1144,9 @@ Run `./lightx2vModelrun --help` for all supported overrides.
 For MiniMax-H3 full BF16 Ref2AV—no LoRA, default SP2, 768P/15 seconds, and the
 built-in two-image rooftop material—see the [run notes](docs/h3-ref2av-bf16.md)
 and the complete [AMD reproducibility guide](docs/minimax-h3-bf16-ref2av-gfx1201-reproduction-guide.md).
+Prompt and reference-image locations, profile selection, ordering, and Docker
+mount routing are covered in the dedicated
+[prompt/image profile guide](docs/h3-ref2av-prompt-and-image-profiles.md).
 
 The H3 BF16 Ref2AV 4/8/16-GPU entry is
 `scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh`; it reuses the FL2AV

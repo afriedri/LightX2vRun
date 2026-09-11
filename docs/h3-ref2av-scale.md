@@ -1,5 +1,8 @@
 # MiniMax-H3 Ref2AV Full BF16 and Turbo 8-Step Scaling (2026-09-11)
 
+Prompt/reference-image storage, profile selection, and Docker mount routing are
+documented separately in [Ref2AV prompt and reference-image profiles](h3-ref2av-prompt-and-image-profiles.md).
+
 A user reported initial success on two 32-GiB GPUs. This workflow extends the same path to scale testing; 4/8/16-GPU generation, performance, and CP2 Sage numerical acceptance remain to be measured. The BF16 route preserves the complete original `minimax_h3_ref2va_bf16.safetensors` without LoRA. The Turbo route uses the fixed 8-step LoRA contract. Both sweeps default to the two-reference `rooftop_2ref_15s` profile and use nine references only when `--prompt-profile storeroom_courtyard_9ref_15s` is explicit. Both produce 768P, 24-FPS, 15-second output. Full BF16 defaults to 20 `comfy_res_multistep` evaluations; Turbo performs eight evaluations.
 
 ## Nine-reference material profile
