@@ -2,6 +2,11 @@
 
 本入口在 `H3_MODEL_DIR` 的原生 `transformer_ref/` 分区上动态加载 8-step LoRA，不合并、不量化基础权重，**不经 ComfyUI 权重转换**，也不改变 Ref2AV 的参考图 packing、长视频、SP、Sage、Conv3D 和 VAE 路径。FL2AV 4-step 与 Ref2AV 原始 BF16（Comfy 权重 + 转换）两个既有入口保持原行为。
 
+若基础权重改为唯一的 ComfyUI
+`minimax_h3_ref2va_int8_convrot.safetensors`，不能直接替换本页的
+`transformer_ref/`。INT8-only collector、ComfyUI mixed-precision 格式分析和
+预计转换/runtime 方案见 `docs/h3-ref2av-int8-convrot.md`。
+
 ## 冻结合约
 
 | 项目 | Ref2AV Turbo 8-step |

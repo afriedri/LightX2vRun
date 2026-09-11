@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export H3_REF2AV_MATERIAL_CONFIG="${H3_REF2AV_MATERIAL_CONFIG:-${script_dir}/../configs/minimax_h3/ref2av_storeroom_courtyard_9ref_15s.sh}"
+[[ -f "$H3_REF2AV_MATERIAL_CONFIG" ]] || { echo "ERROR: Ref2AV material config not found: $H3_REF2AV_MATERIAL_CONFIG" >&2; exit 2; }
+# shellcheck source=/dev/null
+source "$H3_REF2AV_MATERIAL_CONFIG"
 export RUN_ENTRY_NAME="$(basename -- "${BASH_SOURCE[0]}")"
 export RUN_TASK_ID=minimax_h3_bf16_ref2v_768p_15s_scale
-export RUN_TASK_LABEL="11 MiniMax-H3 BF16 Ref2V 2/4/8/16-GPU 1344x768 15s (no LoRA)"
+export RUN_TASK_LABEL="11 MiniMax-H3 BF16 Ref2V 9-reference 2/4/8/16-GPU 1344x768 15s (no LoRA)"
 export RUN_MODEL_VERSION=minimax_h3 RUN_H3_TASK=ref2av
 export H3_PROFILE=ref2av_bf16_base
 export RUN_DEFAULT_COUNTS=2,4,8,16 RUN_SUPPORTED_COUNTS=2,4,8,16

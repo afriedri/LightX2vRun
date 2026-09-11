@@ -23,7 +23,9 @@ Overrides:
   WAN_GPU_GROUPS / WAN_RUN_TAG / WAN_RESULT_DIR remain supported aliases.
   MODEL_RUN            Host container launcher.
   H3_INFER_STEPS       Ref2V sampling count (3 for a full-size pipeline check).
-  H3_PROMPT_FILE / H3_REFERENCE_IMAGE  Ref2V material overrides, as in its dedicated entry.
+  H3_REF2AV_MATERIAL_CONFIG  Ref2AV shell config loaded by the numbered scale entry.
+  H3_PROMPT_FILE / H3_REFERENCE_IMAGES  Ref2AV prompt and ordered newline-separated image overrides.
+  H3_REFERENCE_IMAGE                   Backward-compatible single-image override.
   MEMORY_MONITOR       1 (default) enables host RAM/rank RSS/PSS/GPU VRAM sampling; 0 disables it.
   MEMORY_MONITOR_INTERVAL        JSONL sampling interval in seconds (default: 2).
   MEMORY_MONITOR_PRINT_INTERVAL  Terminal heartbeat interval in seconds (default: 30).
@@ -356,8 +358,11 @@ if os.environ.get("RUN_MODEL_VERSION") == "minimax_h3" and os.environ.get("RUN_H
         model_evaluations=(8 if turbo else infer_steps if sampling == "comfy_res_multistep" else infer_steps - 1),
         reference_image_resize_mode=os.environ.get("H3_REFERENCE_IMAGE_RESIZE_MODE", "match"),
         collector_enabled=os.environ.get("LIGHTX2V_H3_RUN_COLLECTOR") == "1",
-        prompt_preset=None, prompt_file=(os.environ.get("H3_PROMPT_FILE") or "assets/minimax_h3/rooftop_15s/prompt.txt"),
+        prompt_preset=None, prompt_file=os.environ.get("H3_PROMPT_FILE"),
+        material_name=os.environ.get("H3_REF2AV_MATERIAL_NAME"),
+        material_config=os.environ.get("H3_REF2AV_MATERIAL_CONFIG"),
         reference_image=os.environ.get("H3_REFERENCE_IMAGE"),
+        reference_images=[path for path in os.environ.get("H3_REFERENCE_IMAGES", "").splitlines() if path],
         video_pattern="<count>gpu/minimax_h3_ref2av.mp4", native_frames=362, output_frames=360,
     )
 pathlib.Path("${result_dir}/run_manifest.json").write_text(

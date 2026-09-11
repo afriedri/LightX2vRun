@@ -13,6 +13,18 @@ BASE_ENTRY = ROOT / "scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh"
 TURBO_ENTRY = ROOT / "scripts/run_13_minimax_h3_ref2av_8step_768p_15s_scale.sh"
 SUMMARY = ROOT / "scripts/lib/summarize_timings.py"
 DEFAULT_TURBO_IMAGE = "compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-260910-H3-Ref2V-Turbo8WithFull-V4"
+MATERIAL_NAME = "storeroom_courtyard_9ref_15s"
+EXPECTED_REFERENCE_NAMES = [
+    "wang_hao_front.png",
+    "wang_hao_full.png",
+    "chen_fan_front.png",
+    "chen_fan_full.png",
+    "discipline_disciple.png",
+    "su_xue_front.png",
+    "su_xue_full.png",
+    "character_layout.png",
+    "zhao_xiaoman.png",
+]
 
 
 def run_sweep(tmp_path, counts="2,4,8,16", fail=False, entry=BASE_ENTRY, image="test:h3-scale"):
@@ -25,7 +37,8 @@ def run_sweep(tmp_path, counts="2,4,8,16", fail=False, entry=BASE_ENTRY, image="
     fake.chmod(0o755)
     env = {**os.environ, "MODEL_RUN": str(fake), "DRY_RUN": "1", "MEMORY_MONITOR": "0",
            "TIMING_RESULT_DIR": str(tmp_path / "sweep"), "H3_INFER_STEPS": "3", "PROMPT": "",
-           "H3_PROMPT_FILE": "", "H3_REFERENCE_IMAGE": "", "H3_STEP_UPDATE": "comfy_res_multistep",
+           "H3_PROMPT_FILE": "", "H3_REFERENCE_IMAGE": "", "H3_REFERENCE_IMAGES": "",
+           "H3_REF2AV_MATERIAL_CONFIG": "", "H3_STEP_UPDATE": "comfy_res_multistep",
            "H3_TASK": "fl2av", "H3_SMOKE": "1", "H3_OUTPUT_DURATION": "5"}
     args = ["bash", str(entry), "--counts", counts]
     if image is not None:
@@ -41,6 +54,10 @@ def test_scale_reuses_materials_and_isolates_each_card_count(tmp_path):
     assert manifest["gpu_counts"] == [2, 4, 8, 16]
     assert manifest["native_frames"] == 362 and manifest["output_frames"] == 360
     assert manifest["infer_steps"] == 3 and manifest["lora"] is False
+    assert manifest["material_name"] == MATERIAL_NAME
+    assert [Path(path).name for path in manifest["reference_images"]] == EXPECTED_REFERENCE_NAMES
+    assert all(Path(path).is_file() for path in manifest["reference_images"])
+    assert Path(manifest["prompt_file"]).is_file()
     refs = prompt = None
     for count in (2, 4, 8, 16):
         env = json.loads((output / f"{count}gpu/captured.json").read_text())
@@ -55,11 +72,12 @@ def test_scale_reuses_materials_and_isolates_each_card_count(tmp_path):
         assert env["LIGHTX2V_CK_CONV3D_PROFILE_DIR"] == "/workspace/LightX2V/save_results/ck_conv3d_routes"
         assert env["H3_EVIDENCE_DIR"] == "/workspace/LightX2V/save_results"
         assert env["SAVE_RESULT_PATH"].endswith("/minimax_h3_ref2av.mp4")
-        assert len(env["H3_REFERENCE_IMAGES"].splitlines()) == 2
+        assert [Path(path).name for path in env["H3_REFERENCE_IMAGES"].splitlines()] == EXPECTED_REFERENCE_NAMES
         if refs is not None:
             assert refs == env["H3_REFERENCE_IMAGES"] and prompt == env["PROMPT"]
         refs, prompt = env["H3_REFERENCE_IMAGES"], env["PROMPT"]
-        assert "[Shot 6]" in prompt and "<Audio" not in prompt
+        assert "[镜头 5]" in prompt and "<Picture 1>" in prompt and "<Picture 9>" in prompt
+        assert "<Audio" not in prompt and "@音频" not in prompt
         assert (output / f"{count}gpu.log").is_file()
 
 
@@ -95,6 +113,8 @@ def test_turbo_8step_scale_covers_cp2xu8_sp16_and_preserves_profile(tmp_path):
         assert env["H3_TURBO_DIR"] == "/disk/ssd/difumodels-Dis/Minimax-h3-Turbo"
         assert "H3_COMFY_DIR" not in env
         assert len(env["GPU_DEVICES"].split(",")) == count
+        assert env["H3_REF2AV_MATERIAL_NAME"] == MATERIAL_NAME
+        assert [Path(path).name for path in env["H3_REFERENCE_IMAGES"].splitlines()] == EXPECTED_REFERENCE_NAMES
     assert "MiniMax-H3 topology: SP2/SP4/SP8=Ulysses, SP16=CP2xU8" in result.stdout
 
 

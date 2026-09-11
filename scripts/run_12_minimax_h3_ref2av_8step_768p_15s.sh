@@ -14,6 +14,7 @@ export H3_INFER_STEPS=9
 export LIGHTX2V_H3_RUN_COLLECTOR="${LIGHTX2V_H3_RUN_COLLECTOR:-1}"
 asset_dir="${script_dir}/../assets/minimax_h3/rooftop_15s"
 reference_images=("${asset_dir}/Image Gen-1.png" "${asset_dir}/RYAN-2.png")
+if [[ -n "${H3_REFERENCE_IMAGES:-}" ]]; then mapfile -t reference_images <<<"$H3_REFERENCE_IMAGES"; fi
 if [[ -n "${H3_REFERENCE_IMAGE:-}" ]]; then reference_images=("$H3_REFERENCE_IMAGE"); fi
 prompt_file="${H3_PROMPT_FILE:-${asset_dir}/prompt.txt}"
 

@@ -125,8 +125,16 @@ python3 scripts/collector/collect_minimax_h3_ref2v_weights.py \
   --output-dir /disk/ssd1/lightx2v-runtime/h3-ref2va-weight-inventory
 ```
 
-固定采集未裁剪的 `minimax_h3_ref2va_bf16.safetensors` 与
-`minimax_h3_ref2va_int8_convrot.safetensors`。复用现有 safetensors 解析器，
-读取 header 和有上限的 ConvRot 整数标量，不读取权重矩阵、不初始化 GPU。
+默认采集未裁剪的 `minimax_h3_ref2va_bf16.safetensors` 与
+`minimax_h3_ref2va_int8_convrot.safetensors`。只有 INT8 文件时增加
+`--asset int8-convrot`；完整命令和接入边界见
+`docs/h3-ref2av-int8-convrot.md`。复用现有 safetensors 解析器，读取 header、
+有上限的 `.comfy_quant` JSON、旧版 `_quantization_metadata.layers` 与 ConvRot
+整数标量，不读取权重矩阵、不初始化 GPU。
+若旧版 metadata 与同名 `.comfy_quant` tensor 同时存在，报告按 ComfyUI
+`convert_old_quants()` 的实际行为采用 metadata，并保留两份表示是否一致以及
+`full_precision_matrix_mult` 的观测值。
+容器入口默认使用 H3 Ref2V Turbo8 V4 镜像，仍可通过 `--image` 或 `IMAGE`
+覆盖。
 JSON/Markdown 包含文件结构、dtype、shape、groupsize 和两种格式差异。
 这是资产采集，不是 GPU 推理或性能验收，也不加入运行时 preflight gate。

@@ -1,0 +1,27 @@
+reference_definitions:
+<Picture 1> and <Picture 2> define Wang Hao's appearance.
+<Picture 3> and <Picture 4> define Chen Fan's appearance.
+<Picture 5> defines the discipline disciple's appearance.
+<Picture 6> and <Picture 7> define Su Xue's appearance.
+<Picture 8> defines the character blocking. Preserve this layout throughout the video.
+<Picture 9> defines Zhao Xiaoman's appearance.
+
+summary:
+[reference generation] 生成一条 15 秒的 3D 国漫风格短片，达到《师兄啊师兄》动画成片质感和玄机科技 3D 渲染质感。画面采用电影级构图、8K 超清观感、温润 PBR 材质、全局体积雾和环境光遮蔽；细节无锯齿，带轻微胶片颗粒。全片保持统一冷青色调、适中对比度、柔和且不过曝的高光、带蓝紫环境色的暗部和克制的辉光效果。
+
+character_and_layout_constraints:
+王浩的外观由 <Picture 1> 和 <Picture 2> 定义。陈凡的外观由 <Picture 3> 和 <Picture 4> 定义。执法弟子的外观由 <Picture 5> 定义。苏雪的外观由 <Picture 6> 和 <Picture 7> 定义。赵小蛮的外观由 <Picture 9> 定义。<Picture 8> 是人物站位参考图，全片人物站位保持该布局。
+
+detailed_description:
+[镜头 1] 双人上半身中近景，固定机位，没有前景。杂物房外院门外小径，赵小蛮和苏雪一前一后走来。赵小蛮脚步一顿，目光扫过眼前阵仗，自然光从侧面照来。二人一前一后，前后距离保持恒定，避免重叠。生成石子被踢飞的清脆声响。
+
+[镜头 2] 中景，杂物房外院门口。赵小蛮挑眉，表情玩味。苏雪视线沉稳，目光依次移动。
+
+[镜头 3] 人物第一人称视角。视线先看向靠着门的陈凡，再移动到陈凡面前的执法弟子，最后看向执法弟子前方的王浩；视线方向与王浩所在位置保持逻辑一致。生成衣料轻微摩擦声。
+
+[镜头 4] 苏雪神态平静地说：“执法堂出任务，都出到杂物房来了？”
+
+[镜头 5] 中景。画面左侧背景是倚靠在门口的陈凡，画面右侧是执法弟子，画面中心聚焦王浩。王浩在杂物房门口看清来人，脸上笑意未变，但眼底沉了半分。他转向苏雪，面部表情从假笑自然过渡为微沉。王浩表面带笑、语气平稳地说：“有人打伤了两名弟子，按规矩，先把人带回执法堂问话。”
+
+quality_and_safety_constraints:
+人物动作正确，镜头逻辑通顺，场景元素无错乱，人物肢体无变形、无多余肢体，面部无崩坏，五官比例正常，场景空间逻辑和物理规则正确，无画面撕裂；细节丰富、锐利清晰、无模糊。保持无字幕，避免生成任何文字、字幕、logo 或水印。整条短片无背景音乐。视频全程不要在同一画面中复制相同人物，保证画面中同一时刻每个角色只有一个实例。

@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import struct
 import subprocess
 import sys
 
@@ -71,11 +72,31 @@ def test_container_failure_retains_diagnostics_and_exit_status(tmp_path):
     assert report["status"] == "error" and len(report["assets"]) == 2
 
 
+def test_container_can_collect_only_int8_convrot(tmp_path):
+    models = tmp_path / "models"
+    output = tmp_path / "reports"
+    quant = json.dumps({"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 64}).encode()
+    write(models / FILES["int8_convrot"], [
+        ("blocks.0.weight", "I8", [1], bytes(1)),
+        ("blocks.0.comfy_quant", "U8", [len(quant)], quant),
+    ])
+    result = launch(
+        tmp_path, "--model-root", str(models), "--output-dir", str(output),
+        "--asset", "int8-convrot",
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads((output / "h3_ref2va_weights.json").read_text())
+    assert report["selected_assets"] == ["int8_convrot"]
+    assert set(report["assets"]) == {"int8_convrot"}
+    assert report["comparison"] is None
+    assert report["assets"]["int8_convrot"]["convrot_groupsize_counts"] == {"64": 1}
+
+
 def test_dry_run_needs_no_weights_and_does_not_create_output(tmp_path):
     result = launch(tmp_path, "--model-root", "missing models", "--output-dir", "reports", dry_run=True)
     assert result.returncode == 0, result.stderr
     args = shlex.split(result.stdout)
-    assert "compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-260901-LTX25-Scale-ReleaseFinal" in args
+    assert "compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-260910-H3-Ref2V-Turbo8WithFull-V4" in args
     assert not (tmp_path / "reports").exists()
     assert not (tmp_path / "docker.json").exists()
 

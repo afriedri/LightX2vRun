@@ -16,6 +16,7 @@ if [[ "${H3_STEP_UPDATE:-comfy_res_multistep}" != comfy_res_multistep ]]; then d
 export H3_INFER_STEPS="${H3_INFER_STEPS:-${default_steps}}"
 asset_dir="${script_dir}/../assets/minimax_h3/rooftop_15s"
 reference_images=("${asset_dir}/Image Gen-1.png" "${asset_dir}/RYAN-2.png")
+if [[ -n "${H3_REFERENCE_IMAGES:-}" ]]; then mapfile -t reference_images <<<"$H3_REFERENCE_IMAGES"; fi
 if [[ -n "${H3_REFERENCE_IMAGE:-}" ]]; then reference_images=("$H3_REFERENCE_IMAGE"); fi
 prompt_file="${H3_PROMPT_FILE:-${asset_dir}/prompt.txt}"
 duration="${H3_OUTPUT_DURATION:-15}"
