@@ -1,70 +1,70 @@
-# LightX2V / Run 上游接入 review（2026-09-09）
+# LightX2V and LightX2VRun Upstream Integration Review (2026-09-09)
 
-本轮以 HVAT 与 Run 的模型、权重、采样和运行契约为准，复用上游能力及基础设施。没有把五个已适配模型统一替换成上游默认模型。CPU/配置回归通过；GPU 性能与视频质量尚未重新验收。
+This integration preserves the HVAT model, weight, sampling, and runtime contracts while reusing upstream capabilities and infrastructure. It does not replace the five adapted models with upstream defaults. CPU and configuration regressions passed at the review point; GPU performance and video quality required renewed acceptance.
 
-## main 与分支
+## Mainline and development branches
 
-- 指定上游：`git@gitcode.com:GitHub_Trending/li/LightX2V.git`。
-- fork `main` 已精确对齐 `7425d1ec631528d1390d07d727ff7181465d5019`，提交与树相同。
-- LightX2V 开发分支：`hvat-gfx1201-R9600`；保留 `main` 用于纯上游同步。仅清理 GitCode 主远端旧功能分支，GitHub 镜像与上游不修改。
-- 重放前的完整历史归档：`/home/yangecool/WorkSpace/Code/99-archive/lightx2v-20260909/LightX2V-before-upstream-rebase-20260909.bundle`，已通过 `git bundle verify`。
+- Upstream: `git@gitcode.com:GitHub_Trending/li/LightX2V.git`.
+- The fork's `main` matched upstream commit and tree `7425d1ec631528d1390d07d727ff7181465d5019` exactly.
+- The LightX2V development branch is `hvat-gfx1201-R9600`; `main` remains a clean upstream mirror. Only obsolete feature branches on the primary GitCode remote were removed. The GitHub mirror and upstream were not modified.
+- A pre-replay bundle was saved at `/home/yangecool/WorkSpace/Code/99-archive/lightx2v-20260909/LightX2V-before-upstream-rebase-20260909.bundle` and passed `git bundle verify`.
 
-## 上游主要更新
+## Major upstream changes
 
-比较旧 fork main `5c18e461` 与新 main `7425d1ec`：1,068 个文件变化。新旧历史存在改写，按 patch 等价排除重复提交后，差异为上游侧 83 个、旧侧 2 个；不能把原始提交差集全部视为新增功能。
+Comparing old fork main `5c18e461` with new main `7425d1ec` yields 1,068 changed files. Because history was rewritten, the raw commit-set difference must not be interpreted as new functionality. After patch-equivalent duplicates were removed, the remaining difference was 83 upstream-side patches and 2 old-side patches.
 
-| 范围 | 上游更新 | 本轮接入方式 |
-|---|---|---|
-| Wan | 蒸馏 runner 合并、DMD2/MeanFlow 调度工厂、CFG 预设修复 | Run 使用新名称并显式指定 DMD2，保留 HVAT FP8/LoRA、双模型与 B0/B1 |
-| LTX | 原生 LTX2.5 模型/DurationHead/DiffVAE/ancestral sampler、组件工厂 | 新入口按 HVAT profile 分派到已有共用 runner；不替换 HVAT 权重、采样器和 Conv VAE |
-| H3 | ConvRot INT8、Qwen host pinning、TP bias 修复、AdaLN 缓存、pre/post 驻留 | 合入实现，保持现有 FL2V 参数和已选算子；新选项不默认启用 |
-| H3 VAE | 时空 tile 并行、负载均衡、encode 优化 | 保留上游结构，补闲置 rank、输出顺序和 collector 适配 |
-| 通用 | 请求状态/RNG 重置、warmup 配置移入 JSON、GQA SDPA、量化取整、FP8 通信优化 | 复用基础实现，Run 同步配置接口 |
-| 其他 | ROCm gfx1100/gfx1201 Aiter 修复、XPU/Ascend/MLU 优化、训练/部署/SwiftVR 更新 | 合入上游，不自动切换 HVAT 的已选后端 |
+| Area | Upstream change | Integration decision |
+| --- | --- | --- |
+| Wan | Unified distilled runner, DMD2/MeanFlow scheduler factory, CFG preset fix | Run adopts the new names and selects DMD2 explicitly while preserving HVAT FP8/LoRA, dual-model, and B0/B1 paths |
+| LTX | Native LTX2.5 model, DurationHead, DiffVAE, ancestral sampler, component factory | A new entry dispatches the HVAT profile to the existing shared runner; it does not replace HVAT weights, sampler, or convolutional VAE |
+| H3 | Pinned-host Qwen loading, TP bias fix, AdaLN cache, pre/post residency | Integrate the implementation while retaining FL2AV parameters and selected operators; new options remain disabled by default |
+| H3 VAE | Spatiotemporal tile parallelism, load balancing, encode optimization | Retain the upstream structure and add idle-rank, output-order, and collector compatibility fixes |
+| Common | Request/RNG reset, warmup moved into JSON, GQA SDPA, quantization rounding, FP8 communication | Reuse the base behavior and synchronize Run's config interface |
+| Other | ROCm gfx1100/gfx1201 AITER fixes; XPU/Ascend/MLU improvements; training, deployment, and SwiftVR updates | Integrate without automatically replacing HVAT's selected backends |
 
-## 五个模型逐项结论
+## Model-by-model conclusions
 
-| 模型 | Run 新入口 | 保留的模型与特色能力 | review 重点 |
-|---|---|---|---|
-| LTX2.3 | `ltx2` | 原有 FP8/BF16 混合权重、prompt cache、两阶段卸载、采样参数 | 共用预处理保持 HVAT Prompt AdaLN 精度及位置网格规则 |
-| LTX2.5 | `ltx2_5` + HVAT profile | Run 原有 split assets、Gemma4、Conv VAE、既有采样器、两槽加载、TunableOp、Sage、分布式 VAE | profile 仅做入口分派；不引入原生 DurationHead/DiffVAE 或 ancestral sampler |
-| Wan2.1 | `wan2.1` + `distill_method=dmd2` | 原 FP8 蒸馏权重、T5/CLIP、LoRA、Aiter GEMM/Attention、Ring/SP | 校验新工厂仍选 DMD2；warmup 从原环境变量写入 JSON |
-| Wan2.2 | `wan2.2_moe` + `distill_method=dmd2` | 原 high/low FP8 权重、LoRA、切换边界、lazy/B0/B1、CK Conv3D | 保留统一 runner 内的构造/内存采集；B0/B1 实现与重放前相同 |
-| H3 | `minimax_h3` | FL2V 首尾帧/prompt、原 Turbo LoRA、124f/24fps、50-block lazy、Aiter 路由、SP16 CP2×U8 | 修复 block index、量化 Qwen pageable 加载和 VAE gather；Ref2VA 先采实际权重结构 |
+| Model | Run entry | Preserved model and capability | Review focus |
+| --- | --- | --- | --- |
+| LTX2.3 | `ltx2` | Mixed FP8/BF16 weights, prompt cache, two-stage offload, sampling parameters | Shared preprocessing preserves HVAT Prompt AdaLN precision and position-grid rules |
+| LTX2.5 | `ltx2_5` plus HVAT profile | Split assets, Gemma4, Conv VAE, existing sampler, two-slot loader, TunableOp, Sage, distributed VAE | The profile only selects the entry; it does not enable native DurationHead, DiffVAE, or ancestral sampling |
+| Wan2.1 | `wan2.1` plus `distill_method=dmd2` | FP8 distilled weights, T5/CLIP, LoRA, AITER GEMM/attention, Ring/SP | Verify that the new factory still selects DMD2; warmup moves from an environment variable to JSON |
+| Wan2.2 | `wan2.2_moe` plus `distill_method=dmd2` | High/low FP8 weights, LoRA, switch boundary, lazy B0/B1, CK Conv3D | Preserve construction and memory collection in the unified runner; B0/B1 matches the pre-replay implementation |
+| MiniMax-H3 | `minimax_h3` | FL2AV frames/prompt, Turbo LoRA, 124 frames at 24 FPS, 50-block lazy loading, AITER routes, SP16 CP2xU8 | Fix block indexing, pageable loading for quantized Qwen, and VAE gather; inventory the real Ref2VA format first |
 
-LTX2.5 的完整 HVAT 运行配置与重放前逐项比较，除 `model_cls` 外一致。H3 的最终配置在 SP1/2/4/8/16 均与重放前一致，包括 Run 归一化后的 LoRA 路径。模型文件没有重命名或移动。
+The complete LTX2.5 HVAT runtime config was compared field by field with its pre-replay form and differed only in `model_cls`. H3 SP1/SP2/SP4/SP8/SP16 final configs, including Run-normalized LoRA paths, matched their pre-replay equivalents. Model files were neither renamed nor moved.
 
-## 性能审查
+## Performance review
 
-- 已排除的明显退化：误用原生 LTX2.5 模型/采样器、丢失 prompt cache、丢失两槽 offload、Wan 新名称却未启用 DMD2、collector 拉已删除分支、使用旧 Hot28 默认镜像。
-- 静态确认：Wan block offload 实现、LTX TunableOp 缓存未变；H3 lazy B1 轮转、FP8 quant reuse、Aiter 路由回归通过。SGL FP8 新包装仍调用同一后端，不新增张量拷贝。
-- 待实测：H3 新时空 VAE 的 tile 数、rank0 gather 显存和耗时；少 tile 场景新增一次 collective 初始化；新请求生命周期对峰值内存和耗时的影响。不能据 CPU 测试宣称性能零损失。
-- 比较时固定同一权重、素材、prompt、seed、帧数、GPU 拓扑及 collector 开关，观察推理阶段耗时、H2D、swap wait、显存峰值和实际算子路由。历史 LTX2.5 的上游原生模型成绩不能作为 HVAT 模型基线。
+- Excluded regressions included accidentally selecting the native LTX2.5 model/sampler, losing prompt cache or two-slot offload, adopting the new Wan name without DMD2, making a collector fetch a removed branch, and retaining the old Hot28 default image.
+- Static verification showed unchanged Wan block offload and LTX TunableOp cache behavior. H3 lazy B1 rotation, FP8 quantization reuse, and AITER route regressions passed. The new SGL FP8 wrapper invokes the same backend without an extra tensor copy.
+- H3's new spatiotemporal VAE tile count, rank-0 gather memory/time, one-time collective initialization on small tile sets, and the new request lifecycle's peak-memory/timing effects remained GPU acceptance items. CPU tests do not prove zero performance loss.
+- Performance comparisons must hold weight files, material, prompt, seed, frame count, GPU topology, and collector settings constant. Compare phase timing, H2D, swap wait, peak memory, and actual operator dispatch. Upstream-native LTX2.5 results are not an HVAT-model baseline.
 
-## 验证与镜像
+## Validation and image
 
-- Run：207 项通过，其中 10 项跨仓入口/配置验证；49 个 shell 脚本语法通过。
-- LightX2V：140 项定向回归通过，5 项 GPU 用例因无 GPU 跳过；变更文件静态检查和 `git diff --check` 通过。
-- H3 VAE：真实 4 进程 CPU Gloo 验证 1/2/7/8 tiles 的 gather 顺序和闲置 rank；不是 RCCL/GPU 验收。
-- 本机无法执行 Docker/GPU E2E，本轮未构建或发布镜像。
-- 两仓统一默认镜像名：`lightx2v-rocm:hvat-gfx1201-R9600`。构建脚本 `dockerfiles/platforms/build_gfx1201.sh` 默认产出此 tag；Run 支持显式 `--image` 覆盖。
-- gfx1201 运行依赖补入 `comfy-kitchen==0.2.15`，用于上游 ConvRot 实现；不替换 ROCm Torch。INT8 ConvRot 的真实 gfx1201 性能仍待测。
+- LightX2VRun: 207 tests passed, including 10 cross-repository entry/config tests; 49 shell scripts passed syntax checks.
+- LightX2V: 140 focused tests passed; 5 GPU cases were skipped because no device was available. Static checks and `git diff --check` passed.
+- H3 VAE: real four-process CPU Gloo tests verified gather order and idle ranks for 1, 2, 7, and 8 tiles. This is not RCCL/GPU acceptance.
+- Docker/GPU end-to-end testing was unavailable on the review host, so no image was built or published during this review.
+- Both repositories use `lightx2v-rocm:hvat-gfx1201-R9600` as the default tag. `dockerfiles/platforms/build_gfx1201.sh` produces that tag; Run accepts an explicit `--image` override.
 
-## H3 Ref2VA 权重采集
+The AITER commits currently visible under the `yangecool` GitHub account are not the latest HVAT internal enterprise source used to produce the release wheel. Code merging is in progress. The wheel embedded in the release image is the authoritative executable AITER artifact, and HVAT will provide the corresponding source patch after the merge is complete. The public GitHub AITER branch must not be used to reconstruct or validate that wheel in the interim.
 
-复用 Run 现有 safetensors 解析/边界校验，采集指定的未裁剪 BF16 与 INT8 ConvRot 两个文件。只读取 header 和最多 64 KiB 的 ConvRot 整数标量元数据；不读取矩阵 payload，不加载 Torch，不分配 GPU，也不做强制 SHA gate。
+## H3 Ref2VA weight inventory
 
-在权重机器的最新 Run 仓库执行以下入口。宿主机只负责启动 Docker，Python collector 在镜像环境内执行；当前 Run 与权重只读挂载，报告写回宿主机：
+The Run collector parses the specified unpruned BF16 safetensors file. It reads the header only. It does not read matrix payloads, import Torch, allocate a GPU, or enforce a full-file SHA gate.
+
+Run on the weight host:
 
 ```bash
 bash scripts/collector/run_minimax_h3_ref2v_weights.sh \
-  --image compiler.hvat-ai.com:8001/lightx2vrocm/lightx2v-rocm:gfx1201-R9600-260901-LTX25-Scale-ReleaseFinal \
+  --image YOUR_RELEASE_IMAGE \
   --model-root /disk/ssd1/difumodels/MiniMax-H3-ComfyUI \
+  --asset bf16 \
   --output-dir /disk/ssd1/lightx2v-runtime/h3-ref2va-weight-inventory
 ```
 
-输出 `h3_ref2va_weights.json` 和 `.md`，包含两个文件的 metadata、keys、shape、dtype、大小、ConvRot groupsize 及差异。该机器当前不可达，真实采集和完整 Ref2VA 推理尚未执行，不能把小样本测试当作真实权重验收。
+The output `h3_ref2va_weights.json` and `.md` files contain BF16 checkpoint metadata, keys, shapes, dtypes, and file size. Inventory success is not model inference or performance acceptance.
 
-此权重 inventory 仅依赖 Python 标准库，可以使用上述旧镜像作为运行环境，无需 GPU 或重建镜像。入口默认即为该镜像，也支持 `--image` / `IMAGE` 覆盖；`DRY_RUN=1` 可查看挂载和命令。旧镜像的模型实现不会被用于这次采集。新入口的模型推理及性能 collector 仍应使用包含本轮 LightX2V/aiter 代码和依赖的新镜像，不能以 inventory 成功替代运行验收。
-
-容器入口通过 Docker 命令替身验证只读挂载、宿主机报告、缺失权重诊断和退出码；实际 collector 在禁用 site packages 的 Python 下执行成功。本机未对上述镜像执行 Docker 实测。
+The host launches Docker; the collector runs inside the image. Current Run and weights are mounted read-only, and reports are written to the host. `DRY_RUN=1` prints the mount and command. A header inventory can use an older image because it executes only the mounted standard-library collector, but actual inference and performance collection require the current LightX2V integration and matching AITER wheel.

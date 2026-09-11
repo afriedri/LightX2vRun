@@ -6,8 +6,9 @@ precision, offload policy, buffer counts, tuned kernels, or parallel topology.
 
 ## LTX-2.5 Scale Entry and Optional Weight Audit
 
-正常模型 scale 必须使用编号 10；它默认直接使用镜像内的 LightX2V 和 Aiter
-AOT wheel，顺序运行 SP2/SP4/SP8/SP16，并统一收集内存、视频和 timing：
+Use numbered entry 10 for the normal model scale sweep. It consumes LightX2V
+and the AITER AOT wheel directly from the image, runs SP2/SP4/SP8/SP16 in
+sequence, and collects memory, video, and timing evidence consistently:
 
 ```bash
 TIMING_RESULT_DIR=/disk/ssd/lightx2v-runtime/ltx25-scale-001 \
@@ -15,8 +16,9 @@ bash scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh \
   --image IMAGE
 ```
 
-`LTX25-ScaleCollector.sh` 仅保留用于复现历史分布式 Video VAE 采证，不再作为
-正常运行入口。Scale 运行不拉取或挂载源码，也不进行 Hot 选择。
+`LTX25-ScaleCollector.sh` remains only for reproducing historical distributed
+Video VAE evidence and is not the normal run entry. The scale sweep neither
+fetches or mounts source nor performs Hot selection.
 
 - `run_ltx25_weight_census.sh` is an optional no-GPU audit for the five
   BF16 split assets. It validates frozen size/SHA identities, Safetensors
@@ -117,24 +119,19 @@ result. A timeout keeps those checkpoints and marks the unified report partial.
 The historical root-level SuperCollect and Sage sweep shell entry points remain
 compatibility wrappers.
 
-## H3 Ref2VA BF16 / INT8 ConvRot 权重采集
+## MiniMax-H3 Ref2AV Full BF16 Weight Inventory
 
 ```bash
 python3 scripts/collector/collect_minimax_h3_ref2v_weights.py \
   --model-root /disk/ssd1/difumodels/MiniMax-H3-ComfyUI \
-  --output-dir /disk/ssd1/lightx2v-runtime/h3-ref2va-weight-inventory
+  --output-dir /disk/ssd1/lightx2v-runtime/h3-ref2va-weight-inventory \
+  --asset bf16
 ```
 
-默认采集未裁剪的 `minimax_h3_ref2va_bf16.safetensors` 与
-`minimax_h3_ref2va_int8_convrot.safetensors`。只有 INT8 文件时增加
-`--asset int8-convrot`；完整命令和接入边界见
-`docs/h3-ref2av-int8-convrot.md`。复用现有 safetensors 解析器，读取 header、
-有上限的 `.comfy_quant` JSON、旧版 `_quantization_metadata.layers` 与 ConvRot
-整数标量，不读取权重矩阵、不初始化 GPU。
-若旧版 metadata 与同名 `.comfy_quant` tensor 同时存在，报告按 ComfyUI
-`convert_old_quants()` 的实际行为采用 metadata，并保留两份表示是否一致以及
-`full_precision_matrix_mult` 的观测值。
-容器入口默认使用 H3 Ref2V Turbo8 V4 镜像，仍可通过 `--image` 或 `IMAGE`
-覆盖。
-JSON/Markdown 包含文件结构、dtype、shape、groupsize 和两种格式差异。
-这是资产采集，不是 GPU 推理或性能验收，也不加入运行时 preflight gate。
+This command inventories the unpruned `minimax_h3_ref2va_bf16.safetensors`
+header through the existing safetensors parser. It does not read matrix
+payloads or initialize a GPU. The container wrapper's default image can be
+overridden with `--image` or `IMAGE`. JSON and Markdown outputs contain the
+file structure, dtype, and shape contract. This is an asset inventory, not GPU
+inference or performance acceptance, and it is not added as a runtime
+preflight gate.

@@ -1,10 +1,19 @@
 # LightX2VRun — GFX1201 timing entries
 
 
-当前 LightX2V 分支为 `hvat-gfx1201-R9600`，默认构建/运行镜像统一为
-`lightx2v-rocm:hvat-gfx1201-R9600`。本轮需要重建镜像；旧 Hot28 镜像不包含
-新的 Wan 蒸馏入口。LTX2.3、LTX2.5、Wan2.1、Wan2.2、H3 的模型与权重以
-本仓库和 HVAT 适配为准。详见 [两仓迁移 review](docs/rebase-review-20260909.md)。
+The active LightX2V branch is `hvat-gfx1201-R9600`. The unified default build
+and runtime image is `lightx2v-rocm:hvat-gfx1201-R9600`. Rebuild the image for
+the current integration; the old Hot28 image does not contain the newer Wan
+distillation entry. This repository and the HVAT adaptations define the
+LTX2.3, LTX2.5, Wan2.1, Wan2.2, and MiniMax-H3 model/weight contracts. See the
+[upstream integration review](docs/rebase-review-20260909.md).
+
+For the AMD handoff, start with the [MiniMax-H3 full BF16 Ref2AV reproducibility
+guide](docs/minimax-h3-bf16-ref2av-gfx1201-reproduction-guide.md). The AITER
+commits visible under the `yangecool` GitHub account are not the latest HVAT
+internal enterprise source used for the release image. Code merging is in
+progress; the embedded wheel is the current executable contract, and HVAT will
+provide the corresponding source patch after the merge completes.
 
 The active interface contains the numbered timing tasks below plus explicit
 model production entries for MiniMax-H3 and LTX-2.3. Every entry freezes its
@@ -20,10 +29,10 @@ workload in a model-specific launcher and emits rank-critical evidence.
 | 07 | `scripts/run_07_wan22_720p_121f_24fps_scale.sh` | Wan2.2, 720P, 121f, 24 FPS | 2/4/8/16 |
 | 08 | `scripts/run_08_minimax_h3_768p_124f_24fps_scale.sh` | MiniMax-H3, 1344x768, 124f, 24 FPS | 2/4/8/16 |
 | 09 | `scripts/run_09_minimax_h3_480p_124f_24fps_scale.sh` | MiniMax-H3, 832x480, 124f, 24 FPS | 2/4/8/16 |
-| 10 | `scripts/run_10_minimax_h3_bf16_ref2v.sh` | H3 原始 BF16 Ref2AV，无 LoRA，1344x768，15 秒 | 默认 2；支持 1/2/4/8/16 |
+| 10 | `scripts/run_10_minimax_h3_bf16_ref2v.sh` | H3 full BF16 Ref2AV, no LoRA, 1344x768, 15 seconds | default 2; supports 1/2/4/8/16 |
 | 10 | `scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh` | LTX-2.5 C1, 1280x704, 121f, 24 FPS | 2/4/8/16 |
-| 11 | `scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh` | H3 原始 BF16 Ref2AV，无 LoRA，1344x768，15 秒 scale | 2/4/8/16 |
-| 12 | `scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh` | H3 Ref2AV Turbo 8-step 动态 LoRA，1344x768，15 秒 | 默认 4；支持 1/2/4/8/16 |
+| 11 | `scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh` | H3 full BF16 Ref2AV scale, no LoRA, 1344x768, 15 seconds | 2/4/8/16 |
+| 12 | `scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh` | H3 Ref2AV Turbo 8-step dynamic LoRA, 1344x768, 15 seconds | default 4; supports 1/2/4/8/16 |
 
 ## LTX-2.3 Distilled FP8 B0
 
@@ -119,8 +128,8 @@ bash scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh \
   --image IMAGE
 ```
 
-编号 10 是正式且唯一的 LTX-2.5 scale 运行入口，默认顺序运行 2/4/8/16 卡。
-指定结果目录并只跑 SP2：
+Number 10 is the canonical LTX-2.5 scale entry and runs 2/4/8/16 GPUs in
+sequence by default. To select the result directory and run only SP2:
 
 ```bash
 TIMING_RESULT_DIR=/disk/ssd/lightx2v-runtime/ltx25-scale-sp2-001 \
@@ -780,63 +789,68 @@ the ROCm attention/GEMM backends while preserving the benchmark workload:
 GPU_DEVICES=0 ./lightx2vModelrun --benchmark-wan21-4090
 ```
 
-使用完全相同的 Wan2.1 单卡 720P/81 帧/4 步 workload 测原生 gfx1201
-SageAttention2：
+Test native gfx1201 SageAttention2 with the identical one-GPU Wan2.1
+720P/81-frame/4-step workload:
 
 ```bash
-GPU_DEVICES=0 IMAGE=<包含-Aiter-ca4804815-的镜像> \
+GPU_DEVICES=0 IMAGE=<image-containing-Aiter-ca4804815> \
   ./lightx2vModelrun --benchmark-wan21-4090-sage
 ```
 
-这个入口只把 self-attention 从 FlyDSL BF16 改为
-`aiter_fav3_sage_bf16_attn`；cross-attention、FP8 DiT 权重、seed、offload
-比例和输入图均与原来的 4090 对标入口一致。
+This entry changes only self-attention from FlyDSL BF16 to
+`aiter_fav3_sage_bf16_attn`. Cross-attention, FP8 DiT weights, seed, offload
+ratio, and source image remain identical to the 4090 comparison entry.
 
-依次运行 FlyDSL BF16 与 Sage V2，并采集 Wan2.1 实际模型的逐 step 分解。
-传两个 GPU id 时，FlyDSL 固定使用第一张卡，Sage 固定使用第二张卡；两组
-仍然顺序执行，避免 CPU offload、PCIe 和磁盘竞争污染 A/B：
+Run FlyDSL BF16 and Sage V2 in sequence and collect per-step decomposition from
+the real Wan2.1 model. With two GPU IDs, FlyDSL uses the first and Sage uses the
+second. The two arms still run sequentially to avoid CPU-offload, PCIe, and
+storage contention in the A/B comparison:
 
 ```bash
-GPU_DEVICES=0,1 IMAGE=<包含本次-LightX2V-runtune-插桩的镜像> \
+GPU_DEVICES=0,1 IMAGE=<image-containing-current-LightX2V-runtune-instrumentation> \
   ./lightx2vModelrun --runtune-wan21
 ```
 
-传一个 GPU id 时保持旧行为，两组都在同一张卡上顺序运行。
-RunTune 默认把 FlyDSL 和 Sage 两边都设为 `triton_fused_qk_rope`，因此 attention
-A/B 仍使用相同 RoPE 口径；终端和 `summary.json` 会记录实际 backend。有效 fused
-运行的模型日志还会出现一次 `Using fused gfx1201 Q/K RoPE`；没有该行表示运行时契约
-未命中并回退，不能计作 fused 样本。
+With one GPU ID, both arms run sequentially on the same device. RunTune selects
+`triton_fused_qk_rope` for both FlyDSL and Sage so the attention A/B uses the
+same RoPE contract. The terminal and `summary.json` record the actual backend.
+A valid fused model run also emits `Using fused gfx1201 Q/K RoPE` once. Without
+that event, the runtime contract fell back and the result is not a fused sample.
 
-只结算 fused Q/K RoPE 时用同一张卡、同一镜像做相邻 Sage-only A/B：
+For an isolated fused Q/K RoPE result, run adjacent Sage-only A/B arms on the
+same GPU and image:
 
 ```bash
 GPU_DEVICES=0 RUNTUNE_BACKENDS=sage \
   RUNTUNE_ROPE_TYPE=torch_real_rope \
   RUNTUNE_NAME=wan21_sage_rope_torch_<name> \
-  IMAGE=<包含-fused-RoPE-生产实现的镜像> \
+  IMAGE=<image-containing-production-fused-RoPE> \
   ./lightx2vModelrun --runtune-wan21
 
 GPU_DEVICES=0 RUNTUNE_BACKENDS=sage \
   RUNTUNE_ROPE_TYPE=triton_fused_qk_rope \
   RUNTUNE_NAME=wan21_sage_rope_fused_<name> \
-  IMAGE=<同一镜像> \
+  IMAGE=<same-image> \
   ./lightx2vModelrun --runtune-wan21
 ```
 
-单 backend 模式仍生成原始 JSON、`summary.json`、`summary.csv` 和
-`details.csv`；缺失 backend 的 A/B 列显示为 `n/a`。一次性 Sage prepare/core
-插桩已经移除，避免每层额外 timing events 扰动性能；常规 self-attention、phase、
-FP8 GEMM/quant 和 offload 指标保持不变。
+Single-backend mode still writes raw JSON, `summary.json`, `summary.csv`, and
+`details.csv`; the absent A/B backend is shown as `n/a`. One-time Sage
+prepare/core instrumentation was removed to avoid perturbing performance with
+per-layer timing events. The regular self-attention, phase, FP8 GEMM/quant, and
+offload metrics remain.
 
-默认 workload 是相同的 720P/81 帧/4 步、seed 1234、全 block offload，
-并关闭 warmup。结果写入
-`/disk/ssd/lightx2v-runtime/outputs/wan21_runtune_<timestamp>/`，包含两个
-backend 的原始 JSON/日志/视频，以及 A/B `summary.json`、`summary.csv` 和
-按 Q/K/V、M/N/K shape 展开的 `details.csv`。汇总同时报告全部 4 步与排除
-首步的 steady-state；self/cross/FFN、attention、FP8 GEMM 和 offload copy/wait
-是嵌套计时区间，不能彼此相加作为 step 总时间。
+The default workload remains 720P, 81 frames, 4 steps, seed 1234, full block
+offload, and no warmup. Results under
+`/disk/ssd/lightx2v-runtime/outputs/wan21_runtune_<timestamp>/` contain raw
+JSON/log/video for both backends, the A/B `summary.json` and `summary.csv`, and
+Q/K/V plus M/N/K shape detail in `details.csv`. The report includes all four
+steps and steady state excluding the first. Self/cross/FFN, attention, FP8
+GEMM, and offload copy/wait are nested intervals and must not be summed as step
+time.
 
-只检查两条容器命令和环境变量透传，不启动模型：
+To inspect both container commands and environment forwarding without starting
+the model:
 
 ```bash
 GPU_DEVICES=0,1 OUTPUT_DIR=/tmp/lightx2v-runtune DRY_RUN=1 \
@@ -917,11 +931,14 @@ launcher uses Docker host networking and forwards the default
 `http://192.168.2.3:10808` proxy; set `PROXY_URL=` to disable it. It never calls
 `rocm-smi` or changes frequency and power settings.
 
-独立 Sage benchmark 入口默认仍将 FP32 `torch_real_rope` 按 8192 个序列位置分块，
-避免 720P 完整 Q/K RoPE 产生约 1.42 GiB 的单个 FP32 临时张量。RunTune 默认选择
-`triton_fused_qk_rope`；目标 gfx1201 契约成立时 chunk wrapper 会直通单次融合 kernel，
-不再产生 FP32 临时张量或 chunk 输出复制。融合契约不成立时仍按 8192 分块回退 Torch。
-可以用 `ROPE_CHUNK_SIZE=4096` 调整 fallback 峰值，或用 `ROPE_CHUNK_SIZE=0` 禁用分块。
+The standalone Sage benchmark still chunks FP32 `torch_real_rope` at 8,192
+sequence positions by default, avoiding an approximately 1.42-GiB FP32
+temporary for complete 720P Q/K RoPE. RunTune defaults to
+`triton_fused_qk_rope`; when the gfx1201 contract matches, the chunk wrapper
+passes through to one fused kernel without the FP32 temporary or chunk-output
+copy. Otherwise it retains the 8,192-row Torch fallback. Set
+`ROPE_CHUNK_SIZE=4096` to reduce fallback peak size or `ROPE_CHUNK_SIZE=0` to
+disable chunking.
 
 The default `OFFLOAD_RATIO=1.0` streams all 40 DiT blocks. This matches the
 historical benchmark config's annotated 720p setting; its `0.8` value was the
@@ -1125,8 +1142,17 @@ Run `./lightx2vModelrun --help` for all supported overrides.
 
 </details>
 
-H3 原始 Ref2VA BF16（无 LoRA、默认 SP2、768P 15 秒、内置双图屋顶素材）入口与两张 32 GiB 卡的算子/显存检查见 [运行说明](docs/h3-ref2av-bf16.md)。
+For MiniMax-H3 full BF16 Ref2AV—no LoRA, default SP2, 768P/15 seconds, and the
+built-in two-image rooftop material—see the [run notes](docs/h3-ref2av-bf16.md)
+and the complete [AMD reproducibility guide](docs/minimax-h3-bf16-ref2av-gfx1201-reproduction-guide.md).
 
-H3 BF16 Ref2V 4/8/16 卡测试入口：`scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh`，复用 FL2AV scale 框架，详见 [scale 说明与算子审查](docs/h3-ref2av-scale.md)。
+The H3 BF16 Ref2AV 4/8/16-GPU entry is
+`scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh`; it reuses the FL2AV
+sweep framework. See the [scale and operator review](docs/h3-ref2av-scale.md).
 
-H3 Ref2AV Turbo 8-step LoRA 入口：`scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh`。它复用完整 Ref2AV BF16 base，动态加载 `minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors`，默认四卡并开启 collector；采样合约、shape 收集和 E2E 验收见 [8-step 接入说明](docs/h3-ref2av-8step.md)。
+The H3 Ref2AV Turbo 8-step LoRA entry is
+`scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh`. It uses the complete
+Ref2AV BF16 base, dynamically applies
+`minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors`, and defaults to four
+GPUs with collection enabled. See the [8-step integration](docs/h3-ref2av-8step.md)
+for sampling, shape collection, and end-to-end acceptance.
