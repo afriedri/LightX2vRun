@@ -2,10 +2,10 @@
 
 
 The active LightX2V branch is `hvat-gfx1201-R9600`. The unified default build
-and runtime image is `lightx2v-rocm:hvat-gfx1201-R9600`. Rebuild the image for
-the current integration; the old Hot28 image does not contain the newer Wan
-distillation entry. This repository and the HVAT adaptations define the
-LTX2.3, LTX2.5, Wan2.1, Wan2.2, and MiniMax-H3 model/weight contracts.
+and runtime image is `lightx2v-rocm:hvat-gfx1201-R9600`. Rebuild this unified
+image whenever the integration changes so that the source, dependencies, and
+model entrypoints remain aligned. This repository and the HVAT adaptations
+define the LTX2.3, LTX2.5, Wan2.1, Wan2.2, and MiniMax-H3 model/weight contracts.
 
 For the AMD handoff, start with the [MiniMax-H3 full BF16 Ref2AV reproducibility
 guide](docs/minimax-h3-bf16-ref2av-gfx1201-reproduction-guide.md). The AITER
