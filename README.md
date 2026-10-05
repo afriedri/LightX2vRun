@@ -32,6 +32,10 @@ workload in a model-specific launcher and emits rank-critical evidence.
 | 10 | `scripts/run_10_ltx25_c1_704x1280_121f_24fps_scale.sh` | LTX-2.5 C1, 1280x704, 121f, 24 FPS | 2/4/8/16 |
 | 11 | `scripts/run_11_minimax_h3_bf16_ref2v_768p_15s_scale.sh` | H3 full BF16 Ref2AV scale, no LoRA, 1344x768, 15 seconds | 2/4/8/16 |
 | 12 | `scripts/run_12_minimax_h3_ref2av_8step_768p_15s.sh` | H3 Ref2AV Turbo 8-step dynamic LoRA, 1344x768, 15 seconds | default 4; supports 1/2/4/8/16 |
+| 14 | `scripts/run_14_minimax_h3_ref2av_tp2_768p_15s.sh` | H3 full BF16 Ref2AV, TP2, 1344x768, 15 seconds, 20 steps ([guide](docs/minimax-h3-ref2av-tp2-gfx1201.md)) | 2 |
+
+Entry 14 runs the TP2 path of the `rocm/vllm-dev:gfx1201-h3-ho-sk7` image (LightX2V and aiter
+branches `h3/gfx1201-ho-sk7`) directly with `docker run`, not through `lightx2vModelrun`.
 
 ## LTX-2.3 Distilled FP8 B0
 
