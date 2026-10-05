@@ -169,10 +169,23 @@ CHECK
     fi
     if [[ "$profile" == ref2av_bf16_base ]]; then
         prepared_model="${runtime_config_dir}/ref2av_model"
-        python3 "${lightx2v_path}/tools/convert/minimax_h3_comfy.py" \
-            --checkpoint /models/minimax_h3_comfy/diffusion_models/minimax_h3_ref2va_bf16.safetensors \
-            --cache-dir /workspace/.cache/h3_ref2av \
-            --base-model-dir "$model_path" --model-output "$prepared_model"
+        if [[ "${H3_REF2AV_NATIVE_TRANSFORMER_REF:-0}" == 1 ]]; then
+            # Opt-in: no ComfyUI checkpoint. Assemble the same component layout
+            # from the native model directory, using its transformer_ref/.
+            [[ -f "$model_path/transformer_ref/config.json" ]] || {
+                echo "ERROR: H3_REF2AV_NATIVE_TRANSFORMER_REF=1 needs $model_path/transformer_ref" >&2; exit 1;
+            }
+            echo "Ref2AV BF16 base: using native $model_path/transformer_ref (no ComfyUI conversion)"
+            mkdir -p "$prepared_model"
+            for component in text_encoder tokenizer processor vae audio_vae transformer_ref; do
+                ln -sfn "$model_path/$component" "$prepared_model/$component"
+            done
+        else
+            python3 "${lightx2v_path}/tools/convert/minimax_h3_comfy.py" \
+                --checkpoint /models/minimax_h3_comfy/diffusion_models/minimax_h3_ref2va_bf16.safetensors \
+                --cache-dir /workspace/.cache/h3_ref2av \
+                --base-model-dir "$model_path" --model-output "$prepared_model"
+        fi
         model_path="$prepared_model"
     fi
     # ref2av_turbo_8step keeps model_path at the native model directory and

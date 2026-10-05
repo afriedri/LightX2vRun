@@ -79,6 +79,12 @@ Ordinary timing runs should use the numbered scripts:
 Important overrides:
   GPU_DEVICES, IMAGE, MODEL_STORE, OUTPUT_DIR, INPUT_DIR, CACHE_DIR
   H3_MODEL_DIR, H3_COMFY_DIR, H3_TURBO_DIR, H3_PROFILE
+  H3_REF2AV_NATIVE_TRANSFORMER_REF=1
+                          Ref2AV BF16 base: link H3_MODEL_DIR/transformer_ref
+                          instead of converting the ComfyUI checkpoint
+  DOCKER_NETWORK          Container network (default: host). Use bridge when
+                          several multi-GPU ROCm containers start concurrently:
+                          ROCr's @hsa<pid> IPC sockets are per network namespace
   LTX23_CHECKPOINT, LTX23_UPSCALER, LTX23_GEMMA_DIR
   LTX25_MODEL_ROOT
   TARGET_HEIGHT, TARGET_WIDTH, TARGET_VIDEO_LENGTH, TARGET_FPS
@@ -342,7 +348,7 @@ if [[ "${is_minimax_h3_mode}" == 1 ]]; then
     (( h3_needs_turbo == 0 )) || [[ -n "${H3_TURBO_DIR:-}" ]] || die "H3_TURBO_DIR is required for $h3_profile"
     h3_frame_source="${H3_FRAME_SOURCE:-image}"
     if [[ "$h3_task" == ref2av ]]; then
-        if [[ "$h3_profile" == ref2av_bf16_base ]]; then
+        if [[ "$h3_profile" == ref2av_bf16_base && "${H3_REF2AV_NATIVE_TRANSFORMER_REF:-0}" != 1 ]]; then
             [[ -n "${H3_COMFY_DIR:-}" ]] || die "H3_COMFY_DIR is required for Ref2AV BF16 base"
         fi
         [[ -n "${H3_REFERENCE_IMAGES:-}" ]] || die "H3_REFERENCE_IMAGES is required for Ref2AV"
@@ -454,7 +460,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
         require_dir "${H3_MODEL_DIR:?H3_MODEL_DIR is required}"
         if [[ "$h3_task" == ref2av ]]; then
-            if [[ "$h3_profile" == ref2av_bf16_base ]]; then
+            if [[ "$h3_profile" == ref2av_bf16_base && "${H3_REF2AV_NATIVE_TRANSFORMER_REF:-0}" != 1 ]]; then
                 require_dir "$H3_COMFY_DIR"
             else
                 require_dir "${H3_MODEL_DIR%/}/transformer_ref"
@@ -482,10 +488,12 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
             : # Strict LTX checkpoint/Gemma contents are validated by preflight.
         elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
             if [[ "$h3_task" == ref2av ]]; then
-                if [[ "$h3_profile" == ref2av_turbo_8step ]]; then
+                if [[ "$h3_profile" == ref2av_turbo_8step || "${H3_REF2AV_NATIVE_TRANSFORMER_REF:-0}" == 1 ]]; then
                     require_file "${H3_MODEL_DIR%/}/transformer_ref/config.json"
+                fi
+                if [[ "$h3_profile" == ref2av_turbo_8step ]]; then
                     require_file "${H3_TURBO_DIR}/minimax_h3_ref2v_turbo_8step_v1.0_768p_bf16.safetensors"
-                else
+                elif [[ "${H3_REF2AV_NATIVE_TRANSFORMER_REF:-0}" != 1 ]]; then
                     require_file "${H3_COMFY_DIR}/diffusion_models/minimax_h3_ref2va_bf16.safetensors"
                 fi
             else
@@ -551,7 +559,7 @@ docker_args=(
     --hostname "${CONTAINER_NAME}"
     --add-host "${CONTAINER_NAME}:127.0.0.1"
     --init
-    --network=host
+    "--network=${DOCKER_NETWORK:-host}"
     --ipc=host
     --cap-add=SYS_PTRACE
     --security-opt=seccomp=unconfined
@@ -671,7 +679,7 @@ elif [[ "${is_minimax_h3_mode}" == 1 ]]; then
             --env LIGHTX2V_VAE_CONV3D_BACKEND=Aiter_CK_Conv3d_v1
             --env LIGHTX2V_CK_CONV3D_PROFILE_DIR=/workspace/LightX2V/save_results/ck_conv3d_routes
         )
-        if [[ "$h3_profile" == ref2av_bf16_base ]]; then
+        if [[ "$h3_profile" == ref2av_bf16_base && "${H3_REF2AV_NATIVE_TRANSFORMER_REF:-0}" != 1 ]]; then
             if [[ "${DRY_RUN:-0}" != 1 ]]; then mkdir -p "${CACHE_DIR}/h3_ref2av"; fi
             docker_args+=(
                 --mount "type=bind,source=${H3_COMFY_DIR},target=/models/minimax_h3_comfy,readonly"
@@ -740,7 +748,7 @@ for inference_env in \
     LIGHTX2V_WARMUP LIGHTX2V_DIT_PROGRESS ROPE_CHUNK_SIZE \
     LIGHTX2V_WAN_BLOCK_OFFLOAD_SCHEDULE LAST_FRAME_PATH H3_SMOKE H3_PREFLIGHT_ONLY \
     H3_INFER_STEPS H3_STEP_UPDATE H3_REFERENCE_IMAGE_RESIZE_MODE H3_OUTPUT_DURATION H3_EVIDENCE_DIR H3_PROMPT_PRESET H3_PROMPT_FILE H3_MEGADISCOVERY \
-    H3_MEGADISCOVERY_TIMEOUT_SECONDS \
+    H3_MEGADISCOVERY_TIMEOUT_SECONDS H3_REF2AV_NATIVE_TRANSFORMER_REF \
     NCCL_DEBUG NCCL_DEBUG_SUBSYS NCCL_DEBUG_FILE \
     LIGHTX2V_H3_RUN_COLLECTOR LIGHTX2V_H3_RUN_COLLECTOR_OUTPUT \
     LTX23_PREFLIGHT_ONLY LTX23_COLLECT LTX23_EVIDENCE_DIR \
